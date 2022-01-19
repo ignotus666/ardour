@@ -1,0 +1,5 @@
+ardour (7.0-1) unstable; urgency=medium
+
+  * Initial release (Closes: #nnnn)  <nnnn is the bug number of your ITP>
+
+ -- daryl <daryl@unknown>  Tue, 19 Oct 2021 16:04:07 +0200

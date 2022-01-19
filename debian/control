@@ -1,0 +1,12 @@
+Source: ardour7
+Section: audio
+Priority: optional
+Maintainer: Daryl Hanlon <darylo1#hotmail.com>
+Build-Depends: debhelper-compat (= 12)
+Standards-Version: 4.4.1
+Homepage: <https://github.com/Ardour/ardour>
+
+Package: ardour
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Ardour7
