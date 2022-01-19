@@ -1,5 +1,5 @@
 Source: ardour
-Section: sound
+Section: audio
 Priority: optional
 Maintainer: Daryl Hanlon <darylo1#hotmail.com>
 Build-Depends: debhelper-compat (= 12)
