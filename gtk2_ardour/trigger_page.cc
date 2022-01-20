@@ -66,7 +66,7 @@ using namespace std;
 TriggerPage::TriggerPage ()
 	: Tabbable (_content, _("Trigger Drom"), X_("trigger"))
 	, _cue_area_frame (0.5, 0, 1.0, 0)
-	, _cue_box (32, 16 * TriggerBox::default_triggers_per_box)
+	, _cue_box (32, 16 * default_triggers_per_box)
 	, _master_widget (32, 16)
 	, _master (_master_widget.root ())
 {
@@ -108,8 +108,7 @@ TriggerPage::TriggerPage ()
 	_no_strips.signal_drag_data_received ().connect (sigc::mem_fun (*this, &TriggerPage::no_strip_drag_data_received));
 
 	std::vector<Gtk::TargetEntry> target_table;
-	target_table.push_back (Gtk::TargetEntry ("x-ardour/region.erl", Gtk::TARGET_SAME_APP));
-	target_table.push_back (Gtk::TargetEntry ("x-ardour/region.esl", Gtk::TARGET_SAME_APP));
+	target_table.push_back (Gtk::TargetEntry ("x-ardour/region.pbdid", Gtk::TARGET_SAME_APP));
 	target_table.push_back (Gtk::TargetEntry ("text/uri-list"));
 	target_table.push_back (Gtk::TargetEntry ("text/plain"));
 	target_table.push_back (Gtk::TargetEntry ("application/x-rootwin-drop"));
@@ -126,6 +125,8 @@ TriggerPage::TriggerPage ()
 
 	_sidebar_vbox.pack_start (_sidebar_notebook);
 	add_sidebar_page (_("Clips"), _trigger_clip_picker);
+	add_sidebar_page (_("Sources"), _trigger_source_list.widget ());
+	add_sidebar_page (_("Regions"), _trigger_region_list.widget ());
 
 	/* Upper pane ([slot | strips] | file browser) */
 	_pane_upper.add (_strip_group_box);
@@ -265,6 +266,8 @@ TriggerPage::set_session (Session* s)
 	_cue_box.set_session (s);
 	_trigger_clip_picker.set_session (s);
 	_master.set_session (s);
+	_trigger_source_list.set_session (s);
+	_trigger_region_list.set_session (s);
 
 	if (!_session) {
 		return;
@@ -527,8 +530,9 @@ TriggerPage::no_strip_drag_motion (Glib::RefPtr<Gdk::DragContext> const& context
 void
 TriggerPage::no_strip_drag_data_received (Glib::RefPtr<Gdk::DragContext> const& context, int /*x*/, int y, Gtk::SelectionData const& data, guint /*info*/, guint time)
 {
-	if (data.get_target () == "x-ardour/region.erl" || data.get_target () == "x-ardour/region.esl") {
-		boost::shared_ptr<Region> region = PublicEditor::instance ().get_dragged_region_from_sidebar ();
+	if (data.get_target () == "x-ardour/region.pbdid") {
+		PBD::ID rid (data.get_data_as_string ());
+		boost::shared_ptr<Region> region = RegionFactory::region_by_id (rid);
 		boost::shared_ptr<TriggerBox> triggerbox;
 
 		if (boost::dynamic_pointer_cast<AudioRegion> (region)) {
@@ -598,8 +602,8 @@ TriggerPage::drop_paths_part_two (std::vector<std::string> paths)
 	InstrumentSelector is; // instantiation builds instrument-list and sets default.
 	timepos_t pos (0);
 	Editing::ImportDisposition disposition = Editing::ImportSerializeFiles; // or Editing::ImportDistinctFiles // TODO use drop modifier? config?
-	PublicEditor::instance().do_import (midi_paths, disposition, Editing::ImportAsTrigger, SrcBest, SMFTrackName, SMFTempoIgnore, pos, is.selected_instrument (), false);
-	PublicEditor::instance().do_import (audio_paths, disposition, Editing::ImportAsTrigger, SrcBest, SMFTrackName, SMFTempoIgnore, pos);
+	PublicEditor::instance().do_import (midi_paths, disposition, Editing::ImportAsTrigger, SrcBest, SMFTrackNumber, SMFTempoIgnore, pos, is.selected_instrument (), false);
+	PublicEditor::instance().do_import (audio_paths, disposition, Editing::ImportAsTrigger, SrcBest, SMFTrackNumber, SMFTempoIgnore, pos);
 }
 
 bool

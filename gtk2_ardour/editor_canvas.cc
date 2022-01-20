@@ -268,8 +268,7 @@ Editor::initialize_canvas ()
 
 	vector<TargetEntry> target_table;
 
-	target_table.push_back (TargetEntry ("x-ardour/region.erl", TARGET_SAME_APP)); // DnD from the region list will generate this target
-	target_table.push_back (TargetEntry ("x-ardour/region.esl", TARGET_SAME_APP)); // DnD from the source list will generate this target
+	target_table.push_back (TargetEntry ("x-ardour/region.pbdid", TARGET_SAME_APP));
 	target_table.push_back (TargetEntry ("text/uri-list"));
 	target_table.push_back (TargetEntry ("text/plain"));
 	target_table.push_back (TargetEntry ("application/x-rootwin-drop"));
@@ -391,10 +390,8 @@ Editor::track_canvas_drag_data_received (const RefPtr<Gdk::DragContext>& context
 	if (!ARDOUR_UI_UTILS::engine_is_running ()) {
 		return;
 	}
-	if (data.get_target() == "x-ardour/region.erl") {
-		drop_regions (context, x, y, data, info, time, true);
-	} else if (data.get_target() == "x-ardour/region.esl") {
-		drop_regions (context, x, y, data, info, time, false);
+	if (data.get_target() == "x-ardour/region.pbdid") {
+		drop_regions (context, x, y, data, info, time);
 	} else {
 		drop_paths (context, x, y, data, info, time);
 	}
@@ -435,7 +432,7 @@ Editor::drop_paths_part_two (const vector<string>& paths, timepos_t const & p, d
 		/* drop onto canvas background: create new tracks */
 
 		InstrumentSelector is; // instantiation builds instrument-list and sets default.
-	        do_import (midi_paths, Editing::ImportDistinctFiles, ImportAsTrack, SrcBest, SMFTrackName, SMFTempoIgnore, pos, is.selected_instrument(), false);
+	        do_import (midi_paths, Editing::ImportDistinctFiles, ImportAsTrack, SrcBest, SMFTrackNumber, SMFTempoIgnore, pos, is.selected_instrument(), false);
 
 		if (UIConfiguration::instance().get_only_copy_imported_files() || copy) {
 			do_import (audio_paths, Editing::ImportDistinctFiles, Editing::ImportAsTrack,
@@ -453,7 +450,7 @@ Editor::drop_paths_part_two (const vector<string>& paths, timepos_t const & p, d
 			selection->set (tv);
 
 			do_import (midi_paths, Editing::ImportSerializeFiles, ImportToTrack,
-				   SrcBest, SMFTrackName, SMFTempoIgnore, pos);
+				   SrcBest, SMFTrackNumber, SMFTempoIgnore, pos);
 
 			if (UIConfiguration::instance().get_only_copy_imported_files() || copy) {
 				do_import (audio_paths, Editing::ImportSerializeFiles, Editing::ImportToTrack,

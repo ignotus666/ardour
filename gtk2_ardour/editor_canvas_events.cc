@@ -1210,37 +1210,17 @@ Editor::track_canvas_drag_motion (Glib::RefPtr<Gdk::DragContext> const& context,
 
 	if (can_drop) {
 
-		if (target == "x-ardour/region.erl") {
-			region = _regions->get_dragged_region ();
-		} else if (target == "x-ardour/region.esl") {
-			region = _sources->get_dragged_region ();
-		}
-
-		if (region) {
-
-			if (tv.first == 0
-			    && (
-				boost::dynamic_pointer_cast<AudioRegion> (region) != 0 ||
-				boost::dynamic_pointer_cast<MidiRegion> (region) != 0
-			       )
-			   )
-			{
+		if (target == "x-ardour/region.pbdid") {
+			if (tv.first == 0 && pbdid_dragged_dt != DataType::NIL) {
 				/* drop to drop-zone */
-				context->drag_status (context->get_suggested_action(), time);
+				context->drag_status (Gdk::ACTION_COPY, time);
 				return true;
 			}
 
-			if ((boost::dynamic_pointer_cast<AudioRegion> (region) != 0 &&
-			     dynamic_cast<AudioTimeAxisView*> (tv.first) != 0) ||
-			    (boost::dynamic_pointer_cast<MidiRegion> (region) != 0 &&
-			     dynamic_cast<MidiTimeAxisView*> (tv.first) != 0)) {
-
-				/* audio to audio
-				   OR
-				   midi to midi
-				*/
-
-				context->drag_status (context->get_suggested_action(), time);
+			if ((pbdid_dragged_dt == DataType::AUDIO && dynamic_cast<AudioTimeAxisView*> (tv.first) != 0) ||
+			    (pbdid_dragged_dt == DataType::MIDI  && dynamic_cast<MidiTimeAxisView*> (tv.first) != 0)) {
+				/* audio to audio OR MIDI to MIDI */
+				context->drag_status (Gdk::ACTION_COPY, time);
 				return true;
 			}
 		} else {
@@ -1270,9 +1250,8 @@ Editor::track_canvas_drag_motion (Glib::RefPtr<Gdk::DragContext> const& context,
 void
 Editor::drop_regions (const Glib::RefPtr<Gdk::DragContext>& /*context*/,
                       int x, int y,
-                      const SelectionData& /*data*/,
-                      guint /*info*/, guint /*time*/,
-                      bool from_region_list)
+                      const SelectionData& data,
+                      guint /*info*/, guint /*time*/)
 {
 	GdkEvent event;
 	double px;
@@ -1285,13 +1264,8 @@ Editor::drop_regions (const Glib::RefPtr<Gdk::DragContext>& /*context*/,
 	event.motion.state = Gdk::BUTTON1_MASK;
 	samplepos_t const pos = window_event_sample (&event, &px, &py);
 
-	boost::shared_ptr<Region> region;
-
-	if (from_region_list) {
-		region = _regions->get_dragged_region ();
-	} else {
-		region = _sources->get_dragged_region ();
-	}
+	PBD::ID rid (data.get_data_as_string ());
+	boost::shared_ptr<Region> region = RegionFactory::region_by_id (rid);
 
 	if (!region) { return; }
 

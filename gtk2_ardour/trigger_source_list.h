@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018-2019 Ben Loftis <ben@harrisonconsoles.com>
+ * Copyright (C) 2021 Robin Gareus <robin@gareus.org>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -15,32 +15,15 @@
  * with this program; if not, write to the Free Software Foundation, Inc.,
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
-#ifndef __gtk_ardour_editor_sources_h__
-#define __gtk_ardour_editor_sources_h__
+#ifndef _gtk_ardour_trigger_source_list_h_
+#define _gtk_ardour_trigger_source_list_h_
 
-#include "editor_component.h"
 #include "source_list_base.h"
 
-class EditorSources : public EditorComponent, public SourceListBase
+class TriggerSourceList : public SourceListBase
 {
 public:
-	EditorSources (Editor*);
-
-	boost::shared_ptr<ARDOUR::Region> get_single_selection ();
-
-	/* user actions */
-	void remove_selected_sources ();
-	void recover_selected_sources ();
-
-private:
-	void init ();
-	bool key_press (GdkEventKey*);
-	bool button_press (GdkEventButton*);
-	void show_context_menu (int button, int time);
-
-	void selection_changed ();
-
-	void drag_data_received (Glib::RefPtr<Gdk::DragContext> const&, gint, gint, Gtk::SelectionData const&, guint, guint);
+	TriggerSourceList ();
 };
 
-#endif
+#endif /* _gtk_ardour_trigger_source_list_h_ */
