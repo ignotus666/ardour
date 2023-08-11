@@ -23,6 +23,7 @@
 #ifndef __pbd_controllable_h__
 #define __pbd_controllable_h__
 
+#include <memory>
 #include <string>
 #include <set>
 
@@ -30,13 +31,15 @@
 #include "pbd/signals.h"
 #include <glibmm/threads.h>
 
-#include <boost/enable_shared_from_this.hpp>
 
 #include "pbd/statefuldestructible.h"
 
 class XMLNode;
 
 namespace PBD {
+
+class Controllable;
+typedef std::set<std::shared_ptr<Controllable>> ControllableSet;
 
 /** This is a pure virtual class to represent a scalar control.
  *
@@ -66,7 +69,7 @@ namespace PBD {
  * e.g. gain, which is presented to the user in log terms (dB)
  * but passed to the processor as a linear quantity.
  */
-class LIBPBD_API Controllable : public PBD::StatefulDestructible, public boost::enable_shared_from_this<Controllable>
+class LIBPBD_API Controllable : public PBD::StatefulDestructible, public std::enable_shared_from_this<Controllable>
 {
 public:
 	enum Flag {
@@ -137,16 +140,16 @@ public:
 
 	PBD::Signal0<void> LearningFinished;
 
-	static PBD::Signal1<bool, boost::weak_ptr<PBD::Controllable> > StartLearning;
-	static PBD::Signal1<void, boost::weak_ptr<PBD::Controllable> > StopLearning;
+	static PBD::Signal1<bool, std::weak_ptr<PBD::Controllable> > StartLearning;
+	static PBD::Signal1<void, std::weak_ptr<PBD::Controllable> > StopLearning;
 
-	static PBD::Signal1<void, boost::weak_ptr<PBD::Controllable> > GUIFocusChanged;
-	static PBD::Signal1<void, boost::weak_ptr<PBD::Controllable> > ControlTouched;
+	static PBD::Signal1<void, std::weak_ptr<PBD::Controllable> > GUIFocusChanged;
+	static PBD::Signal1<void, std::weak_ptr<PBD::Controllable> > ControlTouched;
 
 	PBD::Signal2<void,bool,PBD::Controllable::GroupControlDisposition> Changed;
 
 	int set_state (const XMLNode&, int version);
-	virtual XMLNode& get_state ();
+	virtual XMLNode& get_state () const;
 
 	std::string name() const { return _name; }
 
@@ -166,8 +169,9 @@ public:
 	void set_flag (Flag f); ///< _flags |= f;
 	void clear_flag (Flag f); ///< _flags &= ~f;
 
-	static boost::shared_ptr<Controllable> by_id (const PBD::ID&);
+	static std::shared_ptr<Controllable> by_id (const PBD::ID&);
 	static void dump_registry ();
+	static ControllableSet registered_controllables ();
 
 	static const std::string xml_node_name;
 

@@ -70,7 +70,7 @@ AutomationWatch::~AutomationWatch ()
 }
 
 void
-AutomationWatch::add_automation_watch (boost::shared_ptr<AutomationControl> ac)
+AutomationWatch::add_automation_watch (std::shared_ptr<AutomationControl> ac)
 {
 	Glib::Threads::Mutex::Lock lm (automation_watch_lock);
 	DEBUG_TRACE (DEBUG::Automation, string_compose ("now watching control %1 for automation, astate = %2\n", ac->name(), enum_2_string (ac->automation_state())));
@@ -105,14 +105,14 @@ AutomationWatch::add_automation_watch (boost::shared_ptr<AutomationControl> ac)
 	 * explicit here, but it helps to remind us what is going on.
 	 */
 
-	boost::weak_ptr<AutomationControl> wac (ac);
+	std::weak_ptr<AutomationControl> wac (ac);
 	ac->DropReferences.connect_same_thread (automation_connections[ac], boost::bind (&AutomationWatch::remove_weak_automation_watch, this, wac));
 }
 
 void
-AutomationWatch::remove_weak_automation_watch (boost::weak_ptr<AutomationControl> wac)
+AutomationWatch::remove_weak_automation_watch (std::weak_ptr<AutomationControl> wac)
 {
-	boost::shared_ptr<AutomationControl> ac = wac.lock();
+	std::shared_ptr<AutomationControl> ac = wac.lock();
 
 	if (!ac) {
 		return;
@@ -122,7 +122,7 @@ AutomationWatch::remove_weak_automation_watch (boost::weak_ptr<AutomationControl
 }
 
 void
-AutomationWatch::remove_automation_watch (boost::shared_ptr<AutomationControl> ac)
+AutomationWatch::remove_automation_watch (std::shared_ptr<AutomationControl> ac)
 {
 	Glib::Threads::Mutex::Lock lm (automation_watch_lock);
 	DEBUG_TRACE (DEBUG::Automation, string_compose ("remove control %1 from automation watch\n", ac->name()));
@@ -163,6 +163,8 @@ AutomationWatch::timer ()
 		return TRUE;
 	}
 
+	(void) Temporal::TempoMap::fetch ();
+
 	{
 		Glib::Threads::Mutex::Lock lm (automation_watch_lock);
 
@@ -170,8 +172,8 @@ AutomationWatch::timer ()
 		if (time > _last_time) {  //we only write automation in the forward direction; this fixes automation-recording in a loop
 			for (AutomationWatches::iterator aw = automation_watches.begin(); aw != automation_watches.end(); ++aw) {
 				if ((*aw)->alist()->automation_write()) {
-					double val = (*aw)->user_double();
-					boost::shared_ptr<SlavableAutomationControl> sc = boost::dynamic_pointer_cast<SlavableAutomationControl> (*aw);
+					double val = (*aw)->get_double();
+					std::shared_ptr<SlavableAutomationControl> sc = std::dynamic_pointer_cast<SlavableAutomationControl> (*aw);
 					if (sc) {
 						val = sc->reduce_by_masters (val, true);
 					}
@@ -199,10 +201,10 @@ AutomationWatch::timer ()
 void
 AutomationWatch::thread ()
 {
-	pbd_set_thread_priority (pthread_self(), PBD_SCHED_FIFO, AudioEngine::instance()->client_real_time_priority() - 2);
+	pbd_set_thread_priority (pthread_self(), PBD_SCHED_FIFO, AudioEngine::instance()->client_real_time_priority() - 2); // XXX
 	pthread_set_name ("AutomationWatch");
 	while (_run_thread) {
-		Glib::usleep ((gulong) floor (Config->get_automation_interval_msecs() * 1000));
+		Glib::usleep ((gulong) floor (Config->get_automation_interval_msecs() * 1000)); // TODO use pthread_cond_timedwait on _run_thread
 		timer ();
 	}
 }
@@ -222,7 +224,7 @@ AutomationWatch::set_session (Session* s)
 
 	if (_session) {
 		_run_thread = true;
-		_thread = Glib::Threads::Thread::create (boost::bind (&AutomationWatch::thread, this));
+		_thread = PBD::Thread::create (boost::bind (&AutomationWatch::thread, this));
 
 		_session->TransportStateChange.connect_same_thread (transport_connection, boost::bind (&AutomationWatch::transport_state_change, this));
 	}

@@ -23,7 +23,7 @@
 #include <string>
 #include <list>
 
-#include <boost/shared_ptr.hpp>
+#include <memory>
 
 #include <glibmm/threads.h>
 
@@ -45,10 +45,10 @@ public:
 	~VCAManager ();
 
 	VCAList create_vca (uint32_t how_many, std::string const & name = std::string());
-	void remove_vca (boost::shared_ptr<VCA>);
+	void remove_vca (std::shared_ptr<VCA>);
 
-	boost::shared_ptr<VCA> vca_by_number(int32_t) const;
-	boost::shared_ptr<VCA> vca_by_name (std::string const&) const;
+	std::shared_ptr<VCA> vca_by_number(int32_t) const;
+	std::shared_ptr<VCA> vca_by_name (std::string const&) const;
 
 	VCAList vcas() const;
 	VCAList::size_type n_vcas() const { return _vcas.size(); }
@@ -56,7 +56,7 @@ public:
 	PBD::Signal1<void,VCAList&> VCAAdded;
 	PBD::Signal0<void> VCACreated; /*<< is not emitted during set_state */
 
-	XMLNode& get_state();
+	XMLNode& get_state() const;
 	int set_state (XMLNode const&, int version);
 
 	bool vcas_loaded() const { return _vcas_loaded; }

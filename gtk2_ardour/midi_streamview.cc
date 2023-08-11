@@ -67,16 +67,17 @@ MidiStreamView::MidiStreamView (MidiTimeAxisView& tv)
 	, note_range_adjustment(0.0f, 0.0f, 0.0f)
 	, _range_dirty(false)
 	, _range_sum_cache(-1.0)
-	, _lowest_note(60)
-	, _highest_note(71)
+	, _lowest_note(UIConfiguration::instance().get_default_lower_midi_note())
+	, _highest_note(UIConfiguration::instance().get_default_upper_midi_note())
 	, _data_note_min(60)
 	, _data_note_max(71)
 	, _note_lines (0)
 	, _updates_suspended (false)
 {
-	/* use a group dedicated to MIDI underlays. Audio underlays are not in this group. */
-	midi_underlay_group = new ArdourCanvas::Container (_canvas_group);
-	midi_underlay_group->lower_to_bottom();
+	/* use a dedicated group for MIDI regions (on top of the grid and lines) */
+	_region_group = new ArdourCanvas::Container (_canvas_group);
+	_region_group->raise_to_top ();
+	_region_group->set_render_with_alpha (UIConfiguration::instance().modifier ("region alpha").a());
 
 	/* put the note lines in the timeaxisview's group, so it
 	   can be put below ghost regions from MIDI underlays
@@ -93,6 +94,7 @@ MidiStreamView::MidiStreamView (MidiTimeAxisView& tv)
 	color_handler ();
 
 	UIConfiguration::instance().ColorsChanged.connect(sigc::mem_fun(*this, &MidiStreamView::color_handler));
+	UIConfiguration::instance().ParameterChanged.connect(sigc::mem_fun(*this, &MidiStreamView::parameter_changed));
 
 	note_range_adjustment.set_page_size(_highest_note - _lowest_note);
 	note_range_adjustment.set_value(_lowest_note);
@@ -105,10 +107,20 @@ MidiStreamView::~MidiStreamView ()
 {
 }
 
-RegionView*
-MidiStreamView::create_region_view (boost::shared_ptr<Region> r, bool /*wfd*/, bool recording)
+void
+MidiStreamView::parameter_changed (string const & param)
 {
-	boost::shared_ptr<MidiRegion> region = boost::dynamic_pointer_cast<MidiRegion> (r);
+	if (param == X_("max-note-height")) {
+		apply_note_range (_lowest_note, _highest_note, true);
+	} else {
+		StreamView::parameter_changed (param);
+	}
+}
+
+RegionView*
+MidiStreamView::create_region_view (std::shared_ptr<Region> r, bool /*wfd*/, bool recording)
+{
+	std::shared_ptr<MidiRegion> region = std::dynamic_pointer_cast<MidiRegion> (r);
 
 	if (region == 0) {
 		return 0;
@@ -117,11 +129,11 @@ MidiStreamView::create_region_view (boost::shared_ptr<Region> r, bool /*wfd*/, b
 	RegionView* region_view = NULL;
 	if (recording) {
 		region_view = new MidiRegionView (
-			_canvas_group, _trackview, region,
+			_region_group, _trackview, region,
 			_samples_per_pixel, region_color, recording,
 			TimeAxisViewItem::Visibility(TimeAxisViewItem::ShowFrame));
 	} else {
-		region_view = new MidiRegionView (_canvas_group, _trackview, region,
+		region_view = new MidiRegionView (_region_group, _trackview, region,
 		                                  _samples_per_pixel, region_color);
 	}
 
@@ -131,9 +143,9 @@ MidiStreamView::create_region_view (boost::shared_ptr<Region> r, bool /*wfd*/, b
 }
 
 RegionView*
-MidiStreamView::add_region_view_internal (boost::shared_ptr<Region> r, bool wait_for_data, bool recording)
+MidiStreamView::add_region_view_internal (std::shared_ptr<Region> r, bool wait_for_data, bool recording)
 {
-	boost::shared_ptr<MidiRegion> region = boost::dynamic_pointer_cast<MidiRegion> (r);
+	std::shared_ptr<MidiRegion> region = std::dynamic_pointer_cast<MidiRegion> (r);
 
 	if (!region) {
 		return 0;
@@ -146,7 +158,7 @@ MidiStreamView::add_region_view_internal (boost::shared_ptr<Region> r, bool wait
 
 			(*i)->set_valid (true);
 
-			display_region(dynamic_cast<MidiRegionView*>(*i), wait_for_data);
+			display_region (dynamic_cast<MidiRegionView*>(*i), wait_for_data);
 
 			return 0;
 		}
@@ -159,16 +171,20 @@ MidiStreamView::add_region_view_internal (boost::shared_ptr<Region> r, bool wait
 
 	region_views.push_front (region_view);
 
-	/* display events and find note range */
-	display_region (region_view, wait_for_data);
+	{
+		RegionView::DisplaySuspender ds (*region_view, false);
 
-	/* fit note range if we are importing */
-	if (_trackview.session()->operation_in_progress (Operations::insert_file)) {
-		set_note_range (ContentsRange);
+		display_region (region_view, wait_for_data);
+
+		/* fit note range if we are importing */
+		if (_trackview.session()->operation_in_progress (Operations::insert_file)) {
+			/* this will call display_region() */
+			set_note_range (ContentsRange);
+		}
 	}
 
 	/* catch regionview going away */
-	boost::weak_ptr<Region> wr (region); // make this explicit
+	std::weak_ptr<Region> wr (region); // make this explicit
 	region->DropReferences.connect (*this, invalidator (*this), boost::bind (&MidiStreamView::remove_region_view, this, wr), gui_context());
 
 	RegionViewAdded (region_view);
@@ -177,24 +193,21 @@ MidiStreamView::add_region_view_internal (boost::shared_ptr<Region> r, bool wait
 }
 
 void
-MidiStreamView::display_region(MidiRegionView* region_view, bool load_model)
+MidiStreamView::display_region (MidiRegionView* region_view, bool)
 {
 	if (!region_view) {
 		return;
 	}
 
-	region_view->enable_display (true);
+	RegionView::DisplaySuspender ds (*region_view, false);
+
 	region_view->set_height (child_height());
 
-	boost::shared_ptr<MidiSource> source(region_view->midi_region()->midi_source(0));
+	std::shared_ptr<MidiSource> source (region_view->midi_region()->midi_source(0));
+
 	if (!source) {
 		error << _("attempt to display MIDI region with no source") << endmsg;
 		return;
-	}
-
-	if (load_model) {
-		Glib::Threads::Mutex::Lock lm(source->mutex());
-		source->load_model(lm);
 	}
 
 	if (!source->model()) {
@@ -202,17 +215,15 @@ MidiStreamView::display_region(MidiRegionView* region_view, bool load_model)
 		return;
 	}
 
-	_range_dirty = update_data_note_range(
-		source->model()->lowest_note(),
-		source->model()->highest_note());
+	_range_dirty = update_data_note_range (source->model()->lowest_note(), source->model()->highest_note());
 
 	// Display region contents
-	region_view->display_model(source->model());
+	region_view->display_model (source->model());
 }
 
 
 void
-MidiStreamView::display_track (boost::shared_ptr<Track> tr)
+MidiStreamView::display_track (std::shared_ptr<Track> tr)
 {
 	StreamView::display_track (tr);
 
@@ -222,15 +233,13 @@ MidiStreamView::display_track (boost::shared_ptr<Track> tr)
 }
 
 void
-MidiStreamView::update_contents_metrics(boost::shared_ptr<Region> r)
+MidiStreamView::update_contents_metrics(std::shared_ptr<Region> r)
 {
-	boost::shared_ptr<MidiRegion> mr = boost::dynamic_pointer_cast<MidiRegion>(r);
+	std::shared_ptr<MidiRegion> mr = std::dynamic_pointer_cast<MidiRegion>(r);
+
 	if (mr) {
-		Glib::Threads::Mutex::Lock lm(mr->midi_source(0)->mutex());
-		mr->midi_source(0)->load_model(lm);
-		_range_dirty = update_data_note_range(
-			mr->model()->lowest_note(),
-			mr->model()->highest_note());
+		Source::ReaderLock lm (mr->midi_source(0)->mutex());
+		_range_dirty = update_data_note_range (mr->model()->lowest_note(), mr->model()->highest_note());
 	}
 }
 
@@ -259,6 +268,9 @@ MidiStreamView::set_layer_display (LayerDisplay d)
 //	}
 
 	StreamView::set_layer_display (d);
+	for (auto& rv : region_views) {
+		rv->set_frame_color ();
+	}
 }
 
 void
@@ -283,23 +295,23 @@ MidiStreamView::redisplay_track ()
 		_data_note_max = 71;
 	}
 
+	vector<RegionView::DisplaySuspender> vds;
+
 	// Flag region views as invalid and disable drawing
 	for (i = region_views.begin(); i != region_views.end(); ++i) {
-		(*i)->set_valid(false);
-		(*i)->enable_display(false);
+		(*i)->set_valid (false);
+		vds.push_back (RegionView::DisplaySuspender (**i, false));
 	}
 
 	// Add and display region views, and flag them as valid
-	_trackview.track()->playlist()->foreach_region(
-		sigc::hide_return (sigc::mem_fun (*this, &StreamView::add_region_view)));
+	_trackview.track()->playlist()->foreach_region (sigc::hide_return (sigc::mem_fun (*this, &StreamView::add_region_view)));
 
 	// Stack regions by layer, and remove invalid regions
 	layer_regions();
 
 	// Update note range (not regions which are correct) and draw note lines
-	apply_note_range(_lowest_note, _highest_note, false);
+	apply_note_range (_lowest_note, _highest_note, false);
 }
-
 
 void
 MidiStreamView::update_contents_height ()
@@ -322,7 +334,7 @@ MidiStreamView::draw_note_lines()
 	double prev_y = .5;
 	uint32_t color;
 
-	_note_lines->clear();
+	ArdourCanvas::LineSet::ResetRAII lr (*_note_lines);
 
 	if (child_height() < 140 || note_height() < 3) {
 		/* track is too small for note lines, or there are too many */
@@ -393,36 +405,35 @@ MidiStreamView::apply_note_range(uint8_t lowest, uint8_t highest, bool to_region
 	_highest_note = highest;
 	_lowest_note = lowest;
 
-	int const max_note_height = 20;  // This should probably be based on text size...
+	float uiscale = UIConfiguration::instance().get_ui_scale();
+	uiscale = expf (uiscale) / expf (1.f);
+
+	const int mnh = UIConfiguration::instance().get_max_note_height();
+	int const max_note_height = std::max<int> (mnh, mnh * uiscale);
 	int const range = _highest_note - _lowest_note;
-	int const pixels_per_note = floor (child_height () / range);
 
-	/* do not grow note height beyond 10 pixels */
-	if (pixels_per_note > max_note_height) {
+	int const available_note_range = floor (child_height() / max_note_height);
+	int additional_notes = available_note_range - range;
 
-		int const available_note_range = floor (child_height() / max_note_height);
-		int additional_notes = available_note_range - range;
+	/* distribute additional notes to higher and lower ranges, clamp at 0 and 127 */
+	for (int i = 0; i < additional_notes; i++){
 
-		/* distribute additional notes to higher and lower ranges, clamp at 0 and 127 */
-		for (int i = 0; i < additional_notes; i++){
-
-			if (i % 2 && _highest_note < 127){
-				_highest_note++;
-			}
-			else if (i % 2) {
-				_lowest_note--;
-			}
-			else if (_lowest_note > 0){
-				_lowest_note--;
-			}
-			else {
-				_highest_note++;
-			}
+		if (i % 2 && _highest_note < 127){
+			_highest_note++;
+		}
+		else if (i % 2) {
+			_lowest_note--;
+		}
+		else if (_lowest_note > 0){
+			_lowest_note--;
+		}
+		else {
+			_highest_note++;
 		}
 	}
 
-	note_range_adjustment.set_page_size(_highest_note - _lowest_note);
-	note_range_adjustment.set_value(_lowest_note);
+	note_range_adjustment.set_page_size (_highest_note - _lowest_note);
+	note_range_adjustment.set_value (_lowest_note);
 
 	draw_note_lines();
 
@@ -498,7 +509,7 @@ MidiStreamView::setup_rec_box ()
 				plist.add (ARDOUR::Properties::name, string());
 				plist.add (ARDOUR::Properties::layer, 0);
 
-				boost::shared_ptr<MidiRegion> region (boost::dynamic_pointer_cast<MidiRegion>
+				std::shared_ptr<MidiRegion> region (std::dynamic_pointer_cast<MidiRegion>
 				                                      (RegionFactory::create (sources, plist, false)));
 				if (region) {
 
@@ -538,47 +549,15 @@ MidiStreamView::setup_rec_box ()
 	} else {
 
 		// cerr << "\tNOT rolling, rec_rects = " << rec_rects.size() << " rec_regions = " << rec_regions.size() << endl;
+		cleanup_rec_box ();
 
-		if (!rec_rects.empty() || !rec_regions.empty()) {
-
-			/* disconnect rapid update */
-			screen_update_connection.disconnect();
-			rec_data_ready_connections.drop_connections ();
-			rec_updating = false;
-			rec_active = false;
-
-			/* remove temp regions */
-
-			for (list<pair<boost::shared_ptr<Region>,RegionView*> >::iterator iter = rec_regions.begin(); iter != rec_regions.end();) {
-				list<pair<boost::shared_ptr<Region>,RegionView*> >::iterator tmp;
-
-				tmp = iter;
-				++tmp;
-
-				(*iter).first->drop_references ();
-
-				iter = tmp;
-			}
-
-			rec_regions.clear();
-
-			// cerr << "\tclear " << rec_rects.size() << " rec rects\n";
-
-			/* transport stopped, clear boxes */
-			for (vector<RecBoxInfo>::iterator iter=rec_rects.begin(); iter != rec_rects.end(); ++iter) {
-				RecBoxInfo &rect = (*iter);
-				delete rect.rectangle;
-			}
-
-			rec_rects.clear();
-
-		}
 	}
 }
 
 void
 MidiStreamView::color_handler ()
 {
+	_region_group->set_render_with_alpha (UIConfiguration::instance().modifier ("region alpha").a());
 	draw_note_lines ();
 
 	if (_trackview.is_midi_track()) {
@@ -626,7 +605,7 @@ MidiStreamView::update_rec_box ()
 	}
 
 	/* Update the region being recorded to reflect where we currently are */
-	boost::shared_ptr<ARDOUR::Region> region = rec_regions.back().first;
+	std::shared_ptr<ARDOUR::Region> region = rec_regions.back().first;
 	region->set_length (timecnt_t (_trackview.track()->current_capture_end () - _trackview.track()->current_capture_start()));
 
 	MidiRegionView* mrv = dynamic_cast<MidiRegionView*> (rec_regions.back().second);
@@ -699,7 +678,7 @@ MidiStreamView::paste (timepos_t const & pos, const Selection& selection, PasteC
 		prev = i;
 	}
 
-	boost::shared_ptr<Region> r = (*prev)->region ();
+	std::shared_ptr<Region> r = (*prev)->region ();
 
 	/* If *prev doesn't cover pos, it's no good */
 	if (r->position() > pos || ((r->position() + r->length()) < pos)) {

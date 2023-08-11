@@ -48,6 +48,7 @@ namespace PBD {
 		LIBARDOUR_API extern DebugBits CC121;
 		LIBARDOUR_API extern DebugBits CaptureAlignment;
 		LIBARDOUR_API extern DebugBits ChanMapping;
+		LIBARDOUR_API extern DebugBits Console1;
 		LIBARDOUR_API extern DebugBits ContourDesignControl;
 		LIBARDOUR_API extern DebugBits ControlProtocols;
 		LIBARDOUR_API extern DebugBits CycleTimers;
@@ -75,6 +76,7 @@ namespace PBD {
 		LIBARDOUR_API extern DebugBits MidiRingBuffer;
 		LIBARDOUR_API extern DebugBits MidiSourceIO;
 		LIBARDOUR_API extern DebugBits MidiTrackers;
+		LIBARDOUR_API extern DebugBits MidiTriggers;
 		LIBARDOUR_API extern DebugBits Monitor;
 		LIBARDOUR_API extern DebugBits OrderKeys;
 		LIBARDOUR_API extern DebugBits Panning;
@@ -86,16 +88,19 @@ namespace PBD {
 		LIBARDOUR_API extern DebugBits ProcessThreads;
 		LIBARDOUR_API extern DebugBits Processors;
 		LIBARDOUR_API extern DebugBits Push2;
+		LIBARDOUR_API extern DebugBits MIDISurface;
 		LIBARDOUR_API extern DebugBits Selection;
 		LIBARDOUR_API extern DebugBits SessionEvents;
 		LIBARDOUR_API extern DebugBits Slave;
 		LIBARDOUR_API extern DebugBits Solo;
 		LIBARDOUR_API extern DebugBits Soundcloud;
+		LIBARDOUR_API extern DebugBits SaveState;
 		LIBARDOUR_API extern DebugBits TFSMEvents;
 		LIBARDOUR_API extern DebugBits TFSMState;
 		LIBARDOUR_API extern DebugBits TXLTC;
 		LIBARDOUR_API extern DebugBits TempoMap;
 		LIBARDOUR_API extern DebugBits TempoMath;
+		LIBARDOUR_API extern DebugBits TopologyTiming;
 		LIBARDOUR_API extern DebugBits Transport;
 		LIBARDOUR_API extern DebugBits Triggers;
 		LIBARDOUR_API extern DebugBits US2400;
@@ -105,6 +110,7 @@ namespace PBD {
 		LIBARDOUR_API extern DebugBits VST3Process;
 		LIBARDOUR_API extern DebugBits VSTCallbacks;
 		LIBARDOUR_API extern DebugBits WiimoteControl;
+		LIBARDOUR_API extern DebugBits Freesound;
 
 	}
 }

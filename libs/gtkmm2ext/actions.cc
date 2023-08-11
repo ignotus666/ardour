@@ -18,14 +18,14 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+#include <cstdint>
 #include <cstring>
 #include <vector>
 #include <string>
 #include <list>
+#include <memory>
 #include <stack>
-#include <stdint.h>
 
-#include <boost/shared_ptr.hpp>
 
 #include <gtk/gtkaccelmap.h>
 #include <gtk/gtkuimanager.h>
@@ -359,7 +359,7 @@ ActionManager::create_action_group (void * owner, string const & name)
 	   has to touch the GTK one, because we want the GtkUIManager to
 	   be able to create widgets (particularly Menus) from our actions.
 
-	   This is a a necessary step for that to happen.
+	   This is a necessary step for that to happen.
 	*/
 
 	if (g) {

@@ -23,6 +23,10 @@
 #include <CoreAudio/CoreAudio.h>
 #include <AudioUnit/AudioUnit.h>
 
+#if MAC_OS_X_VERSION_MAX_ALLOWED >= 110000
+# include <AudioToolbox/AudioToolbox.h>
+#endif
+
 #include <AudioUnit/AudioUnit.h>
 #include <AudioToolbox/AudioToolbox.h>
 
@@ -63,7 +67,6 @@ public:
 	uint32_t available_channels (uint32_t device_id, bool input);
 	float    current_sample_rate (uint32_t device_id, bool input = false);
 	uint32_t get_latency (uint32_t device_id, bool input);
-	uint32_t get_latency (bool input);
 
 	std::string cached_port_name (uint32_t portnum, bool input) const;
 
@@ -73,6 +76,10 @@ public:
 	int      set_samples_per_period (uint32_t);
 
 	void     launch_control_app (uint32_t device_id);
+
+#if MAC_OS_X_VERSION_MAX_ALLOWED >= 110000
+	bool workgroup (os_workgroup_t&);
+#endif
 
 	void     pcm_stop (void);
 	int      pcm_start (
@@ -91,6 +98,14 @@ public:
 			) {
 		_error_callback = error_callback;
 		_error_arg = error_arg;
+	}
+
+	void set_halted_callback (
+			void ( halted_callback (void*)),
+			void * halted_arg
+			) {
+		_halted_callback = halted_callback;
+		_halted_arg = halted_arg;
 	}
 
 	void     set_hw_changed_callback (
@@ -140,6 +155,7 @@ public:
 	void buffer_size_callback ();
 	void sample_rate_callback ();
 	void hw_changed_callback ();
+	void halted_callback ();
 
 private:
 	float    current_sample_rate_id (AudioDeviceID id, bool input);
@@ -183,6 +199,9 @@ private:
 
 	void (* _error_callback) (void*);
 	void  * _error_arg;
+
+	void (* _halted_callback) (void*);
+	void  * _halted_arg;
 
 	void (* _hw_changed_callback) (void*);
 	void  * _hw_changed_arg;

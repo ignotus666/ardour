@@ -44,6 +44,9 @@
 #else
 #include <arpa/inet.h>
 #endif
+
+#include "pbd/assert.h"
+
 #include "smf.h"
 #include "smf_private.h"
 
@@ -75,6 +78,8 @@ smf_new(void)
 
 	cantfail = smf_set_format(smf, 0);
 	assert(!cantfail);
+
+	(void) cantfail; /* keep gcc quiet */
 
 	smf_init_tempo(smf);
 
@@ -168,9 +173,7 @@ smf_track_delete(smf_track_t *track)
 void
 smf_add_track(smf_t *smf, smf_track_t *track)
 {
-#ifndef NDEBUG
 	int cantfail;
-#endif
 
 	assert(track->smf == NULL);
 
@@ -181,13 +184,8 @@ smf_add_track(smf_t *smf, smf_track_t *track)
 	track->track_number = smf->number_of_tracks;
 
 	if (smf->number_of_tracks > 1) {
-#ifndef NDEBUG
 		cantfail = smf_set_format(smf, 1);
-		assert(!cantfail);
-#else
-		smf_set_format(smf, 1);
-#endif
-
+		x_assert (cantfail, !cantfail);
 	}
 }
 
@@ -318,11 +316,13 @@ smf_event_new_from_bytes(int first_byte, int second_byte, int third_byte)
 
 	if (first_byte > 255) {
 		g_warning("smf_event_new_from_bytes: first byte is %d, which is larger than 255.", first_byte);
+		smf_event_delete(event);
 		return (NULL);
 	}
 
 	if (!is_status_byte(first_byte)) {
 		g_warning("smf_event_new_from_bytes: first byte is not a valid status byte.");
+		smf_event_delete(event);
 		return (NULL);
 	}
 
@@ -337,11 +337,13 @@ smf_event_new_from_bytes(int first_byte, int second_byte, int third_byte)
 	if (len > 1) {
 		if (second_byte > 255) {
 			g_warning("smf_event_new_from_bytes: second byte is %d, which is larger than 255.", second_byte);
+			smf_event_delete(event);
 			return (NULL);
 		}
 
 		if (is_status_byte(second_byte)) {
 			g_warning("smf_event_new_from_bytes: second byte cannot be a status byte.");
+			smf_event_delete(event);
 			return (NULL);
 		}
 	}
@@ -349,11 +351,13 @@ smf_event_new_from_bytes(int first_byte, int second_byte, int third_byte)
 	if (len > 2) {
 		if (third_byte > 255) {
 			g_warning("smf_event_new_from_bytes: third byte is %d, which is larger than 255.", third_byte);
+			smf_event_delete(event);
 			return (NULL);
 		}
 
 		if (is_status_byte(third_byte)) {
 			g_warning("smf_event_new_from_bytes: third byte cannot be a status byte.");
+			smf_event_delete(event);
 			return (NULL);
 		}
 	}
@@ -525,7 +529,7 @@ smf_track_add_event(smf_track_t *track, smf_event_t *event)
 		if (smf_event_is_last(event))
 			maybe_add_to_tempo_map(event);
 		else
-			smf_create_tempo_map_and_compute_seconds(event->track->smf);
+			event->track->smf->need_tempo_map_compute = 1;
 	}
 }
 
@@ -709,6 +713,7 @@ smf_track_get_next_event(smf_track_t *track)
 	if (track->next_event_number < track->number_of_events) {
 		next_event = smf_track_get_event_by_number(track, track->next_event_number + 1);
 		assert(next_event);
+		assert(next_event->time_pulses >= event->time_pulses);
 
 		track->time_of_next_event = next_event->time_pulses;
 		track->next_event_number++;

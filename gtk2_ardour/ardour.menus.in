@@ -30,6 +30,7 @@
       <menuitem action='LoudnessAssistant'/>
 
       <menu name='Export' action='Export'>
+        <menuitem action='QuickExport'/>
         <menuitem action='ExportAudio'/>
         <menuitem action='StemExport'/>
         <menuitem action='ExportVideo'/>
@@ -123,6 +124,9 @@
         <menuitem action='jump-forward-to-mark'/>
         <menuitem action='jump-backward-to-mark'/>
         <separator/>
+        <menuitem action='jump-to-loop-start'/>
+        <menuitem action='jump-to-loop-end'/>
+        <separator/>
         <menuitem action='GotoZero'/>
         <menuitem action='GotoStart'/>
         <menuitem action='GotoEnd'/>
@@ -155,6 +159,17 @@
         <menuitem action='set-session-end-from-playhead'/>
       </menu>
 
+      <menu action="CueMenu">
+        <menuitem action='trigger-cue-0'/>
+        <menuitem action='trigger-cue-1'/>
+        <menuitem action='trigger-cue-2'/>
+        <menuitem action='trigger-cue-3'/>
+        <menuitem action='trigger-cue-4'/>
+        <menuitem action='trigger-cue-5'/>
+        <menuitem action='trigger-cue-6'/>
+        <menuitem action='trigger-cue-7'/>
+      </menu>
+
       <separator/>
       <menuitem action='ToggleTimeMaster'/>
       <menuitem action='TogglePunch'/>
@@ -184,6 +199,10 @@
       <menuitem action='editor-copy'/>
       <menuitem action='editor-paste'/>
       <separator/>
+      <menuitem action='cut-paste-section'/>
+      <menuitem action='copy-paste-section'/>
+      <menuitem action='delete-section'/>
+      <separator/>
       <menu action="SelectMenu">
         <menuitem action='select-all-objects'/>
         <menuitem action='select-all-tracks'/>
@@ -194,6 +213,8 @@
         <menuitem action='select-loop-range'/>
         <menuitem action='select-punch-range'/>
         <menuitem action='select-from-regions'/>
+        <separator/>
+        <menuitem action='add-range-marker-from-selection'/>
         <separator/>
         <menuitem action='select-all-after-edit-cursor'/>
         <menuitem action='select-all-before-edit-cursor'/>
@@ -221,7 +242,14 @@
         <menuitem action='separate-under-region'/>
         <menuitem action='separate-from-loop'/>
         <menuitem action='separate-from-punch'/>
-        <separator/>
+      </menu>
+      <menu action="ConsolidateMenu">
+        <menuitem action='editor-consolidate'/>
+#ifndef MIXBUS
+        <menuitem action='editor-consolidate-with-processing'/>
+#endif
+        <menuitem action='combine-regions'/>
+        <menuitem action='uncombine-regions'/>
       </menu>
       <menu action="AlignMenu">
         <menuitem action='align-regions-start'/>
@@ -239,6 +267,12 @@
         <menuitem action='toggle-region-fade-out'/>
       </menu>
       <separator/>
+      <menu action="AnalyzeMenu">
+        <menuitem action='editor-analyze-spectrum'/>
+        <menuitem action='editor-analyze-loudness'/>
+        <menuitem action='editor-loudness-assistant'/>
+      </menu>
+     <separator/>
       <menuitem action='tag-last-capture'/>
       <menuitem action='remove-last-capture'/>
       <separator/>
@@ -259,21 +293,32 @@
         <menuitem action='grid-type-eighths'/>
         <menuitem action='grid-type-asixteenthbeat'/>
         <menuitem action='grid-type-thirtyseconds'/>
-        <menuitem action='grid-type-thirds'/>
-        <menuitem action='grid-type-sixths'/>
-        <menuitem action='grid-type-twelfths'/>
-        <menuitem action='grid-type-twentyfourths'/>
-        <menuitem action='grid-type-fifths'/>
-        <menuitem action='grid-type-tenths'/>
-        <menuitem action='grid-type-twentieths'/>
-        <menuitem action='grid-type-sevenths'/>
-        <menuitem action='grid-type-fourteenths'/>
-        <menuitem action='grid-type-twentyeighths'/>
+        <menu action='GridChoiceTriplets'>
+          <menuitem action='grid-type-thirds'/>
+          <menuitem action='grid-type-sixths'/>
+          <menuitem action='grid-type-twelfths'/>
+          <menuitem action='grid-type-twentyfourths'/>
+        </menu>
+        <menu action='GridChoiceQuintuplets'>
+          <menuitem action='grid-type-fifths'/>
+          <menuitem action='grid-type-tenths'/>
+          <menuitem action='grid-type-twentieths'/>
+        </menu>
+        <menu action='GridChoiceSeptuplets'>
+          <menuitem action='grid-type-sevenths'/>
+          <menuitem action='grid-type-fourteenths'/>
+          <menuitem action='grid-type-twentyeighths'/>
+        </menu>
+        <menuitem action='grid-type-timecode'/>
+        <menuitem action='grid-type-minsec'/>
+        <menuitem action='grid-type-cdframe'/>
       </menu>
       <separator/>
       <menu action="TempoMenu">
         <menuitem action='set-tempo-from-region'/>
         <menuitem action='set-tempo-from-edit-range'/>
+        <menuitem action='tempo-edit-is-mapping'/>
+        <menuitem action='tempo-edit-is-changing'/>
       </menu>
       <menuitem action='set-mouse-mode-object-range'/>
       <menuitem action='show-touched-automation'/>
@@ -301,6 +346,10 @@
       <menuitem action='insert-region-from-source-list'/>
       <menuitem action='play-selected-regions'/>
       <menuitem action='tag-selected-regions'/>
+      <separator/>
+      <menuitem action='group-selected-regions'/>
+      <menuitem action='ungroup-selected-regions'/>
+      <separator/>
       <menuitem action='loop-region'/>
       <menuitem action='rename-region'/>
       <menuitem action='show-region-properties'/>
@@ -334,6 +383,7 @@
         <menuitem action='remove-overlap'/>
         <menuitem action='transform-region'/>
         <menuitem action='fork-region'/>
+        <menuitem action='fork-regions-from-unselected'/>
         <menuitem action='deinterlace-midi'/>
         <menuitem action='show-region-list-editor'/>
       </menu>
@@ -345,6 +395,7 @@
         <menuitem action='cut-region-gain'/>
         <menuitem action='reset-region-gain'/>
         <menuitem action='reset-region-gain-envelopes'/>
+        <menuitem action='toggle-region-polarity'/>
         <menuitem action='toggle-region-gain-envelope-active'/>
       </menu>
       <menu action='RegionMenuPosition'>
@@ -491,6 +542,7 @@
         <menuitem action="toggle-loop-punch-ruler"/>
         <menuitem action="toggle-cd-marker-ruler"/>
         <menuitem action="toggle-marker-ruler"/>
+        <menuitem action="toggle-cue-marker-ruler"/>
         <separator/>
         <menuitem action="toggle-video-ruler"/>
       </menu>
@@ -628,6 +680,7 @@
       <menuitem action='toggle-big-clock'/>
       <menuitem action='toggle-big-transport'/>
       <menuitem action='toggle-virtual-keyboard'/>
+      <menuitem action='toggle-library-downloader'/>
 
       <separator/><!-- Video Monitor !-->
       <menuitem action='ToggleJadeo'/>
@@ -647,6 +700,9 @@
 
       <separator/><!-- Plugin Related !-->
       <menuitem action='toggle-plugin-manager'/>
+#ifndef MIXBUS
+      <menuitem action='toggle-io-plugins'/>
+#endif
 #ifdef MIXBUS
       <separator/>
       <menuitem action='license-manager'/>
@@ -735,35 +791,33 @@
     <menuitem action="toggle-bbt-ruler"/>
     <separator/>
     <menuitem action="toggle-meter-ruler"/>
-    <menuitem action="toggle-timecode-ruler"/>
     <menuitem action="toggle-tempo-ruler"/>
     <menuitem action="toggle-range-ruler"/>
-    <menuitem action="toggle-marker-ruler"/>
-    <menuitem action="toggle-cd-marker-ruler"/>
     <menuitem action="toggle-loop-punch-ruler"/>
+    <menuitem action="toggle-cd-marker-ruler"/>
+    <menuitem action="toggle-marker-ruler"/>
+    <menuitem action="toggle-cue-marker-ruler"/>
     <separator/>
     <menuitem action="toggle-video-ruler"/>
   </popup>
 
   <popup name='ProcessorMenu' accelerators='true'>
+    <menuitem action='presets'/>
+    <menuitem action='edit'/>
+    <menuitem action='edit-generic'/>
+    <menuitem action='controls'/>
+    <menuitem action='rename'/>
+    <separator/>
+    <menuitem action='manage-pins'/>
+    <separator/>
+    <menuitem action='send_options'/>
+    <separator/>
     <menuitem action='newplugin'/>
     <menuitem action='newinsert'/>
     <menuitem action='newsend'/>
     <menuitem action='newaux'/>
     <menuitem action='newlisten'/>
     <menuitem action='removelisten'/>
-    <separator/>
-    <menuitem action='controls'/>
-    <menuitem action='send_options'/>
-    <separator/>
-#ifndef MIXBUS
-    <menu action="disk-io-menu">
-      <menuitem action='disk-io-prefader'/>
-      <menuitem action='disk-io-postfader'/>
-      <menuitem action='disk-io-custom'/>
-    </menu>
-#endif
-    <menuitem action='custom-volume-pos'/>
     <separator/>
     <menuitem action='clear'/>
     <menuitem action='clear_pre'/>
@@ -774,8 +828,6 @@
     <menuitem action='paste'/>
     <menuitem action='delete'/>
     <separator/>
-    <menuitem action='rename'/>
-    <separator/>
     <menuitem action='selectall'/>
     <menuitem action='deselectall'/>
     <separator/>
@@ -785,10 +837,15 @@
     <menuitem action='ab_plugins'/>
 #endif
     <separator/>
-    <menuitem action='manage-pins'/>
+#ifndef MIXBUS
+    <menu action="disk-io-menu">
+      <menuitem action='disk-io-prefader'/>
+      <menuitem action='disk-io-postfader'/>
+      <menuitem action='disk-io-custom'/>
+    </menu>
+#endif
+    <menuitem action='custom-volume-pos'/>
     <separator/>
-    <menuitem action='edit'/>
-    <menuitem action='edit-generic'/>
   </popup>
 
   <popup name='ShuttleUnitPopup' accelerators='true'>
@@ -807,6 +864,10 @@
   <popup name='PopupRegionMenu' action='PopupRegionMenu' accelerators='true'>
     <menuitem action='play-selected-regions'/>
     <menuitem action='tag-selected-regions'/>
+    <separator/>
+    <menuitem action='group-selected-regions'/>
+    <menuitem action='ungroup-selected-regions'/>
+    <separator/>
     <menuitem action='loop-region'/>
     <menuitem action='rename-region'/>
     <menuitem action='show-region-properties'/>
@@ -831,6 +892,7 @@
       <menuitem action='remove-overlap'/>
       <menuitem action='transform-region'/>
       <menuitem action='fork-region'/>
+      <menuitem action='fork-regions-from-unselected'/>
       <menuitem action='deinterlace-midi'/>
       <menuitem action='show-region-list-editor'/>
     </menu>
@@ -884,6 +946,7 @@
       <menuitem action='cut-region-gain'/>
       <menuitem action='reset-region-gain'/>
       <menuitem action='reset-region-gain-envelopes'/>
+      <menuitem action='toggle-region-polarity'/>
       <menuitem action='toggle-region-gain-envelope-active'/>
     </menu>
     <menu action='RegionMenuFades'>

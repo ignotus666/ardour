@@ -57,142 +57,51 @@ Gtkmm2ext::init (const char* localedir)
 void
 Gtkmm2ext::get_ink_pixel_size (Glib::RefPtr<Pango::Layout> layout,
 			       int& width,
-			       int& height)
+                               int& height)
 {
 	Pango::Rectangle ink_rect = layout->get_ink_extents ();
+
+	std::string s = layout->get_text ();
 
 	width = PANGO_PIXELS(ink_rect.get_width());
 	height = PANGO_PIXELS(ink_rect.get_height());
 }
 
 void
-Gtkmm2ext::get_pixel_size (Glib::RefPtr<Pango::Layout> layout,
-			   int& width,
-			   int& height)
+Gtkmm2ext::get_ink_pixel_size_with_descent (Glib::RefPtr<Pango::Layout> layout,
+                                            int& width,
+                                            int& height,
+                                            int& descent)
 {
-	layout->get_pixel_size (width, height);
+	Pango::Rectangle ink_rect = layout->get_ink_extents ();
+
+	std::string s = layout->get_text ();
+
+	width = PANGO_PIXELS(ink_rect.get_width());
+	height = PANGO_PIXELS(ink_rect.get_height());
+	descent = PANGO_PIXELS(ink_rect.get_descent());
 }
 
-void
-Gtkmm2ext::set_size_request_to_display_given_text (Gtk::Widget &w, const gchar *text,
+static void
+_set_size_request_to_display_given_text (Glib::RefPtr<Gtk::Style> const& sty, Gtk::Widget* w, std::string const& text,
 						   gint hpadding, gint vpadding)
 {
-	int width, height;
-	w.ensure_style ();
-
-	get_pixel_size (w.create_pango_layout (text), width, height);
-	w.set_size_request(width + hpadding, height + vpadding);
-}
-
-/** Set width request to display given text, and height to display anything.
- * This is useful for setting many widgets to the same height for consistency. */
-void
-Gtkmm2ext::set_size_request_to_display_given_text_width (Gtk::Widget& w,
-                                                         const gchar* htext,
-                                                         gint         hpadding,
-                                                         gint         vpadding)
-{
-	static const gchar* vtext = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
-
-	w.ensure_style ();
-
-	int hwidth, hheight;
-	get_pixel_size (w.create_pango_layout (htext), hwidth, hheight);
-
-	int vwidth, vheight;
-	get_pixel_size (w.create_pango_layout (vtext), vwidth, vheight);
-
-	w.set_size_request(hwidth + hpadding, vheight + vpadding);
-}
-
-void
-Gtkmm2ext::set_height_request_to_display_any_text (Gtk::Widget& w, gint vpadding)
-{
-	static const gchar* vtext = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
-
-	w.ensure_style ();
+	w->ensure_style ();
+	if (sty && sty->get_font() == w->get_style()->get_font()) {
+		return;
+	}
 
 	int width, height;
-	get_pixel_size (w.create_pango_layout (vtext), width, height);
-
-	w.set_size_request(-1, height + vpadding);
+	w->create_pango_layout (text)->get_pixel_size (width, height);
+	w->set_size_request(width + hpadding, height + vpadding);
 }
 
 void
-Gtkmm2ext::set_size_request_to_display_given_text (Gtk::Widget &w, std::string const & text,
+Gtkmm2ext::set_size_request_to_display_given_text (Gtk::Widget &w, std::string const& text,
 						   gint hpadding, gint vpadding)
 {
-	int width, height;
-	w.ensure_style ();
-
-	get_pixel_size (w.create_pango_layout (text), width, height);
-	w.set_size_request(width + hpadding, height + vpadding);
-}
-
-void
-Gtkmm2ext::set_size_request_to_display_given_text (Gtk::Widget &w,
-						   const std::vector<std::string>& strings,
-						   gint hpadding, gint vpadding)
-{
-	int width, height;
-	int width_max = 0;
-	int height_max = 0;
-	w.ensure_style ();
-	vector<string> copy;
-	const vector<string>* to_use;
-	vector<string>::const_iterator i;
-
-	for (i = strings.begin(); i != strings.end(); ++i) {
-		if ((*i).find_first_of ("gy") != string::npos) {
-			/* contains a descender */
-			break;
-		}
-	}
-
-	if (i == strings.end()) {
-		/* make a copy of the strings then add one that has a descender */
-		copy = strings;
-		copy.push_back ("g");
-		to_use = &copy;
-	} else {
-		to_use = &strings;
-	}
-
-	for (vector<string>::const_iterator i = to_use->begin(); i != to_use->end(); ++i) {
-		get_pixel_size (w.create_pango_layout (*i), width, height);
-		width_max = max(width_max,width);
-		height_max = max(height_max, height);
-	}
-
-	w.set_size_request(width_max + hpadding, height_max + vpadding);
-}
-
-/** This version specifies horizontal padding in text to avoid assumptions
- * about font size.  Should be used anywhere padding is used to avoid text,
- * like combo boxes.
- */
-void
-Gtkmm2ext::set_size_request_to_display_given_text (Gtk::Widget&                    w,
-                                                   const std::vector<std::string>& strings,
-                                                   const std::string&              hpadding,
-                                                   gint                            vpadding)
-{
-	int width_max = 0;
-	int height_max = 0;
-	w.ensure_style ();
-
-	for (vector<string>::const_iterator i = strings.begin(); i != strings.end(); ++i) {
-		int width, height;
-		get_pixel_size (w.create_pango_layout (*i), width, height);
-		width_max = max(width_max,width);
-		height_max = max(height_max, height);
-	}
-
-	int pad_width;
-	int pad_height;
-	get_pixel_size (w.create_pango_layout (hpadding), pad_width, pad_height);
-
-	w.set_size_request(width_max + pad_width, height_max + vpadding);
+	w.signal_style_changed().connect (sigc::bind (sigc::ptr_fun (_set_size_request_to_display_given_text), &w, text, hpadding, vpadding));
+	_set_size_request_to_display_given_text (Glib::RefPtr<Gtk::Style>(), &w, text, hpadding, vpadding);
 }
 
 static inline guint8
@@ -398,7 +307,7 @@ _position_menu_anchored (int& x, int& y, bool& push_in,
 	 *  e) if there is no selected menu item, align the menu above the button or
 	 *     below the button, depending on where there is more space.
 	 * For the d) and e) cases, the menu contents will be aligned as told, but
-	 * the menu itself will be bigger than that to accomodate the menu items
+	 * the menu itself will be bigger than that to accommodate the menu items
 	 * that are scrolled out of view, thanks to |push_in = true|.
 	 */
 
@@ -476,7 +385,7 @@ Gtkmm2ext::set_popdown_strings (Gtk::ComboBoxText& cr, const vector<string>& str
 	cr.clear ();
 
 	for (i = strings.begin(); i != strings.end(); ++i) {
-		cr.append_text (*i);
+		cr.append (*i);
 	}
 }
 
@@ -667,12 +576,15 @@ Gtkmm2ext::physical_screen_width (Glib::RefPtr<Gdk::Window> win)
 }
 
 void
-Gtkmm2ext::container_clear (Gtk::Container& c)
+Gtkmm2ext::container_clear (Gtk::Container& c, bool and_delete)
 {
 	list<Gtk::Widget*> children = c.get_children();
 	for (list<Gtk::Widget*>::iterator child = children.begin(); child != children.end(); ++child) {
 		(*child)->hide ();
 		c.remove (**child);
+		if (and_delete) {
+			delete *child;
+		}
 	}
 }
 

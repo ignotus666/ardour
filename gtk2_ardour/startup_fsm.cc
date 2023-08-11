@@ -124,7 +124,7 @@ StartupFSM::dialog_hidden (Gtk::Window* /* ignored */)
 void
 StartupFSM::queue_finish ()
 {
-	_signal_response (ExitProgram);
+	_signal_response (QuitProgram);
 }
 
 void
@@ -232,7 +232,7 @@ StartupFSM::dialog_response_handler (int response, StartupFSM::DialogID dialog_i
 				show_session_dialog (new_session_required);
 				break;
 			default:
-				_signal_response (ExitProgram);
+				_signal_response (QuitProgram);
 			}
 		default:
 			/* ERROR */
@@ -266,7 +266,7 @@ StartupFSM::dialog_response_handler (int response, StartupFSM::DialogID dialog_i
 				break;
 
 			default:
-				_signal_response (ExitProgram);
+				_signal_response (QuitProgram);
 				break;
 			}
 			break;
@@ -300,7 +300,7 @@ StartupFSM::dialog_response_handler (int response, StartupFSM::DialogID dialog_i
 				}
 				break;
 			default:
-				_signal_response (ExitProgram);
+				_signal_response (QuitProgram);
 			}
 			break;
 		default:
@@ -336,7 +336,7 @@ StartupFSM::dialog_response_handler (int response, StartupFSM::DialogID dialog_i
 				}
 				break;
 			default:
-				_signal_response (ExitProgram);
+				_signal_response (QuitProgram);
 				break;
 			}
 		default:
@@ -440,7 +440,7 @@ StartupFSM::start_audio_midi_setup ()
 	BootMessage (_("Starting Audio/MIDI Engine"));
 	bool setup_required = false;
 
-	boost::shared_ptr<AudioBackend> backend = AudioEngine::instance()->current_backend();
+	std::shared_ptr<AudioBackend> backend = AudioEngine::instance()->current_backend();
 	if (!backend) {
 		/* backend is unknown ... */
 		setup_required = true;
@@ -461,7 +461,7 @@ StartupFSM::start_audio_midi_setup ()
 		}
 	}
 
-	bool try_autostart = (Config->get_try_autostart_engine () || g_getenv ("ARDOUR_TRY_AUTOSTART_ENGINE"));
+	bool try_autostart = !new_user && (Config->get_try_autostart_engine () || g_getenv ("ARDOUR_TRY_AUTOSTART_ENGINE"));
 	if (session_is_new) {
 		try_autostart = false;
 	} else if (!backend) {
@@ -591,10 +591,21 @@ StartupFSM::get_session_parameters_from_path (string const & path, string const 
 		string program_version;
 
 		const string statefile_path = Glib::build_filename (session_path, session_name + ARDOUR::statefile_suffix);
-		if (Session::get_info_from_path (statefile_path, sr, fmt, program_version, &session_engine_hints)) {
-			/* exists but we can't read it correctly */
-			error << string_compose (_("Cannot get existing session information from %1"), statefile_path) << endmsg;
-			return false;
+		switch (Session::get_info_from_path (statefile_path, sr, fmt, program_version, &session_engine_hints)) {
+			case 0:
+				/* OK */
+				break;
+			case -1:
+				error << string_compose (_("Session file %1 does not exist"), statefile_path) << endmsg;
+				return false;
+				break;
+			case -3:
+				error << string_compose (_("Session %1 is from a newer version of %2"), statefile_path, PROGRAM_NAME) << endmsg;
+				return false;
+				break;
+			default:
+				error << string_compose (_("Cannot get existing session information from %1"), statefile_path) << endmsg;
+				return false;
 		}
 
 		session_existing_sample_rate = sr;
@@ -658,7 +669,7 @@ StartupFSM::get_session_parameters_from_path (string const & path, string const 
 		}
 
 		if (!have_resolved_template_name) {
-			/* this will produce a more or less meaninful error later:
+			/* this will produce a more or less meaningful error later:
 			 * "ERROR: Could not open session template [abs-path to user-config dir]"
 			 */
 			session_template = Glib::build_filename (ARDOUR::user_template_directory (), template_name);
@@ -687,7 +698,7 @@ StartupFSM::get_session_parameters_from_path (string const & path, string const 
 /** return values:
  * -1: failure
  *  1: failure but user can retry
- *  0: success, seesion parameters ready for use
+ *  0: success, session parameters ready for use
  */
 int
 StartupFSM::check_session_parameters (bool must_be_new)
@@ -717,10 +728,23 @@ StartupFSM::check_session_parameters (bool must_be_new)
 			SampleFormat fmt;
 			string program_version;
 			const string statefile_path = Glib::build_filename (session_path, session_name + ARDOUR::statefile_suffix);
-			if (Session::get_info_from_path (statefile_path, sr, fmt, program_version, &session_engine_hints)) {
-				/* exists but we can't read it */
-				return -1;
+			switch (Session::get_info_from_path (statefile_path, sr, fmt, program_version, &session_engine_hints)) {
+				case 0:
+					/* OK */
+					break;
+				case -1:
+					error << string_compose (_("Session file %1 does not exist"), statefile_path) << endmsg;
+					return -1;
+					break;
+				case -3:
+					error << string_compose (_("Session %1 is from a newer version of %2"), statefile_path, PROGRAM_NAME) << endmsg;
+					return -1;
+					break;
+				default:
+					error << string_compose (_("Cannot get existing session information from %1"), statefile_path) << endmsg;
+					return -1;
 			}
+
 			session_existing_sample_rate = sr;
 			return 0;
 		}
@@ -729,7 +753,7 @@ StartupFSM::check_session_parameters (bool must_be_new)
 	/* check for ".ardour" in statefile name, because we don't want
 	 * it
 	 *
-	 * XXX Note this wierd conflation of a
+	 * XXX Note this weird conflation of a
 	 * file-name-without-a-suffix and the session name. It's not
 	 * really a session name at all, but rather the suffix-free
 	 * name of a statefile (snapshot).
@@ -832,10 +856,21 @@ StartupFSM::check_session_parameters (bool must_be_new)
 	const string statefile_path = Glib::build_filename (session_path, session_name + ARDOUR::statefile_suffix);
 
 	if (!session_is_new) {
-
-		if (Session::get_info_from_path (statefile_path, sr, fmt, program_version, &session_engine_hints)) {
-			/* exists but we can't read it */
-			return -1;
+		switch (Session::get_info_from_path (statefile_path, sr, fmt, program_version, &session_engine_hints)) {
+			case 0:
+				/* OK */
+				break;
+			case -1:
+				error << string_compose (_("Session file %1 does not exist"), statefile_path) << endmsg;
+				return -1;
+				break;
+			case -3:
+				error << string_compose (_("Session %1 is from a newer version of %2"), statefile_path, PROGRAM_NAME) << endmsg;
+				return -1;
+				break;
+			default:
+				error << string_compose (_("Cannot get existing session information from %1"), statefile_path) << endmsg;
+				return -1;
 		}
 
 		session_existing_sample_rate = sr;
@@ -871,7 +906,7 @@ StartupFSM::copy_demo_sessions ()
 				continue;
 			}
 			/* skip sessions that are already in 'recent'.
-			 * eg. a new user changed <session-default-dir> shorly after installation
+			 * eg. a new user changed <session-default-dir> shortly after installation
 			 */
 			for (ARDOUR::RecentSessions::iterator r = rs.begin(); r != rs.end(); ++r) {
 				if ((*r).first == name) {

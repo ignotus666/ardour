@@ -173,6 +173,19 @@ Click OK to exit %1."), PROGRAM_NAME, AudioEngine::instance()->current_backend_n
 	return false; /* do not call again */
 }
 
+#if !(defined NDEBUG || defined PLATFORM_WINDOWS)
+static void
+sigusr1_handler (int /* signal */)
+{
+	cerr << "SIGUSR1 received in thread " << pthread_name() << endl;
+	char const * adf = g_getenv ("ARDOUR_DEBUG_FLAGS");
+	if (!adf) {
+		return;
+	}
+	PBD::parse_debug_options (adf);
+}
+#endif
+
 #ifndef PLATFORM_WINDOWS
 static void
 sigpipe_handler (int /*signal*/)
@@ -262,6 +275,14 @@ int main (int argc, char *argv[])
 		if (!setlocale (LC_ALL, "")) {
 			std::cerr << "localization call failed, " << PROGRAM_NAME << " will not be translated\n";
 		}
+	} else {
+		/* Force-disable localization if the user wishes so;
+		 * just calling setlocale (...,"C") is not sufficient for this;
+		 * it is probably the LANG env var which gets picked up later somewhere.
+		 */
+		Glib::setenv ("LC_ALL", "C", true);
+		Glib::setenv ("LC_MESSAGES", "C", true);
+		Glib::setenv ("LANG", "C", true);
 	}
 #endif
 
@@ -302,19 +323,34 @@ int main (int argc, char *argv[])
 	}
 #endif
 
+	/* This is horrible, but ... we don't want to init GTK until it is
+	 * really time (during a Gtkmm2ext::UI constructor. However, this will
+	 * try to load GTK modules too, so do this only if it appears that need
+	 * to do this.
+	 */
+
+	for (int n = 1; n < argc; ++n) {
+		if (!strncmp (argv[n], "--gtk", 5) || !strncmp (argv[n], "--gdk", 5)) {
+			gtk_parse_args (&argc, &argv);
+			break;
+		}
+	}
+
 	if (parse_opts (argc, argv)) {
 		command_line_parse_error (&argc, &argv);
 		exit (EXIT_FAILURE);
 	}
 
+#if !(defined NDEBUG || defined PLATFORM_WINDOWS)
 	{
-#ifndef NDEBUG
-		const char *adf;
+		const char * adf;
 		if ((adf = g_getenv ("ARDOUR_DEBUG_FLAGS"))) {
-			PBD::parse_debug_options (adf);
+			if (!g_getenv ("ARDOUR_DEBUG_ON_SIGUSR1")) {
+				PBD::parse_debug_options (adf);
+			}
 		}
-#endif /* NDEBUG */
 	}
+#endif
 
 	cout << PROGRAM_NAME
 	     << VERSIONSTRING
@@ -331,7 +367,7 @@ int main (int argc, char *argv[])
 	}
 
 	if (no_splash) {
-		cout << _("Copyright (C) 1999-2022 Paul Davis") << endl
+		cout << _("Copyright (C) 1999-2023 Paul Davis") << endl
 		     << _("Some portions Copyright (C) Steve Harris, Ari Johnson, Brett Viren, Joel Baker, Robin Gareus") << endl
 		     << endl
 		     << string_compose (_("%1 comes with ABSOLUTELY NO WARRANTY"), PROGRAM_NAME) << endl
@@ -402,7 +438,19 @@ int main (int argc, char *argv[])
 	}
 #endif
 
+#if !(defined NDEBUG || defined PLATFORM_WINDOWS)
+	if (g_getenv ("ARDOUR_DEBUG_ON_SIGUSR1")) {
+		if (::signal (SIGUSR1, sigusr1_handler)) {
+			cerr << _("Cannot install SIGUSR1 error handler") << endl;
+		} else {
+			cerr << _("Installed SIGUSR1 debug handler") << endl;
+		}
+	}
+#endif
+
 	DEBUG_TRACE (DEBUG::Locale, string_compose ("main() locale '%1'\n", setlocale (LC_NUMERIC, NULL)));
+
+	setup_gtk_ardour_enums ();
 
 	if (UIConfiguration::instance().pre_gui_init ()) {
 		error << _("Could not complete pre-GUI initialization") << endmsg;

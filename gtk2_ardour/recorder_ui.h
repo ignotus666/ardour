@@ -19,8 +19,8 @@
 #ifndef __gtk_ardour_recorder_ui_h__
 #define __gtk_ardour_recorder_ui_h__
 
-#include <boost/shared_ptr.hpp>
 #include <list>
+#include <memory>
 #include <vector>
 
 #include <gtkmm/alignment.h>
@@ -51,6 +51,7 @@
 
 namespace ARDOUR {
 	class SoloMuteRelease;
+	class IOPlug;
 }
 
 class TrackRecordAxis;
@@ -65,7 +66,7 @@ public:
 	void set_session (ARDOUR::Session*);
 	void cleanup ();
 
-	XMLNode& get_state ();
+	XMLNode& get_state () const;
 	int set_state (const XMLNode&, int /* version */);
 
 	Gtk::Window* use_own_window (bool and_fill_it);
@@ -81,12 +82,16 @@ private:
 	void parameter_changed (std::string const&);
 	void presentation_info_changed (PBD::PropertyChange const&);
 	void gui_extents_changed ();
-	void regions_changed (boost::shared_ptr<ARDOUR::RegionList>, PBD::PropertyChange const&);
+	void regions_changed (std::shared_ptr<ARDOUR::RegionList>, PBD::PropertyChange const&);
 
 	void start_updating ();
 	void stop_updating ();
 	bool update_meters ();
 	void add_or_remove_io (ARDOUR::DataType, std::vector<std::string>, bool);
+	void io_plugins_changed ();
+	void io_plugin_add (std::shared_ptr<ARDOUR::IOPlug>);
+	void io_plugin_going_away (std::weak_ptr<ARDOUR::IOPlug>);
+	void post_add_remove (bool);
 	void update_io_widget_labels ();
 
 	void initial_track_display ();
@@ -109,6 +114,10 @@ private:
 
 	void arm_all ();
 	void arm_none ();
+
+	void rec_undo ();
+	void rec_redo ();
+
 	void peak_reset ();
 
 	void update_sensitivity ();
@@ -157,11 +166,6 @@ private:
 
 	std::set<std::string> _spill_port_names;
 
-	sigc::connection          _fast_screen_update_connection;
-	sigc::connection          _ruler_width_update_connection;
-	PBD::ScopedConnectionList _engine_connections;
-	PBD::ScopedConnection     _monitor_connection;
-
 	class RecRuler : public CairoWidget , public ARDOUR::SessionHandlePtr
 	{
 		public:
@@ -188,7 +192,7 @@ private:
 	class InputPort : public Gtk::EventBox
 	{
 		public:
-			InputPort (std::string const&, ARDOUR::DataType, RecorderUI*, bool vertical = false);
+			InputPort (std::string const&, ARDOUR::DataType, RecorderUI*, bool vertical = false, bool ioplug = false);
 			~InputPort ();
 
 			void set_frame_label (std::string const&);
@@ -201,6 +205,7 @@ private:
 			void update_rec_stat ();
 
 			ARDOUR::DataType data_type () const;
+			bool ioplug () const { return _ioplug; }
 			std::string const& name () const;
 
 			void update (float, float); // FastMeter
@@ -210,6 +215,9 @@ private:
 			void clear ();
 
 			bool operator< (InputPort const& o) const {
+				if (_ioplug != o._ioplug) {
+					return !_ioplug;
+				}
 				if (_dt == o._dt) {
 					return PBD::naturally_less (_port_name.c_str (), o._port_name.c_str ());
 				}
@@ -231,6 +239,7 @@ private:
 			Gtk::Label                  _name_label;
 			ArdourWidgets::ArdourButton _add_button;
 			std::string                 _port_name;
+			bool                        _ioplug;
 			ARDOUR::WeakRouteList       _connected_routes;
 			ARDOUR::SoloMuteRelease*    _solo_release;
 
@@ -241,13 +250,14 @@ private:
 	};
 
 	struct InputPortPtrSort {
-		bool operator() (boost::shared_ptr<InputPort> const& a, boost::shared_ptr<InputPort> const& b) const {
+		bool operator() (std::shared_ptr<InputPort> const& a, std::shared_ptr<InputPort> const& b) const {
 			return *a < *b;
 		}
 	};
 
-	typedef std::map<std::string, boost::shared_ptr<InputPort> >     InputPortMap;
-	typedef std::set<boost::shared_ptr<InputPort>, InputPortPtrSort> InputPortSet;
+	typedef std::map<std::string, std::shared_ptr<InputPort> >     InputPortMap;
+	typedef std::set<std::shared_ptr<InputPort>, InputPortPtrSort> InputPortSet;
+	typedef std::set<std::shared_ptr<ARDOUR::IOPlug>>              IOPlugSet;
 
 	RecRuler                     _ruler;
 	Gtk::EventBox                _space;
@@ -258,6 +268,13 @@ private:
 	InputPortMap                _input_ports;
 	std::list<TrackRecordAxis*> _recorders;
 	std::list<TrackRecordAxis*> _visible_recorders;
+	IOPlugSet                   _ioplugins;
+
+	sigc::connection          _fast_screen_update_connection;
+	sigc::connection          _ruler_width_update_connection;
+	PBD::ScopedConnectionList _engine_connections;
+	PBD::ScopedConnection     _monitor_connection;
+	PBD::ScopedConnectionList _going_away_connections;
 
 public:
 	/* only for RecorderGroupTab */

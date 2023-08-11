@@ -54,6 +54,9 @@ struct LIBTEMPORAL_API BBT_Time
 	int32_t beats;
 	int32_t ticks;
 
+	int64_t as_integer() const;
+	static BBT_Time from_integer (int64_t);
+
 	bool is_bar() const { return beats == 1 && ticks == 0; }
 	bool is_beat() const { return ticks == 0; }
 
@@ -119,7 +122,7 @@ struct LIBTEMPORAL_API BBT_Time
 	 * next bar time.
 	 */
 
-	BBT_Time round_up_to_bar () const { return beats > 1 ? BBT_Time (bars+1, 1, 0) : BBT_Time (bars, 1, 0); }
+	BBT_Time round_up_to_bar () const;
 	BBT_Time round_down_to_bar () const { return BBT_Time (bars, 1, 0); }
 	BBT_Time next_bar () const { return (bars == -1) ? BBT_Time (1, 1, 0) : BBT_Time (bars+1, 1, 0); }
 	BBT_Time prev_bar () const { return (bars == 1)  ? BBT_Time (-1, 1, 0) : BBT_Time (bars-1, 1, 0); }
@@ -130,6 +133,13 @@ struct LIBTEMPORAL_API BBT_Time
 		  << std::setw (2) << beats << "|"
 		  << std::setw (4) << ticks;
 	}
+
+	std::string str () const {
+		std::ostringstream os;
+		os << bars << '|' << beats << '|' << ticks;
+		return os.str ();
+	}
+
 };
 
 struct LIBTEMPORAL_API BBT_Offset
@@ -188,9 +198,9 @@ struct LIBTEMPORAL_API BBT_Offset
 	}
 
 	BBT_Offset & operator*=(double factor) {
-		bars = lrint (bars * factor);
-		beats = lrint (beats * factor);
-		ticks = lrint (ticks * factor);
+		bars = (int32_t) lrint (bars * factor);
+		beats = (int32_t) lrint (beats * factor);
+		ticks = (int32_t) lrint (ticks * factor);
 		return *this;
 	}
 
@@ -202,9 +212,9 @@ struct LIBTEMPORAL_API BBT_Offset
 	}
 
 	BBT_Offset & operator/=(double factor) {
-		bars = lrint (bars / factor);
-		beats = lrint (beats / factor);
-		ticks = lrint (ticks / factor);
+		bars = (int32_t) lrint (bars / factor);
+		beats = (int32_t) lrint (beats / factor);
+		ticks = (int32_t) lrint (ticks / factor);
 		return *this;
 	}
 
@@ -242,6 +252,12 @@ struct LIBTEMPORAL_API BBT_Offset
 
 	operator bool() const {
 		return bars == 0 && beats == 0 && ticks == 0;
+	}
+
+	std::string str () const {
+		std::ostringstream os;
+		os << bars << '|' << beats << '|' << ticks;
+		return os.str ();
 	}
 };
 

@@ -44,6 +44,7 @@ canvas_sources = [
         'image.cc',
         'line.cc',
         'line_set.cc',
+        'lollipop.cc',
         'lookup_table.cc',
         'meter.cc',
         'note.cc',
@@ -58,7 +59,7 @@ canvas_sources = [
         'scroll_group.cc',
         'stateful_image.cc',
         'step_button.cc',
-	'table.cc',
+        'table.cc',
         'text.cc',
         'tracking_text.cc',
         'types.cc',
@@ -71,8 +72,6 @@ def options(opt):
     autowaf.set_options(opt)
 
 def configure(conf):
-    conf.load ('compiler_cxx')
-    autowaf.configure(conf)
     autowaf.check_pkg(conf, 'cairomm-1.0', uselib_store='CAIROMM', atleast_version='1.8.4')
 
 def build(bld):
@@ -163,7 +162,5 @@ def build(bld):
                     manual_testobj.target       = target
                     manual_testobj.install_path = ''
 
-    
 def shutdown():
     autowaf.shutdown()
-

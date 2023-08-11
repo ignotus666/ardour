@@ -75,14 +75,14 @@ class SaveTemplateDialog;
 class RoutePinWindowProxy : public WM::ProxyBase
 {
 public:
-	RoutePinWindowProxy (std::string const&, boost::shared_ptr<ARDOUR::Route>);
+	RoutePinWindowProxy (std::string const&, std::shared_ptr<ARDOUR::Route>);
 	~RoutePinWindowProxy ();
 
 	Gtk::Window*              get (bool create = false);
 	ARDOUR::SessionHandlePtr* session_handle ();
 
 private:
-	boost::weak_ptr<ARDOUR::Route> _route;
+	std::weak_ptr<ARDOUR::Route> _route;
 
 	void                  route_going_away ();
 	PBD::ScopedConnection going_away_connection;
@@ -95,10 +95,10 @@ public:
 
 	virtual ~RouteUI ();
 
-	boost::shared_ptr<ARDOUR::Stripable> stripable () const;
+	std::shared_ptr<ARDOUR::Stripable> stripable () const;
 
 	virtual void set_session (ARDOUR::Session*);
-	virtual void set_route (boost::shared_ptr<ARDOUR::Route>);
+	virtual void set_route (std::shared_ptr<ARDOUR::Route>);
 	virtual void set_button_names () = 0;
 
 	bool is_track () const;
@@ -108,17 +108,18 @@ public:
 	bool is_midi_track () const;
 	bool has_audio_outputs () const;
 
-	boost::shared_ptr<ARDOUR::Route> route () const
+	std::shared_ptr<ARDOUR::Route> route () const
 	{
 		return _route;
 	}
 	ARDOUR::RouteGroup* route_group () const;
 
-	boost::shared_ptr<ARDOUR::Track>      track () const;
-	boost::shared_ptr<ARDOUR::AudioTrack> audio_track () const;
-	boost::shared_ptr<ARDOUR::MidiTrack>  midi_track () const;
+	std::shared_ptr<ARDOUR::Track>      track () const;
+	std::shared_ptr<ARDOUR::AudioTrack> audio_track () const;
+	std::shared_ptr<ARDOUR::MidiTrack>  midi_track () const;
 
 	Gdk::Color route_color () const;
+	Gdk::Color route_color_tint () const;
 
 	// protected: XXX sigh this should be here
 	// callbacks used by dervice classes via &RouteUI::*
@@ -158,19 +159,22 @@ public:
 	void set_disk_io_point (ARDOUR::DiskIOPoint);
 	void fan_out (bool to_busses = true, bool group = true);
 
+	void set_time_domain (Temporal::TimeDomain, bool);
+	void clear_time_domain (bool);
+
 	/* The editor calls these when mapping an operation across multiple tracks */
-	void use_new_playlist (std::string name, std::string group_id, std::vector<boost::shared_ptr<ARDOUR::Playlist> > const&, bool copy);
+	void use_new_playlist (std::string name, std::string group_id, std::vector<std::shared_ptr<ARDOUR::Playlist> > const&, bool copy);
 	void clear_playlist ();
 
-	void        use_playlist (Gtk::RadioMenuItem* item, boost::weak_ptr<ARDOUR::Playlist> wpl);
-	void        select_playlist_matching (boost::weak_ptr<ARDOUR::Playlist> wpl);
+	void        use_playlist (Gtk::RadioMenuItem* item, std::weak_ptr<ARDOUR::Playlist> wpl);
+	void        select_playlist_matching (std::weak_ptr<ARDOUR::Playlist> wpl);
 	void        show_playlist_selector ();
 
 	/* used by EditorRoutes */
-	static Gtkmm2ext::ActiveState solo_active_state (boost::shared_ptr<ARDOUR::Stripable>);
-	static Gtkmm2ext::ActiveState solo_isolate_active_state (boost::shared_ptr<ARDOUR::Stripable>);
-	static Gtkmm2ext::ActiveState solo_safe_active_state (boost::shared_ptr<ARDOUR::Stripable>);
-	static Gtkmm2ext::ActiveState mute_active_state (ARDOUR::Session*, boost::shared_ptr<ARDOUR::Stripable>);
+	static Gtkmm2ext::ActiveState solo_active_state (std::shared_ptr<ARDOUR::Stripable>);
+	static Gtkmm2ext::ActiveState solo_isolate_active_state (std::shared_ptr<ARDOUR::Stripable>);
+	static Gtkmm2ext::ActiveState solo_safe_active_state (std::shared_ptr<ARDOUR::Stripable>);
+	static Gtkmm2ext::ActiveState mute_active_state (ARDOUR::Session*, std::shared_ptr<ARDOUR::Stripable>);
 
 protected:
 	virtual void set_color (uint32_t c);
@@ -198,8 +202,8 @@ protected:
 	Gtk::Menu* solo_menu;
 	Gtk::Menu* sends_menu;
 
-	boost::shared_ptr<ARDOUR::Route>    _route;
-	boost::shared_ptr<ARDOUR::Delivery> _current_delivery;
+	std::shared_ptr<ARDOUR::Route>    _route;
+	std::shared_ptr<ARDOUR::Delivery> _current_delivery;
 
 	Gtk::CheckMenuItem* pre_fader_mute_check;
 	Gtk::CheckMenuItem* post_fader_mute_check;
@@ -215,11 +219,12 @@ protected:
 	static IOSelectorMap input_selectors;
 	static IOSelectorMap output_selectors;
 
-	static void delete_ioselector (IOSelectorMap&, boost::shared_ptr<ARDOUR::Route>);
+	static void delete_ioselector (IOSelectorMap&, std::shared_ptr<ARDOUR::Route>);
 
-	static void help_count_plugins (boost::weak_ptr<ARDOUR::Processor> p, uint32_t*);
+	static void help_count_plugins (std::weak_ptr<ARDOUR::Processor> p, uint32_t*);
 
 	PBD::ScopedConnectionList route_connections;
+	PBD::ScopedConnectionList send_connections;
 	bool                      self_destruct;
 
 	void init ();
@@ -234,10 +239,11 @@ protected:
 	virtual void stop_step_editing () {}
 	virtual void create_sends (ARDOUR::Placement, bool);
 	virtual void create_selected_sends (ARDOUR::Placement, bool);
-	virtual void bus_send_display_changed (boost::shared_ptr<ARDOUR::Route>);
+	virtual void bus_send_display_changed (std::shared_ptr<ARDOUR::Route>);
 
 	bool mark_hidden (bool yn);
-	void set_invert_sensitive (bool);
+	void setup_invert_buttons ();
+	void update_phase_invert_sensitivty ();
 	bool verify_new_route_name (const std::string& name);
 	void check_rec_enable_sensitivity ();
 	void route_gui_changed (PBD::PropertyChange const&);
@@ -254,14 +260,13 @@ protected:
 
 	Gtk::CheckMenuItem* denormal_menu_item;
 
-	static void        set_showing_sends_to (boost::shared_ptr<ARDOUR::Route>);
+	static void        set_showing_sends_to (std::shared_ptr<ARDOUR::Route>);
 	static std::string program_port_prefix;
 
 	ARDOUR::SoloMuteRelease* _solo_release;
 	ARDOUR::SoloMuteRelease* _mute_release;
 
 private:
-	void setup_invert_buttons ();
 	void invert_menu_toggled (uint32_t);
 	bool invert_press (GdkEventButton*);
 	bool invert_release (GdkEventButton*, uint32_t i);
@@ -273,6 +278,7 @@ private:
 	void update_solo_display ();
 	void update_mute_display ();
 	void update_polarity_display ();
+	void update_polarity_tooltips ();
 	void update_solo_button ();
 	void solo_changed_so_update_mute ();
 	void session_rec_enable_changed ();
@@ -309,7 +315,7 @@ private:
 
 	void save_as_template_dialog_response (int response, SaveTemplateDialog* d);
 
-	std::string resolve_new_group_playlist_name (std::string const&, std::vector<boost::shared_ptr<ARDOUR::Playlist> > const&);
+	std::string resolve_new_group_playlist_name (std::string const&, std::vector<std::shared_ptr<ARDOUR::Playlist> > const&);
 
 	PlaylistSelector*  _playlist_selector;
 
@@ -336,9 +342,9 @@ private:
 	 *  by a click on the `Sends' button.  The parameter is the route that the sends are
 	 *  to, or 0 if no route is now in this mode.
 	 */
-	static PBD::Signal1<void, boost::shared_ptr<ARDOUR::Route> > BusSendDisplayChanged;
+	static PBD::Signal1<void, std::shared_ptr<ARDOUR::Route> > BusSendDisplayChanged;
 
-	static boost::weak_ptr<ARDOUR::Route> _showing_sends_to;
+	static std::weak_ptr<ARDOUR::Route> _showing_sends_to;
 
 	static uint32_t _max_invert_buttons;
 };

@@ -159,7 +159,7 @@ public:
 		HeightPerLane
 	};
 
-	virtual void set_height (uint32_t h, TrackHeightMode m = OnlySelf);
+	virtual void set_height (uint32_t h, TrackHeightMode m = OnlySelf, bool from_idle = false);
 	void set_height_enum (Height, bool apply_to_selection = false);
 	void reset_height();
 
@@ -171,7 +171,7 @@ public:
 	virtual void step_height (bool);
 
 	virtual ARDOUR::RouteGroup* route_group() const { return 0; }
-	virtual boost::shared_ptr<ARDOUR::Playlist> playlist() const { return boost::shared_ptr<ARDOUR::Playlist> (); }
+	virtual std::shared_ptr<ARDOUR::Playlist> playlist() const { return std::shared_ptr<ARDOUR::Playlist> (); }
 
 	virtual void set_samples_per_pixel (double);
 	virtual void show_selection (TimeSelection&);
@@ -203,8 +203,8 @@ public:
 
 	virtual void fade_range (TimeSelection&) {}
 
-	virtual boost::shared_ptr<ARDOUR::Region> find_next_region (ARDOUR::timepos_t const & /*pos*/, ARDOUR::RegionPoint, int32_t /*dir*/) {
-		return boost::shared_ptr<ARDOUR::Region> ();
+	virtual std::shared_ptr<ARDOUR::Region> find_next_region (ARDOUR::timepos_t const & /*pos*/, ARDOUR::RegionPoint, int32_t /*dir*/) {
+		return std::shared_ptr<ARDOUR::Region> ();
 	}
 
 	void order_selection_trims (ArdourCanvas::Item *item, bool put_start_on_top);
@@ -227,7 +227,7 @@ public:
 	virtual LayerDisplay layer_display () const { return Overlaid; }
 	virtual StreamView* view () const { return 0; }
 
-	typedef std::vector<boost::shared_ptr<TimeAxisView> > Children;
+	typedef std::vector<std::shared_ptr<TimeAxisView> > Children;
 	Children get_child_list () const;
 
 	static uint32_t preset_height (Height);
@@ -275,7 +275,7 @@ protected:
 
 	virtual bool name_entry_changed (std::string const&);
 
-	/** Handle mouse relaese on our LHS control name ebox.
+	/** Handle mouse release on our LHS control name ebox.
 	 *
 	 *@ param ev the event
 	 */
@@ -284,12 +284,6 @@ protected:
 	virtual bool controls_ebox_button_press (GdkEventButton*);
 	virtual bool controls_ebox_motion (GdkEventMotion*);
 	virtual bool controls_ebox_leave (GdkEventCrossing*);
-
-	/** Display the standard LHS control menu at when.
-	 *
-	 * @param when the popup activation time
-	 */
-	virtual void popup_display_menu (guint32 when);
 
 	/** Build the standard LHS control menu.
 	 * Subclasses should extend this method to add their own menu options.
@@ -304,8 +298,8 @@ protected:
 	bool is_child (TimeAxisView*);
 	virtual bool propagate_time_selection () const { return false; }
 
-	virtual void remove_child (boost::shared_ptr<TimeAxisView>);
-	void add_child (boost::shared_ptr<TimeAxisView>);
+	virtual void remove_child (std::shared_ptr<TimeAxisView>);
+	void add_child (std::shared_ptr<TimeAxisView>);
 
 	/* selection display */
 
@@ -336,6 +330,8 @@ private:
 
 	void compute_heights ();
 	bool maybe_set_cursor (int y);
+	void popup_display_menu (int button, guint32 when);
+
 
 }; /* class TimeAxisView */
 

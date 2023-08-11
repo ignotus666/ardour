@@ -432,7 +432,7 @@ lua_forkexec (lua_State *L)
 	}
 	args[argc] = 0;
 
-	ARDOUR::SystemExec* x = new ARDOUR::SystemExec (args[0], args);
+	ARDOUR::SystemExec* x = new ARDOUR::SystemExec (args[0], args, true);
 	x->Terminated.connect (_luaexecs, MISSING_INVALIDATOR, boost::bind (&reaper, x), gui_context());
 
 	if (x->start()) {
@@ -455,7 +455,7 @@ lua_exec (std::string cmd)
 	args[1] = strdup ("-c");
 	args[2] = strdup (cmd.c_str());
 	args[3] = 0;
-	ARDOUR::SystemExec x ("/bin/sh", args);
+	ARDOUR::SystemExec x ("/bin/sh", args, true);
 	if (x.start()) {
 		return -1;
 	}
@@ -496,15 +496,15 @@ lua_actionlist (lua_State *L)
 		}
 
 		//kinda kludgy way to avoid displaying menu items as mappable
-		if (parts[1] == _("Main_menu"))
+		if (parts[1] == X_("Main_menu"))
 			continue;
-		if (parts[1] == _("JACK"))
+		if (parts[1] == X_("JACK"))
 			continue;
-		if (parts[1] == _("redirectmenu"))
+		if (parts[1] == X_("redirectmenu"))
 			continue;
-		if (parts[1] == _("RegionList"))
+		if (parts[1] == X_("RegionList"))
 			continue;
-		if (parts[1] == _("ProcessorMenu"))
+		if (parts[1] == X_("ProcessorMenu"))
 			continue;
 
 		if (!action_tbl[parts[1]].isTable()) {
@@ -539,6 +539,7 @@ using namespace ARDOUR;
 PBD::Signal0<void> LuaInstance::LuaTimerS;
 PBD::Signal0<void> LuaInstance::LuaTimerDS;
 PBD::Signal0<void> LuaInstance::SetSession;
+PBD::Signal0<void> LuaInstance::SelectionChanged;
 
 void
 LuaInstance::register_hooks (lua_State* L)
@@ -937,6 +938,7 @@ LuaInstance::register_classes (lua_State* L)
 		.addFunction ("stem_export", &PublicEditor::stem_export)
 		.addFunction ("export_selection", &PublicEditor::export_selection)
 		.addFunction ("export_range", &PublicEditor::export_range)
+		.addFunction ("quick_export", &PublicEditor::quick_export)
 
 		.addFunction ("set_zoom_focus", &PublicEditor::set_zoom_focus)
 		.addFunction ("get_zoom_focus", &PublicEditor::get_zoom_focus)
@@ -1117,6 +1119,7 @@ LuaInstance::register_classes (lua_State* L)
 #undef IMPORTMODE
 #undef IMPORTPOSITION
 #undef IMPORTDISPOSITION
+#undef TEMPOEDITBEHAVIOR
 
 #define ZOOMFOCUS(NAME) .addConst (stringify(NAME), (Editing::ZoomFocus)Editing::NAME)
 #define GRIDTYPE(NAME) .addConst (stringify(NAME), (Editing::GridType)Editing::NAME)
@@ -1126,6 +1129,7 @@ LuaInstance::register_classes (lua_State* L)
 #define IMPORTMODE(NAME) .addConst (stringify(NAME), (Editing::ImportMode)Editing::NAME)
 #define IMPORTPOSITION(NAME) .addConst (stringify(NAME), (Editing::ImportPosition)Editing::NAME)
 #define IMPORTDISPOSITION(NAME) .addConst (stringify(NAME), (Editing::ImportDisposition)Editing::NAME)
+#define TEMPOEDITBEHAVIOR(NAME) .addConst (stringify(NAME), (Editing::TempoEditBehavior)Editing::NAME)
 	luabridge::getGlobalNamespace (L)
 		.beginNamespace ("Editing")
 #		include "editing_syms.h"
@@ -1343,6 +1347,12 @@ LuaInstance::init ()
 
 	luabridge::push <PublicEditor *> (L, &PublicEditor::instance());
 	lua_setglobal (L, "Editor");
+
+	Selection& sel (PublicEditor::instance().get_selection ());
+	sel.TimeChanged.connect (sigc::mem_fun (*this, &LuaInstance::selection_changed));
+	sel.RegionsChanged.connect (sigc::mem_fun (*this, &LuaInstance::selection_changed));
+	sel.TracksChanged.connect (sigc::mem_fun (*this, &LuaInstance::selection_changed));
+	sel.MarkersChanged.connect (sigc::mem_fun (*this, &LuaInstance::selection_changed));
 }
 
 int
@@ -1455,6 +1465,12 @@ LuaInstance::every_point_one_seconds ()
 	LuaTimerDS (); // emit signal
 }
 
+void
+LuaInstance::selection_changed ()
+{
+	SelectionChanged (); // emit signal
+}
+
 int
 LuaInstance::set_state (const XMLNode& node)
 {
@@ -1529,7 +1545,7 @@ LuaInstance::pre_seed_scripts ()
 }
 
 bool
-LuaInstance::interactive_add (LuaScriptInfo::ScriptType type, int id)
+LuaInstance::interactive_add (Gtk::Window& parent, LuaScriptInfo::ScriptType type, int id)
 {
 	std::string title;
 	std::string param_function = "action_params";
@@ -1557,7 +1573,7 @@ LuaInstance::interactive_add (LuaScriptInfo::ScriptType type, int id)
 	}
 
 	LuaScriptInfoPtr spi;
-	ScriptSelector ss (title, type);
+	ScriptSelector ss (parent, title, type);
 	switch (ss.run ()) {
 		case Gtk::RESPONSE_ACCEPT:
 			spi = ss.script();
@@ -2037,7 +2053,7 @@ LuaCallback::~LuaCallback ()
 }
 
 XMLNode&
-LuaCallback::get_state (void)
+LuaCallback::get_state () const
 {
 	std::string saved;
 	{
@@ -2349,6 +2365,14 @@ LuaCallback::connect_3 (enum LuaSignal::LuaSignal ls, T ref, PBD::Signal3<void, 
 			gui_context());
 }
 
+template <typename T, typename C1, typename C2, typename C3, typename C4> void
+LuaCallback::connect_4 (enum LuaSignal::LuaSignal ls, T ref, PBD::Signal4<void, C1, C2, C3, C4> *signal) {
+	signal->connect (
+			_connections, invalidator (*this),
+			boost::bind (&LuaCallback::proxy_4<T, C1, C2, C3, C4>, this, ls, ref, _1, _2, _3, _4),
+			gui_context());
+}
+
 template <typename T> void
 LuaCallback::proxy_0 (enum LuaSignal::LuaSignal ls, T ref) {
 	bool ok = true;
@@ -2397,6 +2421,20 @@ LuaCallback::proxy_3 (enum LuaSignal::LuaSignal ls, T ref, C1 a1, C2 a2, C3 a3) 
 	bool ok = true;
 	{
 		const luabridge::LuaRef& rv ((*_lua_call)((int)ls, ref, a1, a2, a3));
+		if (! rv.cast<bool> ()) {
+			ok = false;
+		}
+	}
+	if (!ok) {
+		drop_callback (); /* EMIT SIGNAL */
+	}
+}
+
+template <typename T, typename C1, typename C2, typename C3, typename C4> void
+LuaCallback::proxy_4 (enum LuaSignal::LuaSignal ls, T ref, C1 a1, C2 a2, C3 a3, C4 a4) {
+	bool ok = true;
+	{
+		const luabridge::LuaRef& rv ((*_lua_call)((int)ls, ref, a1, a2, a3, a4));
 		if (! rv.cast<bool> ()) {
 			ok = false;
 		}

@@ -63,22 +63,22 @@ ExportFormatBase::~ExportFormatBase ()
 
 }
 
-boost::shared_ptr<ExportFormatBase>
+std::shared_ptr<ExportFormatBase>
 ExportFormatBase::get_intersection (ExportFormatBase const & other) const
 {
 	return do_set_operation (other, SetIntersection);
 }
 
-boost::shared_ptr<ExportFormatBase>
+std::shared_ptr<ExportFormatBase>
 ExportFormatBase::get_union (ExportFormatBase const & other) const
 {
 	return do_set_operation (other, SetUnion);
 }
 
-boost::shared_ptr<ExportFormatBase>
+std::shared_ptr<ExportFormatBase>
 ExportFormatBase::do_set_operation (ExportFormatBase const & other, SetOperation operation) const
 {
-	boost::shared_ptr<ExportFormatBase> result (new ExportFormatBase ());
+	std::shared_ptr<ExportFormatBase> result (new ExportFormatBase ());
 
 	/* Sets */
 
@@ -192,6 +192,7 @@ ExportFormatBase::nearest_sample_rate (samplecnt_t sample_rate)
 
 	DO_SR_COMPARISON(SR_8);
 	DO_SR_COMPARISON(SR_22_05);
+	DO_SR_COMPARISON(SR_24);
 	DO_SR_COMPARISON(SR_44_1);
 	DO_SR_COMPARISON(SR_48);
 	DO_SR_COMPARISON(SR_88_2);

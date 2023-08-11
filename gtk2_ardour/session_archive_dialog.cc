@@ -40,17 +40,17 @@ SessionArchiveDialog::SessionArchiveDialog ()
 
 	vbox->set_spacing (6);
 
-	format_selector.append_text (ARDOUR::session_archive_suffix);
+	format_selector.append (ARDOUR::session_archive_suffix);
 	format_selector.set_active_text (ARDOUR::session_archive_suffix);
 
-	encode_selector.append_text (_("None"));
-	encode_selector.append_text (_("FLAC 16bit"));
-	encode_selector.append_text (_("FLAC 24bit"));
+	encode_selector.append (_("None"));
+	encode_selector.append (_("FLAC 16bit"));
+	encode_selector.append (_("FLAC 24bit"));
 	encode_selector.set_active_text (_("FLAC 16bit")); // TODO remember
 
-	compression_selector.append_text (_("None"));
-	compression_selector.append_text (_("Fast"));
-	compression_selector.append_text (_("Good"));
+	compression_selector.append (_("None"));
+	compression_selector.append (_("Fast"));
+	compression_selector.append (_("Good"));
 	compression_selector.set_active_text (_("Good")); // TODO remember
 
 	Gtk::Table* table = manage (new Gtk::Table ());
@@ -230,10 +230,20 @@ SessionArchiveDialog::set_compression_level (PBD::FileArchive::CompressionLevel 
 }
 
 void
-SessionArchiveDialog::update_progress_gui (float p)
+SessionArchiveDialog::on_response (int response_id)
 {
 	set_response_sensitive (RESPONSE_OK, false);
-	set_response_sensitive (RESPONSE_CANCEL, false);
+	if (response_id != Gtk::RESPONSE_OK) {
+		set_response_sensitive (RESPONSE_CANCEL, false);
+		cancel ();
+	}
+	Gtk::Dialog::on_response (response_id);
+}
+
+void
+SessionArchiveDialog::update_progress_gui (float p)
+{
+
 	progress_bar.show ();
 	if (p < 0) {
 		progress_bar.set_text (_("Archiving Session"));

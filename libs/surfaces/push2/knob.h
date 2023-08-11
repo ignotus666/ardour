@@ -19,7 +19,8 @@
 #ifndef __ardour_push2_knob_h__
 #define __ardour_push2_knob_h__
 
-#include <boost/shared_ptr.hpp>
+#include <memory>
+
 #include <sigc++/trackable.h>
 
 #include <cairomm/refptr.h>
@@ -70,8 +71,8 @@ public:
 	void add_flag (Flags);
 	void remove_flag (Flags);
 
-	void set_controllable (boost::shared_ptr<ARDOUR::AutomationControl> c);
-	boost::shared_ptr<ARDOUR::AutomationControl> controllable() const { return _controllable; }
+	void set_controllable (std::shared_ptr<ARDOUR::AutomationControl> c);
+	std::shared_ptr<ARDOUR::AutomationControl> controllable() const { return _controllable; }
 
 	void set_text_color (Gtkmm2ext::Color);
 	void set_arc_start_color (Gtkmm2ext::Color);
@@ -84,20 +85,20 @@ public:
   protected:
 	void controllable_changed ();
 	PBD::ScopedConnection watch_connection;
-	boost::shared_ptr<ARDOUR::AutomationControl> _controllable;
+	std::shared_ptr<ARDOUR::AutomationControl> _controllable;
 
   private:
-	Push2& p2;
+	Push2&  _p2;
 	Element _elements;
 	Flags   _flags;
 	double  _r;
-	float   _val; // current value [0..1]
+	float   _val;    // current value [0..1]
 	float   _normal; // default value, arc
 
-	Gtkmm2ext::Color text_color;
-	Gtkmm2ext::Color arc_start_color;
-	Gtkmm2ext::Color arc_end_color;
-	ArdourCanvas::Text* text;
+	Gtkmm2ext::Color    _text_color;
+	Gtkmm2ext::Color    _arc_start_color;
+	Gtkmm2ext::Color    _arc_end_color;
+	ArdourCanvas::Text* _text;
 
 	void set_pan_azimuth_text (double);
 	void set_pan_width_text (double);

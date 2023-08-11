@@ -25,13 +25,10 @@
 
 #include "ardour/session.h"
 
-#include "canvas/debug.h"
-
 #include <gtkmm/menu.h>
 #include <gtkmm/menuitem.h>
 
 #include "context_menu_helper.h"
-#include "time_axis_view.h"
 #include "streamview.h"
 #include "editor_summary.h"
 #include "gui_thread.h"
@@ -69,9 +66,9 @@ EditorSummary::EditorSummary (Editor* e)
 	  _image (0),
 	  _background_dirty (true)
 {
-	CairoWidget::use_nsglview ();
+	CairoWidget::use_nsglview (UIConfiguration::instance().get_nsgl_view_mode () == NSGLHiRes);
 	add_events (Gdk::POINTER_MOTION_MASK|Gdk::KEY_PRESS_MASK|Gdk::KEY_RELEASE_MASK|Gdk::ENTER_NOTIFY_MASK|Gdk::LEAVE_NOTIFY_MASK);
-	set_flags (get_flags() | Gtk::CAN_FOCUS);
+	set_can_focus ();
 
 	UIConfiguration::instance().ParameterChanged.connect (sigc::mem_fun (*this, &EditorSummary::parameter_changed));
 }
@@ -653,7 +650,7 @@ EditorSummary::summary_zoom_step (int steps /* positive steps to zoom "out" , ne
 
 	/* for now, disallow really close zooming-in from the scroomer. (Currently it
 	 * causes the start-offset to 'walk' because of integer limitations.
-	 * To fix this, probably need to maintain float throught the get/set_editor() path.)
+	 * To fix this, probably need to maintain float through the get/set_editor() path.)
 	 */
 	if (steps<0) {
       if ((xn.second - xn.first) < 2)
@@ -964,7 +961,7 @@ EditorSummary::routes_added (list<RouteTimeAxisView*> const & r)
 	for (list<RouteTimeAxisView*>::const_iterator i = r.begin(); i != r.end(); ++i) {
 		/* Connect to the relevant signal for the route so that we know when its colour has changed */
 		(*i)->route()->presentation_info().PropertyChanged.connect (*this, invalidator (*this), boost::bind (&EditorSummary::route_gui_changed, this, _1), gui_context ());
-		boost::shared_ptr<Track> tr = boost::dynamic_pointer_cast<Track> ((*i)->route ());
+		std::shared_ptr<Track> tr = std::dynamic_pointer_cast<Track> ((*i)->route ());
 		if (tr) {
 			tr->PlaylistChanged.connect (*this, invalidator (*this), boost::bind (&EditorSummary::set_background_dirty, this), gui_context ());
 		}

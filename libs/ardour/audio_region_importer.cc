@@ -84,12 +84,12 @@ AudioRegionImportHandler::check_source (string const & filename) const
 }
 
 void
-AudioRegionImportHandler::add_source (string const & filename, boost::shared_ptr<Source> const & source)
+AudioRegionImportHandler::add_source (string const & filename, std::shared_ptr<Source> const & source)
 {
 	sources.insert (SourcePair (filename, source));
 }
 
-boost::shared_ptr<Source> const &
+std::shared_ptr<Source> const &
 AudioRegionImportHandler::get_source (string const & filename) const
 {
 	return (sources.find (filename))->second;
@@ -312,10 +312,7 @@ AudioRegionImporter::prepare_region ()
 	}
 
 	// create region and update XML
-	boost::shared_ptr<Region> r = RegionFactory::create (source_list, xml_region);
-	if (session.config.get_glue_new_regions_to_bars_and_beats ()) {
-		r->set_position_time_domain (Temporal::BeatTime);
-	}
+	std::shared_ptr<Region> r = RegionFactory::create (source_list, xml_region);
 	region.push_back (r);
 	if (*region.begin()) {
 		xml_region = (*region.begin())->get_state();
@@ -339,8 +336,12 @@ AudioRegionImporter::prepare_sources ()
 	status.done = false;
 	status.cancel = false;
 	status.freeze = false;
+	status.import_markers = false;
 	status.progress = 0.0;
 	status.quality = SrcBest; // TODO other qualities also
+	status.replace_existing_source = false;
+	status.split_midi_channels = false;
+	status.import_markers = false;
 
 	// Get sources that still need to be imported
 	for (std::list<string>::iterator it = filenames.begin(); it != filenames.end(); ++it) {

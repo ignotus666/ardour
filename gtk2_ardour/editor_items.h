@@ -43,6 +43,7 @@ enum ItemType {
 	TempoMarkerItem,
 	MeterBarItem,
 	TempoBarItem,
+	MappingBarItem,
 	RegionViewNameHighlight,
 	RegionViewName,
 	StartSelectionTrimItem,
@@ -65,7 +66,10 @@ enum ItemType {
 	MinsecRulerItem,
 	BBTRulerItem,
 	SamplesRulerItem,
+	SelectionMarkerItem,
 	DropZoneItem,
+	VelocityItem,
+	VelocityBaseItem,
 
 	/* don't remove this */
 

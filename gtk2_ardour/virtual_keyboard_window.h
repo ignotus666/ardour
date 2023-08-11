@@ -89,7 +89,7 @@ public:
 
 	void set_session (ARDOUR::Session*);
 
-	XMLNode& get_state ();
+	XMLNode& get_state () const;
 	void     set_state (const XMLNode&);
 
 protected:
@@ -111,11 +111,12 @@ private:
 	void modwheel_slider_adjusted ();
 
 	void octave_key_event_handler (bool);
+	void velocity_key_event_handler (int);
 	void pitch_bend_key_event_handler (int, bool);
 	bool pitch_bend_timeout ();
 
 	void pitch_bend_event_handler (int);
-	void pitch_bend_release ();
+	void pitch_bend_release (int);
 	void pitch_bend_update_tooltip (int);
 	void pitch_slider_adjusted ();
 
@@ -137,18 +138,18 @@ private:
 	ArdourWidgets::ArdourDropdown  _transpose_output;
 	ArdourWidgets::ArdourButton    _send_panic;
 
-	boost::shared_ptr<VKBDControl>    _pitchbend;
+	std::shared_ptr<VKBDControl>    _pitchbend;
 	Gtk::Adjustment                   _pitch_adjustment;
 	ArdourWidgets::VSliderController* _pitch_slider;
 	Gtkmm2ext::PersistentTooltip*     _pitch_slider_tooltip;
 
-	boost::shared_ptr<VKBDControl>    _modwheel;
+	std::shared_ptr<VKBDControl>    _modwheel;
 	Gtk::Adjustment                   _modwheel_adjustment;
 	ArdourWidgets::VSliderController* _modwheel_slider;
 	Gtkmm2ext::PersistentTooltip*     _modwheel_tooltip;
 #define VKBD_NCTRLS 4
 
-	boost::shared_ptr<VKBDControl> _cc[VKBD_NCTRLS];
+	std::shared_ptr<VKBDControl> _cc[VKBD_NCTRLS];
 	ArdourWidgets::ArdourKnob*     _cc_knob[VKBD_NCTRLS];
 	ArdourWidgets::ArdourDropdown  _cc_key[VKBD_NCTRLS];
 

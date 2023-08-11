@@ -22,25 +22,28 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
-#include <cmath>
-#include <climits>
-#include <cfloat>
 #include <algorithm>
-
+#include <cfloat>
+#include <climits>
+#include <cmath>
+#include <memory>
 #include <set>
 
 #include <boost/scoped_array.hpp>
-#include <boost/shared_ptr.hpp>
 
+#include <glibmm/fileutils.h>
 #include <glibmm/threads.h>
 
+#include "pbd/gstdio_compat.h"
 #include "pbd/basename.h"
 #include "pbd/xml++.h"
 #include "pbd/enumwriter.h"
 #include "pbd/convert.h"
+#include "pbd/progress.h"
 
 #include "evoral/Curve.h"
 
+#include "ardour/audioengine.h"
 #include "ardour/analysis_graph.h"
 #include "ardour/audioregion.h"
 #include "ardour/session.h"
@@ -51,11 +54,13 @@
 #include "ardour/audiofilesource.h"
 #include "ardour/region_factory.h"
 #include "ardour/runtime_functions.h"
+#include "ardour/sndfilesource.h"
 #include "ardour/transient_detector.h"
 #include "ardour/parameter_descriptor.h"
-#include "ardour/progress.h"
 
-#include "ardour/sndfilesource.h"
+#include "audiographer/general/interleaver.h"
+#include "audiographer/general/sample_format_converter.h"
+#include "audiographer/sndfile/sndfile_writer.h"
 
 #include "pbd/i18n.h"
 #include <locale.h>
@@ -64,9 +69,8 @@ using namespace std;
 using namespace ARDOUR;
 using namespace PBD;
 
-#include "ardour/audioengine.h"
-#define S2SC(s) Temporal::samples_to_superclock (s, AudioEngine::instance()->sample_rate())
-#define SC2S(s) Temporal::superclock_to_samples (s, AudioEngine::instance()->sample_rate())
+#define S2SC(s) Temporal::samples_to_superclock (s, TEMPORAL_SAMPLE_RATE)
+#define SC2S(s) Temporal::superclock_to_samples (s, TEMPORAL_SAMPLE_RATE)
 
 namespace ARDOUR {
 	namespace Properties {
@@ -76,18 +80,18 @@ namespace ARDOUR {
 		PBD::PropertyDescriptor<bool> fade_in_active;
 		PBD::PropertyDescriptor<bool> fade_out_active;
 		PBD::PropertyDescriptor<float> scale_amplitude;
-		PBD::PropertyDescriptor<boost::shared_ptr<AutomationList> > fade_in;
-		PBD::PropertyDescriptor<boost::shared_ptr<AutomationList> > inverse_fade_in;
-		PBD::PropertyDescriptor<boost::shared_ptr<AutomationList> > fade_out;
-		PBD::PropertyDescriptor<boost::shared_ptr<AutomationList> > inverse_fade_out;
-		PBD::PropertyDescriptor<boost::shared_ptr<AutomationList> > envelope;
+		PBD::PropertyDescriptor<std::shared_ptr<AutomationList> > fade_in;
+		PBD::PropertyDescriptor<std::shared_ptr<AutomationList> > inverse_fade_in;
+		PBD::PropertyDescriptor<std::shared_ptr<AutomationList> > fade_out;
+		PBD::PropertyDescriptor<std::shared_ptr<AutomationList> > inverse_fade_out;
+		PBD::PropertyDescriptor<std::shared_ptr<AutomationList> > envelope;
 	}
 }
 
 /* Curve manipulations */
 
 static void
-reverse_curve (boost::shared_ptr<Evoral::ControlList> dst, boost::shared_ptr<const Evoral::ControlList> src)
+reverse_curve (std::shared_ptr<Evoral::ControlList> dst, std::shared_ptr<const Evoral::ControlList> src)
 {
 	const timepos_t end = src->when(false);
 	// TODO read-lock of src (!)
@@ -100,19 +104,19 @@ reverse_curve (boost::shared_ptr<Evoral::ControlList> dst, boost::shared_ptr<con
 }
 
 static void
-generate_inverse_power_curve (boost::shared_ptr<Evoral::ControlList> dst, boost::shared_ptr<const Evoral::ControlList> src)
+generate_inverse_power_curve (std::shared_ptr<Evoral::ControlList> dst, std::shared_ptr<const Evoral::ControlList> src)
 {
 	// calc inverse curve using sum of squares
 	for (Evoral::ControlList::const_iterator it = src->begin(); it!=src->end(); ++it ) {
 		float value = (*it)->value;
 		value = 1 - powf(value,2);
 		value = sqrtf(value);
-		dst->fast_simple_add ( (*it)->when, value );
+		dst->fast_simple_add ((*it)->when, value );
 	}
 }
 
 static void
-generate_db_fade (boost::shared_ptr<Evoral::ControlList> dst, double len, int num_steps, float dB_drop)
+generate_db_fade (std::shared_ptr<Evoral::ControlList> dst, double len, int num_steps, float dB_drop)
 {
 	dst->clear ();
 	dst->fast_simple_add (timepos_t (Temporal::AudioTime), 1);
@@ -122,16 +126,16 @@ generate_db_fade (boost::shared_ptr<Evoral::ControlList> dst, double len, int nu
 	float coeff = GAIN_COEFF_UNITY;
 	for (int i = 1; i < (num_steps-1); i++) {
 		coeff *= fade_speed;
-		dst->fast_simple_add (timepos_t (len*(double)i/(double)num_steps), coeff);
+		dst->fast_simple_add (timepos_t (samplepos_t (len*(double)i/(double)num_steps)), coeff);
 	}
 
-	dst->fast_simple_add (timepos_t (len), GAIN_COEFF_SMALL);
+	dst->fast_simple_add (timepos_t ((samplepos_t)len), GAIN_COEFF_SMALL);
 }
 
 static void
-merge_curves (boost::shared_ptr<Evoral::ControlList> dst,
-	      boost::shared_ptr<const Evoral::ControlList> curve1,
-	      boost::shared_ptr<const Evoral::ControlList> curve2)
+merge_curves (std::shared_ptr<Evoral::ControlList> dst,
+	      std::shared_ptr<const Evoral::ControlList> curve1,
+	      std::shared_ptr<const Evoral::ControlList> curve2)
 {
 	Evoral::ControlList::EventList::size_type size = curve1->size();
 
@@ -150,7 +154,7 @@ merge_curves (boost::shared_ptr<Evoral::ControlList> dst,
 		interp += v2 * ( (double)count / (double)size );
 
 		interp = dB_to_coefficient(interp);
-		dst->fast_simple_add ( (*c1)->when, interp );
+		dst->fast_simple_add ((*c1)->when, interp );
 		c1++;
 		count++;
 	}
@@ -201,17 +205,17 @@ AudioRegion::register_properties ()
 	add_property (_envelope);
 }
 
-#define AUDIOREGION_STATE_DEFAULT \
+#define AUDIOREGION_STATE_DEFAULT(tdp) \
 	_envelope_active (Properties::envelope_active, false) \
 	, _default_fade_in (Properties::default_fade_in, true) \
 	, _default_fade_out (Properties::default_fade_out, true) \
 	, _fade_in_active (Properties::fade_in_active, true) \
 	, _fade_out_active (Properties::fade_out_active, true) \
 	, _scale_amplitude (Properties::scale_amplitude, 1.0) \
-	, _fade_in (Properties::fade_in, boost::shared_ptr<AutomationList> (new AutomationList (Evoral::Parameter (FadeInAutomation), Temporal::AudioTime))) \
-	, _inverse_fade_in (Properties::inverse_fade_in, boost::shared_ptr<AutomationList> (new AutomationList (Evoral::Parameter (FadeInAutomation), Temporal::AudioTime))) \
-	, _fade_out (Properties::fade_out, boost::shared_ptr<AutomationList> (new AutomationList (Evoral::Parameter (FadeOutAutomation), Temporal::AudioTime))) \
-	, _inverse_fade_out (Properties::inverse_fade_out, boost::shared_ptr<AutomationList> (new AutomationList (Evoral::Parameter (FadeOutAutomation), Temporal::AudioTime)))
+	, _fade_in (Properties::fade_in, std::shared_ptr<AutomationList> (new AutomationList (Evoral::Parameter (FadeInAutomation), tdp))) \
+	, _inverse_fade_in (Properties::inverse_fade_in, std::shared_ptr<AutomationList> (new AutomationList (Evoral::Parameter (FadeInAutomation), tdp))) \
+	, _fade_out (Properties::fade_out, std::shared_ptr<AutomationList> (new AutomationList (Evoral::Parameter (FadeOutAutomation), tdp))) \
+	, _inverse_fade_out (Properties::inverse_fade_out, std::shared_ptr<AutomationList> (new AutomationList (Evoral::Parameter (FadeOutAutomation), tdp)))
 
 #define AUDIOREGION_COPY_STATE(other) \
 	_envelope_active (Properties::envelope_active, other->_envelope_active) \
@@ -220,10 +224,10 @@ AudioRegion::register_properties ()
 	, _fade_in_active (Properties::fade_in_active, other->_fade_in_active) \
 	, _fade_out_active (Properties::fade_out_active, other->_fade_out_active) \
 	, _scale_amplitude (Properties::scale_amplitude, other->_scale_amplitude) \
-	, _fade_in (Properties::fade_in, boost::shared_ptr<AutomationList> (new AutomationList (*other->_fade_in.val()))) \
-	, _inverse_fade_in (Properties::fade_in, boost::shared_ptr<AutomationList> (new AutomationList (*other->_inverse_fade_in.val()))) \
-	, _fade_out (Properties::fade_in, boost::shared_ptr<AutomationList> (new AutomationList (*other->_fade_out.val()))) \
-	, _inverse_fade_out (Properties::fade_in, boost::shared_ptr<AutomationList> (new AutomationList (*other->_inverse_fade_out.val()))) \
+	, _fade_in (Properties::fade_in, std::shared_ptr<AutomationList> (new AutomationList (*other->_fade_in.val()))) \
+	, _inverse_fade_in (Properties::fade_in, std::shared_ptr<AutomationList> (new AutomationList (*other->_inverse_fade_in.val()))) \
+	, _fade_out (Properties::fade_in, std::shared_ptr<AutomationList> (new AutomationList (*other->_fade_out.val()))) \
+	, _inverse_fade_out (Properties::fade_in, std::shared_ptr<AutomationList> (new AutomationList (*other->_inverse_fade_out.val())))
 /* a Session will reset these to its chosen defaults by calling AudioRegion::set_default_fade() */
 
 void
@@ -244,9 +248,9 @@ AudioRegion::init ()
 /** Constructor for use by derived types only */
 AudioRegion::AudioRegion (Session& s, timepos_t const &  start, timecnt_t const & len, std::string name)
 	: Region (s, start, len, name, DataType::AUDIO)
-	, AUDIOREGION_STATE_DEFAULT
-	, _envelope (Properties::envelope, boost::shared_ptr<AutomationList> (new AutomationList (Evoral::Parameter(EnvelopeAutomation), Temporal::AudioTime)))
-	, _automatable (s, Temporal::AudioTime)
+	, AUDIOREGION_STATE_DEFAULT(Temporal::TimeDomainProvider (Temporal::AudioTime))
+	, _envelope (Properties::envelope, std::shared_ptr<AutomationList> (new AutomationList (Evoral::Parameter(EnvelopeAutomation), Temporal::TimeDomainProvider (Temporal::AudioTime))))
+	, _automatable (s, Temporal::TimeDomainProvider (Temporal::AudioTime))
 	, _fade_in_suspended (0)
 	, _fade_out_suspended (0)
 {
@@ -257,9 +261,9 @@ AudioRegion::AudioRegion (Session& s, timepos_t const &  start, timecnt_t const 
 /** Basic AudioRegion constructor */
 AudioRegion::AudioRegion (const SourceList& srcs)
 	: Region (srcs)
-	, AUDIOREGION_STATE_DEFAULT
-	, _envelope (Properties::envelope, boost::shared_ptr<AutomationList> (new AutomationList (Evoral::Parameter(EnvelopeAutomation), Temporal::AudioTime)))
-	, _automatable(srcs[0]->session(), Temporal::AudioTime)
+	, AUDIOREGION_STATE_DEFAULT(Temporal::TimeDomainProvider (Temporal::AudioTime))
+        , _envelope (Properties::envelope, std::shared_ptr<AutomationList> (new AutomationList (Evoral::Parameter(EnvelopeAutomation), Temporal::TimeDomainProvider (Temporal::AudioTime))))
+        , _automatable(srcs[0]->session(), Temporal::TimeDomainProvider (Temporal::AudioTime))
 	, _fade_in_suspended (0)
 	, _fade_out_suspended (0)
 {
@@ -267,14 +271,14 @@ AudioRegion::AudioRegion (const SourceList& srcs)
 	assert (_sources.size() == _master_sources.size());
 }
 
-AudioRegion::AudioRegion (boost::shared_ptr<const AudioRegion> other)
+AudioRegion::AudioRegion (std::shared_ptr<const AudioRegion> other)
 	: Region (other)
 	, AUDIOREGION_COPY_STATE (other)
 	  /* As far as I can see, the _envelope's times are relative to region position, and have nothing
 		 * to do with sources (and hence _start).  So when we copy the envelope, we just use the supplied offset.
 		 */
-	, _envelope (Properties::envelope, boost::shared_ptr<AutomationList> (new AutomationList (*other->_envelope.val(), timepos_t (Temporal::AudioTime), timepos_t (other->_length))))
-	, _automatable (other->session(), Temporal::AudioTime)
+	, _envelope (Properties::envelope, std::shared_ptr<AutomationList> (new AutomationList (*other->_envelope.val(), timepos_t (Temporal::AudioTime), other->len_as_tpos ())))
+	, _automatable (other->session(), Temporal::TimeDomainProvider (Temporal::AudioTime))
 	, _fade_in_suspended (0)
 	, _fade_out_suspended (0)
 {
@@ -289,14 +293,14 @@ AudioRegion::AudioRegion (boost::shared_ptr<const AudioRegion> other)
 	assert (_sources.size() == _master_sources.size());
 }
 
-AudioRegion::AudioRegion (boost::shared_ptr<const AudioRegion> other, timecnt_t const & offset)
+AudioRegion::AudioRegion (std::shared_ptr<const AudioRegion> other, timecnt_t const & offset)
 	: Region (other, offset)
 	, AUDIOREGION_COPY_STATE (other)
 	  /* As far as I can see, the _envelope's times are relative to region position, and have nothing
 	     to do with sources (and hence _start).  So when we copy the envelope, we just use the supplied offset.
 	  */
-	, _envelope (Properties::envelope, boost::shared_ptr<AutomationList> (new AutomationList (*other->_envelope.val(), timepos_t (offset.samples()), timepos_t (other->_length))))
-	, _automatable (other->session(), Temporal::AudioTime)
+	, _envelope (Properties::envelope, std::shared_ptr<AutomationList> (new AutomationList (*other->_envelope.val(), timepos_t (offset.samples()), other->len_as_tpos ())))
+	, _automatable (other->session(), Temporal::TimeDomainProvider (Temporal::AudioTime))
 	, _fade_in_suspended (0)
 	, _fade_out_suspended (0)
 {
@@ -311,11 +315,11 @@ AudioRegion::AudioRegion (boost::shared_ptr<const AudioRegion> other, timecnt_t 
 	assert (_sources.size() == _master_sources.size());
 }
 
-AudioRegion::AudioRegion (boost::shared_ptr<const AudioRegion> other, const SourceList& srcs)
-	: Region (boost::static_pointer_cast<const Region>(other), srcs)
+AudioRegion::AudioRegion (std::shared_ptr<const AudioRegion> other, const SourceList& srcs)
+	: Region (std::static_pointer_cast<const Region>(other), srcs)
 	, AUDIOREGION_COPY_STATE (other)
-	, _envelope (Properties::envelope, boost::shared_ptr<AutomationList> (new AutomationList (*other->_envelope.val())))
-	, _automatable (other->session(), Temporal::AudioTime)
+	, _envelope (Properties::envelope, std::shared_ptr<AutomationList> (new AutomationList (*other->_envelope.val())))
+	, _automatable (other->session(), Temporal::TimeDomainProvider (Temporal::AudioTime))
 	, _fade_in_suspended (0)
 	, _fade_out_suspended (0)
 {
@@ -332,9 +336,9 @@ AudioRegion::AudioRegion (boost::shared_ptr<const AudioRegion> other, const Sour
 
 AudioRegion::AudioRegion (SourceList& srcs)
 	: Region (srcs)
-	, AUDIOREGION_STATE_DEFAULT
-	, _envelope (Properties::envelope, boost::shared_ptr<AutomationList> (new AutomationList(Evoral::Parameter(EnvelopeAutomation), Temporal::AudioTime)))
-	, _automatable(srcs[0]->session(), Temporal::AudioTime)
+	, AUDIOREGION_STATE_DEFAULT(srcs[0]->session())
+	, _envelope (Properties::envelope, std::shared_ptr<AutomationList> (new AutomationList(Evoral::Parameter(EnvelopeAutomation), Temporal::TimeDomainProvider (Temporal::AudioTime))))
+	, _automatable(srcs[0]->session(), Temporal::TimeDomainProvider (Temporal::AudioTime))
 	, _fade_in_suspended (0)
 	, _fade_out_suspended (0)
 {
@@ -358,7 +362,7 @@ AudioRegion::post_set (const PropertyChange& /*ignored*/)
 	/* return to default fades if the existing ones are too long */
 
 	if (_left_of_split) {
-		if (_fade_in->when(false) >= _length) {
+		if (_fade_in->when(false) >= len_as_tpos ()) {
 			set_default_fade_in ();
 		}
 		set_default_fade_out ();
@@ -366,7 +370,7 @@ AudioRegion::post_set (const PropertyChange& /*ignored*/)
 	}
 
 	if (_right_of_split) {
-		if (_fade_out->when(false) >= _length) {
+		if (_fade_out->when(false) >= len_as_tpos ()) {
 			set_default_fade_out ();
 		}
 
@@ -375,7 +379,7 @@ AudioRegion::post_set (const PropertyChange& /*ignored*/)
 	}
 
 	/* If _length changed, adjust our gain envelope accordingly */
-	_envelope->truncate_end (timepos_t (_length.val()));
+	_envelope->truncate_end (len_as_tpos ());
 }
 
 void
@@ -389,7 +393,7 @@ AudioRegion::connect_to_analysis_changed ()
 void
 AudioRegion::connect_to_header_position_offset_changed ()
 {
-	set<boost::shared_ptr<Source> > unique_srcs;
+	set<std::shared_ptr<Source> > unique_srcs;
 
 	for (SourceList::const_iterator i = _sources.begin(); i != _sources.end(); ++i) {
 
@@ -398,7 +402,7 @@ AudioRegion::connect_to_header_position_offset_changed ()
 
 		if (unique_srcs.find (*i) == unique_srcs.end ()) {
 			unique_srcs.insert (*i);
-			boost::shared_ptr<AudioFileSource> afs = boost::dynamic_pointer_cast<AudioFileSource> (*i);
+			std::shared_ptr<AudioFileSource> afs = std::dynamic_pointer_cast<AudioFileSource> (*i);
 			if (afs) {
 				afs->HeaderPositionOffsetChanged.connect_same_thread (*this, boost::bind (&AudioRegion::source_offset_changed, this));
 			}
@@ -442,7 +446,13 @@ AudioRegion::read_peaks (PeakData *buf, samplecnt_t npeaks, samplecnt_t offset, 
 		return 0;
 	}
 
-	if (_scale_amplitude != 1.0f) {
+	if (_scale_amplitude < 0.f) {
+		for (samplecnt_t n = 0; n < npeaks; ++n) {
+			const float tmp = buf[n].max;
+			buf[n].max = _scale_amplitude * buf[n].min;
+			buf[n].min = _scale_amplitude * tmp;
+		}
+	} else if (_scale_amplitude != 1.0f) {
 		for (samplecnt_t n = 0; n < npeaks; ++n) {
 			buf[n].max *= _scale_amplitude;
 			buf[n].min *= _scale_amplitude;
@@ -518,7 +528,7 @@ AudioRegion::read_at (Sample *buf, Sample *mixdown_buffer, float *gain_buffer,
 		return 0; /* read nothing */
 	}
 
-	boost::shared_ptr<Playlist> pl (playlist());
+	std::shared_ptr<Playlist> pl (playlist());
 	if (!pl){
 		return 0;
 	}
@@ -665,7 +675,7 @@ AudioRegion::read_at (Sample *buf, Sample *mixdown_buffer, float *gain_buffer,
 
 	if (fade_out_limit != 0) {
 
-		samplecnt_t const curve_offset = fade_interval_start - _fade_out->when(false).distance (timepos_t (_length)).samples();
+		samplecnt_t const curve_offset = fade_interval_start - _fade_out->when(false).distance (len_as_tpos ()).samples();
 
 		if (is_opaque) {
 			if (_inverse_fade_out) {
@@ -751,7 +761,7 @@ AudioRegion::read_from_sources (SourceList const & srcs, samplecnt_t limit, Samp
 
 	if (chan_n < n_channels()) {
 
-		boost::shared_ptr<AudioSource> src = boost::dynamic_pointer_cast<AudioSource> (srcs[chan_n]);
+		std::shared_ptr<AudioSource> src = std::dynamic_pointer_cast<AudioSource> (srcs[chan_n]);
 
 		if (src->read (buf, _start.val().samples() + internal_offset, to_read) != to_read) {
 			return 0; /* "read nothing" */
@@ -768,7 +778,7 @@ AudioRegion::read_from_sources (SourceList const & srcs, samplecnt_t limit, Samp
 			/* copy an existing channel's data in for this non-existant one */
 
 			uint32_t channel = chan_n % n_channels();
-			boost::shared_ptr<AudioSource> src = boost::dynamic_pointer_cast<AudioSource> (srcs[channel]);
+			std::shared_ptr<AudioSource> src = std::dynamic_pointer_cast<AudioSource> (srcs[channel]);
 
 			if (src->read (buf, _start.val().samples() + internal_offset, to_read) != to_read) {
 				return 0; /* "read nothing" */
@@ -785,7 +795,7 @@ AudioRegion::read_from_sources (SourceList const & srcs, samplecnt_t limit, Samp
 }
 
 XMLNode&
-AudioRegion::get_basic_state ()
+AudioRegion::get_basic_state () const
 {
 	XMLNode& node (Region::state ());
 
@@ -795,7 +805,7 @@ AudioRegion::get_basic_state ()
 }
 
 XMLNode&
-AudioRegion::state ()
+AudioRegion::state () const
 {
 	XMLNode& node (get_basic_state());
 	XMLNode *child;
@@ -810,7 +820,7 @@ AudioRegion::state ()
 	if (_envelope->size() == 2 &&
 	    _envelope->front()->value == GAIN_COEFF_UNITY &&
 	    _envelope->back()->value==GAIN_COEFF_UNITY) {
-		if (_envelope->front()->when == 0 && _envelope->back()->when == timepos_t (_length)) {
+		if (_envelope->front()->when == 0 && _envelope->back()->when == len_as_tpos ()) {
 			default_env = true;
 		}
 	}
@@ -854,7 +864,7 @@ int
 AudioRegion::_set_state (const XMLNode& node, int version, PropertyChange& what_changed, bool send)
 {
 	const XMLNodeList& nlist = node.children();
-	boost::shared_ptr<Playlist> the_playlist (_playlist.lock());
+	std::shared_ptr<Playlist> the_playlist (_playlist.lock());
 
 	suspend_property_changes ();
 
@@ -895,7 +905,7 @@ AudioRegion::_set_state (const XMLNode& node, int version, PropertyChange& what_
 				set_default_envelope ();
 			}
 
-			_envelope->truncate_end (timepos_t (_length));
+			_envelope->truncate_end (len_as_tpos ());
 
 
 		} else if (child->name() == "FadeIn") {
@@ -1013,7 +1023,7 @@ AudioRegion::set_fade_out_shape (FadeShape shape)
 }
 
 void
-AudioRegion::set_fade_in (boost::shared_ptr<AutomationList> f)
+AudioRegion::set_fade_in (std::shared_ptr<AutomationList> f)
 {
 	_fade_in->freeze ();
 	*(_fade_in.val()) = *f;
@@ -1027,9 +1037,9 @@ void
 AudioRegion::set_fade_in (FadeShape shape, samplecnt_t len)
 {
 	const ARDOUR::ParameterDescriptor desc(FadeInAutomation);
-	boost::shared_ptr<Evoral::ControlList> c1 (new Evoral::ControlList (FadeInAutomation, desc, Temporal::AudioTime));
-	boost::shared_ptr<Evoral::ControlList> c2 (new Evoral::ControlList (FadeInAutomation, desc, Temporal::AudioTime));
-	boost::shared_ptr<Evoral::ControlList> c3 (new Evoral::ControlList (FadeInAutomation, desc, Temporal::AudioTime));
+	std::shared_ptr<Evoral::ControlList> c1 (new Evoral::ControlList (FadeInAutomation, desc, Temporal::TimeDomainProvider (Temporal::AudioTime)));
+	std::shared_ptr<Evoral::ControlList> c2 (new Evoral::ControlList (FadeInAutomation, desc, Temporal::TimeDomainProvider (Temporal::AudioTime)));
+	std::shared_ptr<Evoral::ControlList> c3 (new Evoral::ControlList (FadeInAutomation, desc, Temporal::TimeDomainProvider (Temporal::AudioTime)));
 
 	_fade_in->freeze ();
 	_fade_in->clear ();
@@ -1040,7 +1050,7 @@ AudioRegion::set_fade_in (FadeShape shape, samplecnt_t len)
 	switch (shape) {
 	case FadeLinear:
 		_fade_in->fast_simple_add (timepos_t (Temporal::AudioTime), GAIN_COEFF_SMALL);
-		_fade_in->fast_simple_add (timepos_t (len), GAIN_COEFF_UNITY);
+		_fade_in->fast_simple_add (timepos_t ((samplepos_t)len), GAIN_COEFF_UNITY);
 		reverse_curve (_inverse_fade_in.val(), _fade_in.val());
 		break;
 
@@ -1064,23 +1074,23 @@ AudioRegion::set_fade_in (FadeShape shape, samplecnt_t len)
 		_fade_in->fast_simple_add (timepos_t (Temporal::AudioTime), GAIN_COEFF_SMALL);
 		for (int i = 1; i < num_steps; ++i) {
 			const float dist = i / (num_steps + 1.f);
-			_fade_in->fast_simple_add (timepos_t (len * dist), sin (dist * M_PI / 2.0));
+			_fade_in->fast_simple_add (timepos_t ((samplepos_t)(len * dist)), sin (dist * M_PI / 2.0));
 		}
-		_fade_in->fast_simple_add (timepos_t (len), GAIN_COEFF_UNITY);
+		_fade_in->fast_simple_add (timepos_t ((samplepos_t)len), GAIN_COEFF_UNITY);
 		reverse_curve (_inverse_fade_in.val(), _fade_in.val());
 		break;
 
 	case FadeSymmetric:
 		//start with a nearly linear cuve
 		_fade_in->fast_simple_add (timepos_t (Temporal::AudioTime), 1);
-		_fade_in->fast_simple_add (timepos_t (0.5 * len), 0.6);
+		_fade_in->fast_simple_add (timepos_t ((samplepos_t)(0.5 * len)), 0.6);
 		//now generate a fade-out curve by successively applying a gain drop
 		const double breakpoint = 0.7;  //linear for first 70%
 		for (int i = 2; i < 9; ++i) {
 			const float coeff = (1.f - breakpoint) * powf (0.5, i);
-			_fade_in->fast_simple_add (timepos_t (len * (breakpoint + ((GAIN_COEFF_UNITY - breakpoint) * (double)i / 9.0))), coeff);
+			_fade_in->fast_simple_add (timepos_t ((samplepos_t)(len * (breakpoint + ((GAIN_COEFF_UNITY - breakpoint) * (double)i / 9.0)))), coeff);
 		}
-		_fade_in->fast_simple_add (timepos_t (len), GAIN_COEFF_SMALL);
+		_fade_in->fast_simple_add (timepos_t ((samplepos_t)len), GAIN_COEFF_SMALL);
 		reverse_curve (c3, _fade_in.val());
 		_fade_in->copy_events (*c3);
 		reverse_curve (_inverse_fade_in.val(), _fade_in.val());
@@ -1096,7 +1106,7 @@ AudioRegion::set_fade_in (FadeShape shape, samplecnt_t len)
 }
 
 void
-AudioRegion::set_fade_out (boost::shared_ptr<AutomationList> f)
+AudioRegion::set_fade_out (std::shared_ptr<AutomationList> f)
 {
 	_fade_out->freeze ();
 	*(_fade_out.val()) = *f;
@@ -1110,8 +1120,8 @@ void
 AudioRegion::set_fade_out (FadeShape shape, samplecnt_t len)
 {
 	const ARDOUR::ParameterDescriptor desc(FadeOutAutomation);
-	boost::shared_ptr<Evoral::ControlList> c1 (new Evoral::ControlList (FadeOutAutomation, desc, Temporal::AudioTime));
-	boost::shared_ptr<Evoral::ControlList> c2 (new Evoral::ControlList (FadeOutAutomation, desc, Temporal::AudioTime));
+	std::shared_ptr<Evoral::ControlList> c1 (new Evoral::ControlList (FadeOutAutomation, desc, Temporal::TimeDomainProvider (Temporal::AudioTime)));
+	std::shared_ptr<Evoral::ControlList> c2 (new Evoral::ControlList (FadeOutAutomation, desc, Temporal::TimeDomainProvider (Temporal::AudioTime)));
 
 	_fade_out->freeze ();
 	_fade_out->clear ();
@@ -1122,7 +1132,7 @@ AudioRegion::set_fade_out (FadeShape shape, samplecnt_t len)
 	switch (shape) {
 	case FadeLinear:
 		_fade_out->fast_simple_add (timepos_t (Temporal::AudioTime), GAIN_COEFF_UNITY);
-		_fade_out->fast_simple_add (timepos_t (len), GAIN_COEFF_SMALL);
+		_fade_out->fast_simple_add (timepos_t ((samplepos_t)len), GAIN_COEFF_SMALL);
 		reverse_curve (_inverse_fade_out.val(), _fade_out.val());
 		break;
 
@@ -1144,7 +1154,7 @@ AudioRegion::set_fade_out (FadeShape shape, samplecnt_t len)
 		_fade_out->fast_simple_add (timepos_t (Temporal::AudioTime), GAIN_COEFF_UNITY);
 		for (int i = 1; i < num_steps; ++i) {
 			const float dist = i / (num_steps + 1.f);
-			_fade_out->fast_simple_add (timepos_t (len * dist), cos (dist * M_PI / 2.0));
+			_fade_out->fast_simple_add (timepos_t ((samplepos_t)(len * dist)), cos (dist * M_PI / 2.0));
 		}
 		_fade_out->fast_simple_add (timepos_t (len), GAIN_COEFF_SMALL);
 		reverse_curve (_inverse_fade_out.val(), _fade_out.val());
@@ -1153,14 +1163,14 @@ AudioRegion::set_fade_out (FadeShape shape, samplecnt_t len)
 	case FadeSymmetric:
 		//start with a nearly linear cuve
 		_fade_out->fast_simple_add (timepos_t (Temporal::AudioTime), 1);
-		_fade_out->fast_simple_add (timepos_t (0.5 * len), 0.6);
+		_fade_out->fast_simple_add (timepos_t ((samplepos_t)(0.5 * len)), 0.6);
 		//now generate a fade-out curve by successively applying a gain drop
 		const double breakpoint = 0.7;  //linear for first 70%
 		for (int i = 2; i < 9; ++i) {
 			const float coeff = (1.f - breakpoint) * powf (0.5, i);
-			_fade_out->fast_simple_add (timepos_t (len * (breakpoint + ((GAIN_COEFF_UNITY - breakpoint) * (double)i / 9.0))), coeff);
+			_fade_out->fast_simple_add (timepos_t ((samplepos_t)(len * (breakpoint + ((GAIN_COEFF_UNITY - breakpoint) * (double)i / 9.0)))), coeff);
 		}
-		_fade_out->fast_simple_add (timepos_t (len), GAIN_COEFF_SMALL);
+		_fade_out->fast_simple_add (timepos_t ((samplepos_t)len), GAIN_COEFF_SMALL);
 		reverse_curve (_inverse_fade_out.val(), _fade_out.val());
 		break;
 	}
@@ -1184,11 +1194,13 @@ AudioRegion::set_fade_in_length (samplecnt_t len)
 		len = 64;
 	}
 
-	bool changed = _fade_in->extend_to (timepos_t (len));
+	timepos_t const tlen = timepos_t ((samplepos_t)len);
+
+	bool changed = _fade_in->extend_to (tlen);
 
 	if (changed) {
 		if (_inverse_fade_in) {
-			_inverse_fade_in->extend_to (timepos_t (len));
+			_inverse_fade_in->extend_to (tlen);
 		}
 
 		_default_fade_in = false;
@@ -1207,12 +1219,14 @@ AudioRegion::set_fade_out_length (samplecnt_t len)
 		len = 64;
 	}
 
-	bool changed = _fade_out->extend_to (timepos_t (len));
+	timepos_t const tlen = timepos_t ((samplepos_t)len);
+
+	bool changed = _fade_out->extend_to (tlen);
 
 	if (changed) {
 
 		if (_inverse_fade_out) {
-			_inverse_fade_out->extend_to (timepos_t (len));
+			_inverse_fade_out->extend_to (tlen);
 		}
 		_default_fade_out = false;
 
@@ -1244,13 +1258,13 @@ AudioRegion::set_fade_out_active (bool yn)
 bool
 AudioRegion::fade_in_is_default () const
 {
-	return _fade_in->size() == 2 && _fade_in->when(true) == 0 && _fade_in->when(false) == 64;
+	return _fade_in->size() == 2 && _fade_in->when(true) == 0 && _fade_in->when(false).samples () == 64;
 }
 
 bool
 AudioRegion::fade_out_is_default () const
 {
-	return _fade_out->size() == 2 && _fade_out->when(true) == 0 && _fade_out->when(false) == 64;
+	return _fade_out->size() == 2 && _fade_out->when(true) == 0 && _fade_out->when(false).samples () == 64;
 }
 
 void
@@ -1289,9 +1303,7 @@ AudioRegion::set_default_envelope ()
 	 * XXX this needs some thought 
 	 */
 
-	timepos_t alen (length().samples());
-
-	_envelope->fast_simple_add (alen, GAIN_COEFF_UNITY);
+	_envelope->fast_simple_add (len_as_tpos (), GAIN_COEFF_UNITY);
 	_envelope->thaw ();
 }
 
@@ -1303,7 +1315,7 @@ AudioRegion::recompute_at_end ()
 	*/
 
 	_envelope->freeze ();
-	_envelope->truncate_end (timepos_t (_length));
+	_envelope->truncate_end (len_as_tpos ());
 	_envelope->thaw ();
 
 	suspend_property_changes();
@@ -1312,12 +1324,12 @@ AudioRegion::recompute_at_end ()
 		set_default_fade_out ();
 		_left_of_split = false;
 	} else if (_fade_out->when(false) > _length) {
-		_fade_out->extend_to (timepos_t (_length));
+		_fade_out->extend_to (len_as_tpos ());
 		send_change (PropertyChange (Properties::fade_out));
 	}
 
 	if (_fade_in->when(false) > _length) {
-		_fade_in->extend_to (timepos_t (_length));
+		_fade_in->extend_to (len_as_tpos ());
 		send_change (PropertyChange (Properties::fade_in));
 	}
 
@@ -1329,20 +1341,20 @@ AudioRegion::recompute_at_start ()
 {
 	/* as above, but the shift was from the front */
 
-	_envelope->truncate_start (_length);
+	_envelope->truncate_start (timecnt_t::from_samples (length().samples ()));
 
 	suspend_property_changes();
 
 	if (_right_of_split) {
 		set_default_fade_in ();
 		_right_of_split = false;
-	} else if (_fade_in->when(false) > _length) {
-		_fade_in->extend_to (timepos_t (_length));
+	} else if (_fade_in->when(false) > len_as_tpos ()) {
+		_fade_in->extend_to (len_as_tpos ());
 		send_change (PropertyChange (Properties::fade_in));
 	}
 
-	if (_fade_out->when(false) > _length) {
-		_fade_out->extend_to (timepos_t (_length));
+	if (_fade_out->when(false) > len_as_tpos ()) {
+		_fade_out->extend_to (len_as_tpos ());
 		send_change (PropertyChange (Properties::fade_out));
 	}
 
@@ -1350,7 +1362,7 @@ AudioRegion::recompute_at_start ()
 }
 
 int
-AudioRegion::separate_by_channel (vector<boost::shared_ptr<Region> >& v) const
+AudioRegion::separate_by_channel (vector<std::shared_ptr<Region> >& v) const
 {
 	SourceList srcs;
 	string new_name;
@@ -1381,12 +1393,9 @@ AudioRegion::separate_by_channel (vector<boost::shared_ptr<Region> >& v) const
 		   "whole file" even if it covers the entire source file(s).
 		 */
 
-		PropertyList plist;
+		PropertyList plist (properties ());
 
-		plist.add (Properties::start, _start.val());
-		plist.add (Properties::length, _length.val());
 		plist.add (Properties::name, new_name);
-		plist.add (Properties::layer, layer ());
 		plist.add (Properties::whole_file, true);
 
 		v.push_back(RegionFactory::create (srcs, plist));
@@ -1406,7 +1415,7 @@ AudioRegion::read_raw_internal (Sample* buf, samplepos_t pos, samplecnt_t cnt, i
 void
 AudioRegion::set_scale_amplitude (gain_t g)
 {
-	boost::shared_ptr<Playlist> pl (playlist());
+	std::shared_ptr<Playlist> pl (playlist());
 
 	_scale_amplitude = g;
 
@@ -1434,6 +1443,9 @@ AudioRegion::maximum_amplitude (Progress* p) const
 			/* read it in */
 
 			if (read_raw_internal (buf, fpos, to_read, n) != to_read) {
+#ifndef NDEBUG
+				cerr << "AudioRegion::maximum_amplitude read failed for '" << _name << "'\n";
+#endif
 				return 0;
 			}
 
@@ -1621,7 +1633,7 @@ void
 AudioRegion::source_offset_changed ()
 {
 	/* XXX this fixes a crash that should not occur. It does occur
-	   becauses regions are not being deleted when a session
+	   because regions are not being deleted when a session
 	   is unloaded. That bug must be fixed.
 	*/
 
@@ -1629,14 +1641,14 @@ AudioRegion::source_offset_changed ()
 		return;
 	}
 
-	boost::shared_ptr<AudioFileSource> afs = boost::dynamic_pointer_cast<AudioFileSource>(_sources.front());
+	std::shared_ptr<AudioFileSource> afs = std::dynamic_pointer_cast<AudioFileSource>(_sources.front());
 }
 
-boost::shared_ptr<AudioSource>
+std::shared_ptr<AudioSource>
 AudioRegion::audio_source (uint32_t n) const
 {
 	// Guaranteed to succeed (use a static cast for speed?)
-	return boost::dynamic_pointer_cast<AudioSource>(source(n));
+	return std::dynamic_pointer_cast<AudioSource>(source(n));
 }
 
 void
@@ -1747,7 +1759,7 @@ AudioRegion::build_transients ()
 	_transients.clear ();
 	_transient_analysis_start = _transient_analysis_end = 0;
 
-	boost::shared_ptr<Playlist> pl = playlist();
+	std::shared_ptr<Playlist> pl = playlist();
 
 	if (!pl) {
 		return;
@@ -1861,7 +1873,7 @@ in this and future transient-detection operations.\n\
 void
 AudioRegion::get_transients (AnalysisFeatureList& results)
 {
-	boost::shared_ptr<Playlist> pl = playlist();
+	std::shared_ptr<Playlist> pl = playlist();
 	if (!playlist ()) {
 		return;
 	}
@@ -1968,19 +1980,19 @@ AudioRegion::body_range () const
 	return Temporal::Range ((position() + _fade_in->back()->when).increment(), end().earlier (_fade_out->back()->when));
 }
 
-boost::shared_ptr<Region>
+std::shared_ptr<Region>
 AudioRegion::get_single_other_xfade_region (bool start) const
 {
-	boost::shared_ptr<Playlist> pl (playlist());
+	std::shared_ptr<Playlist> pl (playlist());
 
 	if (!pl) {
 		/* not currently in a playlist - xfade length is unbounded
 		   (and irrelevant)
 		*/
-		return boost::shared_ptr<AudioRegion> ();
+		return std::shared_ptr<AudioRegion> ();
 	}
 
-	boost::shared_ptr<RegionList> rl;
+	std::shared_ptr<RegionList> rl;
 
 	if (start) {
 		rl = pl->regions_at (position());
@@ -1989,7 +2001,7 @@ AudioRegion::get_single_other_xfade_region (bool start) const
 	}
 
 	RegionList::iterator i;
-	boost::shared_ptr<Region> other;
+	std::shared_ptr<Region> other;
 	uint32_t n = 0;
 
 	/* count and find the other region in a single pass through the list */
@@ -2003,7 +2015,7 @@ AudioRegion::get_single_other_xfade_region (bool start) const
 
 	if (n != 2) {
 		/* zero or multiple regions stacked here - don't care about xfades */
-		return boost::shared_ptr<AudioRegion> ();
+		return std::shared_ptr<AudioRegion> ();
 	}
 
 	return other;
@@ -2018,7 +2030,7 @@ AudioRegion::verify_xfade_bounds (samplecnt_t len, bool start)
 	   equal to @a len itself.
 	*/
 
-	boost::shared_ptr<Region> other = get_single_other_xfade_region (start);
+	std::shared_ptr<Region> other = get_single_other_xfade_region (start);
 	samplecnt_t maxlen;
 
 	if (!other) {
@@ -2041,4 +2053,63 @@ AudioRegion::verify_xfade_bounds (samplecnt_t len, bool start)
 
 	return min (length_samples(), min (maxlen, len));
 
+}
+
+bool
+AudioRegion::do_export (std::string const& path) const
+{
+	const uint32_t    n_chn      = n_channels ();
+	const samplecnt_t chunk_size = 8192;
+	Sample            buf[chunk_size];
+
+	const int format = SF_FORMAT_FLAC | SF_FORMAT_PCM_24; // TODO preference or option
+
+	assert (!path.empty ());
+	assert (!Glib::file_test (path, Glib::FILE_TEST_EXISTS));
+
+	typedef std::shared_ptr<AudioGrapher::SndfileWriter<Sample>> FloatWriterPtr;
+	FloatWriterPtr                                                 sfw;
+	try {
+		sfw.reset (new AudioGrapher::SndfileWriter<Sample> (path, format, n_chn, audio_source ()->sample_rate (), 0));
+	} catch (...) {
+		return false;
+	}
+
+	AudioGrapher::Interleaver<Sample> interleaver;
+	interleaver.init (n_channels (), chunk_size);
+	interleaver.add_output (sfw);
+
+	samplecnt_t to_read  = length_samples ();
+	samplepos_t pos      = position_sample ();
+	samplecnt_t lsamples = _length.val().samples();
+
+	while (to_read) {
+		samplecnt_t this_time = min (to_read, chunk_size);
+
+		for (uint32_t chn = 0; chn < n_chn; ++chn) {
+			if (read_from_sources (_sources, lsamples, buf, pos, this_time, chn) != this_time) {
+				goto errout;
+			}
+
+			AudioGrapher::ConstProcessContext<Sample> context (buf, this_time, 1);
+			if (to_read == this_time) {
+				context ().set_flag (AudioGrapher::ProcessContext<Sample>::EndOfInput);
+			}
+			interleaver.input (chn)->process (context);
+		}
+
+		to_read -= this_time;
+		pos += this_time;
+	}
+
+errout:
+	/* Drop references, close file */
+	interleaver.clear_outputs ();
+	sfw.reset ();
+
+	if (to_read != 0) {
+		::g_unlink (path.c_str());
+	}
+
+	return to_read == 0;
 }

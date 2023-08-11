@@ -23,16 +23,16 @@
 #ifndef __ardour_graph_h__
 #define __ardour_graph_h__
 
+#include <atomic>
 #include <list>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
-#include <boost/shared_ptr.hpp>
 
 #include "pbd/mpmc_queue.h"
 #include "pbd/semutils.h"
-#include "pbd/g_atomic_compat.h"
 
 #include "ardour/audio_backend.h"
 #include "ardour/libardour_visibility.h"
@@ -41,42 +41,58 @@
 
 namespace ARDOUR
 {
+class ProcessNode;
 class GraphNode;
 class Graph;
 
+class IOPlug;
 class Route;
+class RTTaskList;
 class Session;
 class GraphEdges;
 
-typedef boost::shared_ptr<GraphNode> node_ptr_t;
+typedef std::shared_ptr<GraphNode> node_ptr_t;
 
 typedef std::list<node_ptr_t> node_list_t;
 typedef std::set<node_ptr_t>  node_set_t;
+
+struct GraphChain {
+	GraphChain (GraphNodeList const&, GraphEdges const&);
+	~GraphChain ();
+	void dump () const;
+	bool plot (std::string const&) const;
+
+	node_list_t _nodes_rt;
+	/** Nodes that are not fed by any other nodes */
+	node_list_t _init_trigger_list;
+	/** The number of nodes that do not feed any other node */
+	int _n_terminal_nodes;
+};
 
 class LIBARDOUR_API Graph : public SessionHandleRef
 {
 public:
 	Graph (Session& session);
 
-	void trigger (GraphNode* n);
-	void rechain (boost::shared_ptr<RouteList>, GraphEdges const&);
-	bool plot (std::string const& file_name) const;
+	/* public API for use by session-process */
+	int process_routes (std::shared_ptr<GraphChain> chain, pframes_t nframes, samplepos_t start_sample, samplepos_t end_sample, bool& need_butler);
+	int routes_no_roll (std::shared_ptr<GraphChain> chain, pframes_t nframes, samplepos_t start_sample, samplepos_t end_sample, bool non_rt_pending);
+	int silence_routes (std::shared_ptr<GraphChain> chain, pframes_t nframes);
+	int process_io_plugs (std::shared_ptr<GraphChain> chain, pframes_t nframes, samplepos_t start_sample);
 
-	void plot (int chain);
+	bool     in_process_thread () const;
+	uint32_t n_threads () const;
+
+	/* called by GraphNode */
+	void trigger (ProcessNode* n);
 	void reached_terminal_node ();
 
-	void helper_thread ();
-
-	int process_routes (pframes_t nframes, samplepos_t start_sample, samplepos_t end_sample, bool& need_butler);
-
-	int routes_no_roll (pframes_t nframes, samplepos_t start_sample, samplepos_t end_sample, bool non_rt_pending);
-
+	/* called by virtual GraphNode::process() */
 	void process_one_route (Route* route);
+	void process_one_ioplug (IOPlug*);
 
-	void clear_other_chain ();
-	void swap_process_chain ();
-
-	bool in_process_thread () const;
+	/* RTTasks */
+	void process_tasklist (RTTaskList const&);
 
 protected:
 	virtual void session_going_away ();
@@ -86,64 +102,55 @@ private:
 	void drop_threads ();
 	void run_one ();
 	void main_thread ();
-	void prep (bool check_pending_chain = true);
-	void dump (int chain) const;
+	void prep ();
 
-	node_list_t _nodes_rt[2];
-	node_list_t _init_trigger_list[2];
+	void helper_thread ();
 
-	PBD::MPMCQueue<GraphNode*> _trigger_queue;      ///< nodes that can be processed
-	GATOMIC_QUAL guint         _trigger_queue_size; ///< number of entries in trigger-queue
+	PBD::MPMCQueue<ProcessNode*> _trigger_queue;      ///< nodes that can be processed
+	std::atomic<uint32_t>        _trigger_queue_size; ///< number of entries in trigger-queue
 
 	/** Start worker threads */
 	PBD::Semaphore _execution_sem;
 
 	/** The number of processing threads that are asleep */
-	GATOMIC_QUAL guint _idle_thread_cnt;
+	std::atomic<uint32_t> _idle_thread_cnt;
 
 	/** Signalled to start a run of the graph for a process callback */
 	PBD::Semaphore _callback_start_sem;
 	PBD::Semaphore _callback_done_sem;
 
 	/** The number of unprocessed nodes that do not feed any other node; updated during processing */
-	GATOMIC_QUAL guint _terminal_refcnt;
+	std::atomic<uint32_t> _terminal_refcnt;
 
-	/** The initial number of nodes that do not feed any other node (for each chain) */
-	guint _n_terminal_nodes[2];
-	bool  _graph_empty;
+	bool _graph_empty;
 
 	/* number of background worker threads >= 0 */
-	GATOMIC_QUAL guint _n_workers;
+	std::atomic<uint32_t> _n_workers;
 
 	/* flag to terminate background threads */
-	GATOMIC_QUAL gint _terminate;
+	std::atomic<int> _terminate;
 
-	/* chain swapping */
-	Glib::Threads::Cond  _cleanup_cond;
-	mutable Glib::Threads::Mutex _swap_mutex;
-
-	GATOMIC_QUAL gint _current_chain;
-	GATOMIC_QUAL gint _pending_chain;
-	GATOMIC_QUAL gint _setup_chain;
+	/* graph chain */
+	GraphChain const* _graph_chain;
 
 	/* parameter caches */
 	pframes_t   _process_nframes;
 	samplepos_t _process_start_sample;
 	samplepos_t _process_end_sample;
-	bool        _process_can_record;
 	bool        _process_non_rt_pending;
 
-	bool _process_noroll;
+	enum ProcessMode {
+		Roll, NoRoll, Silence
+	} _process_mode;
+
 	int  _process_retval;
 	bool _process_need_butler;
 
 	/* engine / thread connection */
 	PBD::ScopedConnectionList engine_connections;
 	void                      engine_stopped ();
-
-	void setup_thread_local_variables ();
 };
 
-} // namespace
+} // namespace ARDOUR
 
 #endif /* __ardour_graph_h__ */

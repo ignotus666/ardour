@@ -52,9 +52,11 @@
 #include "pbd/basename.h"
 #include "pbd/file_utils.h"
 
+#include "ardour/auditioner.h"
 #include "ardour/audioengine.h"
 #include "ardour/filesystem_paths.h"
 #include "ardour/search_paths.h"
+#include "ardour/triggerbox.h"
 
 #include "gtkmm2ext/colors.h"
 #include "gtkmm2ext/utils.h"
@@ -68,7 +70,6 @@
 #include "keyboard.h"
 #include "utils.h"
 #include "pbd/i18n.h"
-#include "rgb_macros.h"
 #include "gui_thread.h"
 #include "ui_config.h"
 #include "ardour_dialog.h"
@@ -284,6 +285,22 @@ ARDOUR_UI_UTILS::sanitized_font (std::string const& name)
 }
 
 Pango::FontDescription
+ARDOUR_UI_UTILS::ardour_font (std::string const& name)
+{
+	Pango::FontDescription fd (name);
+	if (!fd.get_family().empty() && fd.get_family().find ("Mon") != std::string::npos) {
+		/* matches "ArdourMono", "Monaco" */
+		fd.set_family ("ArdourMono");
+	} else {
+		fd.set_family ("ArdourSans");
+	}
+
+	return fd;
+}
+
+
+
+Pango::FontDescription
 ARDOUR_UI_UTILS::get_font_for_style (string widgetname)
 {
 	Gtk::Window window (WINDOW_TOPLEVEL);
@@ -310,55 +327,6 @@ ARDOUR_UI_UTILS::get_font_for_style (string widgetname)
 	}
 
 	return Pango::FontDescription (pfd); /* make a copy */
-}
-
-Gdk::Color
-ARDOUR_UI_UTILS::gdk_color_from_rgb (uint32_t rgb)
-{
-	Gdk::Color c;
-	set_color_from_rgb (c, rgb);
-	return c;
-}
-
-Gdk::Color
-ARDOUR_UI_UTILS::gdk_color_from_rgba (uint32_t rgba)
-{
-	Gdk::Color c;
-	set_color_from_rgb (c, rgba >> 8);
-	return c;
-}
-
-void
-ARDOUR_UI_UTILS::set_color_from_rgb (Gdk::Color& c, uint32_t rgb)
-{
-	/* Gdk::Color color ranges are 16 bit, so scale from 8 bit by
-	   multiplying by 256.
-	*/
-	c.set_rgb ((rgb >> 16)*256, ((rgb & 0xff00) >> 8)*256, (rgb & 0xff)*256);
-}
-
-void
-ARDOUR_UI_UTILS::set_color_from_rgba (Gdk::Color& c, uint32_t rgba)
-{
-	/* Gdk::Color color ranges are 16 bit, so scale from 8 bit by
-	   multiplying by 256.
-	*/
-	c.set_rgb ((rgba >> 24)*256, ((rgba & 0xff0000) >> 16)*256, ((rgba & 0xff00) >> 8)*256);
-}
-
-uint32_t
-ARDOUR_UI_UTILS::gdk_color_to_rgba (Gdk::Color const& c)
-{
-	/* since alpha value is not available from a Gdk::Color, it is
-	   hardcoded as 0xff (aka 255 or 1.0)
-	*/
-
-	const uint32_t r = c.get_red_p () * 255.0;
-	const uint32_t g = c.get_green_p () * 255.0;
-	const uint32_t b = c.get_blue_p () * 255.0;
-	const uint32_t a = 0xff;
-
-	return RGBA_TO_UINT (r,g,b,a);
 }
 
 bool
@@ -712,6 +680,22 @@ ARDOUR_UI_UTILS::escape_underscores (string const & s)
 }
 
 Gdk::Color
+ARDOUR_UI_UTILS::round_robin_palette_color ()
+{
+	Gdk::Color newcolor;
+	string cp = UIConfiguration::instance().get_stripable_color_palette ();
+	Gdk::ArrayHandle_Color gc = ColorSelection::palette_from_string (cp);
+	std::vector<Gdk::Color> c (gc);
+	static std::vector<Gdk::Color>::size_type index = 0;
+
+	if (index >= c.size()) {
+		index = 0;
+	}
+
+	return c[index++];
+}
+
+Gdk::Color
 ARDOUR_UI_UTILS::unique_random_color (list<Gdk::Color>& used_colors)
 {
 	Gdk::Color newcolor;
@@ -777,7 +761,7 @@ ARDOUR_UI_UTILS::samples_as_time_string (samplecnt_t s, float rate, bool show_sa
 		snprintf (buf, sizeof (buf), "%" PRId64" spl", s);
 	} else if (s < (rate / 1000.f)) {
 		/* 0 .. 999 usec */
-		snprintf (buf, sizeof (buf), "%.0f \u00B5s", s * 1e+6f / rate);
+		snprintf (buf, sizeof (buf), u8"%.0f \u00B5s", s * 1e+6f / rate);
 	} else if (s < (rate / 100.f)) {
 		/* 1.000 .. 9.999 ms */
 		snprintf (buf, sizeof (buf), "%.3f ms", s * 1e+3f / rate);
@@ -799,6 +783,50 @@ ARDOUR_UI_UTILS::samples_as_time_string (samplecnt_t s, float rate, bool show_sa
 	}
 	buf[31] = '\0';
 	return buf;
+}
+
+string
+ARDOUR_UI_UTILS::midi_channels_as_string (std::bitset<16> channels)
+{
+	if (channels.none ()) {
+		return _("none");
+	}
+
+	string rv;
+
+	for (int i = 0; i<16; i++) {
+
+		bool prior = i<1 ? false : channels.test(i-1);
+		bool current = channels.test(i);
+		bool next = i>14 ? false : channels.test(i+1);
+		bool nextnext = i>13 ? false : channels.test(i+2);
+		bool future = false;
+		for (int f = i+1; f<16; f++) {
+			if (channels.test(f)) {
+				future = true;
+			}
+		}
+
+		if (prior && current && next) {
+			/* I'm in the middle of a consecutive chain, maybe just add a dash */
+			if (!rv.empty() && (rv.rfind("-") != rv.length()-1 )) {
+				rv += "-";
+			}
+			continue;
+		}
+
+		if (current) {
+			/* here I am! */
+			rv+=to_string<int> (i+1);
+		}
+
+		if (current && future && !(next && nextnext)) {
+			/* there are channels after me but they are not 3 consecutive; add a comma */
+			rv += ",";
+		}
+	}
+
+	return rv;
 }
 
 bool
@@ -890,7 +918,10 @@ ARDOUR_UI_UTILS::convert_drop_to_paths (vector<string>& paths, const SelectionDa
 		 */
 		string txt = data.get_text();
 
-		char* p = (char *) malloc (txt.length() + 1);
+		/* copy to char* for easy char-wise checks and modification */
+		char* tmp = (char *) malloc (txt.length() + 1);
+		char* p   = tmp;
+
 		txt.copy (p, txt.length(), 0);
 		p[txt.length()] = '\0';
 
@@ -922,7 +953,7 @@ ARDOUR_UI_UTILS::convert_drop_to_paths (vector<string>& paths, const SelectionDa
 			}
 		}
 
-		free ((void*)p);
+		free ((void*)tmp);
 
 		if (uris.empty()) {
 			return false;
@@ -936,4 +967,21 @@ ARDOUR_UI_UTILS::convert_drop_to_paths (vector<string>& paths, const SelectionDa
 	}
 
 	return !paths.empty ();
+}
+
+void
+ARDOUR_UI_UTILS::copy_patch_changes (std::shared_ptr<ARDOUR::Auditioner> a, std::shared_ptr<ARDOUR::Trigger> t)
+{
+	std::shared_ptr<ARDOUR::MIDITrigger> mt = std::dynamic_pointer_cast <ARDOUR::MIDITrigger> (t);
+
+	if (!mt || !a) {
+		return;
+	}
+	for (uint8_t c = 0; c < 16; ++c) {
+		if (a->patch_change (c).is_set()) {
+			mt->set_patch_change (a->patch_change (c));
+		} else {
+			mt->unset_patch_change (c);
+		}
+	}
 }

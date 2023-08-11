@@ -37,7 +37,7 @@ STATIC(FeedbackDetected, &ARDOUR::Session::FeedbackDetected, 0)
 STATIC(SuccessfulGraphSort, &ARDOUR::Session::SuccessfulGraphSort, 0)
 STATIC(StartTimeChanged, &ARDOUR::Session::StartTimeChanged, 1)
 STATIC(EndTimeChanged, &ARDOUR::Session::EndTimeChanged, 1)
-STATIC(Exported, &ARDOUR::Session::Exported, 2)
+STATIC(Exported, &ARDOUR::Session::Exported, 4)
 
 // stripable static globals
 STATIC(Change, &PresentationInfo::Change, 0)
@@ -91,9 +91,19 @@ STATIC(LuaTimerDS, &LuaInstance::LuaTimerDS, 0)
 // Session load
 STATIC(SetSession, &LuaInstance::SetSession, 0)
 
+// Editor Selection Changed
+STATIC(SelectionChanged, &LuaInstance::SelectionChanged, 0)
+
 // TODO per track/route signals,
 // TODO per plugin actions / controllables
 // TODO per region actions
 //SESSIONOBJECT(PropertyChanged, &ARDOUR::Stateful::PropertyChanged, 1)
 
 // TODO any location action
+
+// /////////////////////////////////////////////////////////////////////
+// NOTE: WHEN ADDING/REMOVING SIGNALS, UPDATE libs/ardour/luabindings.cc
+// TO MATCH THE TOTAL NUMBER OF SIGNALS.
+//
+// CLASSKEYS(std::bitset<50ul>); // LuaSignal::LAST_SIGNAL
+// /////////////////////////////////////////////////////////////////////

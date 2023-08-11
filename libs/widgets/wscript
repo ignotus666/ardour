@@ -26,6 +26,7 @@ top = '.'
 out = 'build'
 
 widgets_sources = [
+        'ardour_ctrl_base.cc',
         'ardour_button.cc',
         'ardour_display.cc',
         'ardour_dropdown.cc',
@@ -59,8 +60,6 @@ def options(opt):
     autowaf.set_options(opt)
 
 def configure(conf):
-    conf.load ('compiler_cxx')
-    autowaf.configure(conf)
     autowaf.check_pkg(conf, 'cairomm-1.0', uselib_store='CAIROMM', atleast_version='1.8.4')
 
 def build(bld):
@@ -86,4 +85,3 @@ def build(bld):
 
 def shutdown():
     autowaf.shutdown()
-

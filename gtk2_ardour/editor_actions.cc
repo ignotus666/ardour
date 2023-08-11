@@ -128,6 +128,7 @@ Editor::register_actions ()
 	ActionManager::register_action (editor_menu_actions, X_("AutomationMenu"), _("Automation"));
 	ActionManager::register_action (editor_menu_actions, X_("Crossfades"), _("Crossfades"));
 	ActionManager::register_action (editor_menu_actions, X_("Edit"), _("Edit"));
+	ActionManager::register_action (editor_menu_actions, X_("Tempo"), _("Tempo"));
 	ActionManager::register_action (editor_menu_actions, X_("EditCursorMovementOptions"), _("Move Selected Marker"));
 	ActionManager::register_action (editor_menu_actions, X_("EditSelectRangeOptions"), _("Select Range Operations"));
 	ActionManager::register_action (editor_menu_actions, X_("EditSelectRegionOptions"), _("Select Regions"));
@@ -149,6 +150,7 @@ Editor::register_actions ()
 	ActionManager::register_action (editor_menu_actions, X_("ZoomFocusMenu"), _("Zoom Focus"));
 	ActionManager::register_action (editor_menu_actions, X_("LocateToMarker"), _("Locate to Markers"));
 	ActionManager::register_action (editor_menu_actions, X_("MarkerMenu"), _("Markers"));
+	ActionManager::register_action (editor_menu_actions, X_("CueMenu"), _("Cues"));
 	ActionManager::register_action (editor_menu_actions, X_("MeterFalloff"), _("Meter falloff"));
 	ActionManager::register_action (editor_menu_actions, X_("MeterHold"), _("Meter hold"));
 	ActionManager::register_action (editor_menu_actions, X_("MIDI"), _("MIDI Options"));
@@ -168,14 +170,21 @@ Editor::register_actions ()
 	ActionManager::register_action (editor_menu_actions, X_("Select"), _("Select"));
 	ActionManager::register_action (editor_menu_actions, X_("SelectMenu"), _("Select"));
 	ActionManager::register_action (editor_menu_actions, X_("SeparateMenu"), _("Separate"));
+	ActionManager::register_action (editor_menu_actions, X_("ConsolidateMenu"), _("Consolidate"));
+	ActionManager::register_action (editor_menu_actions, X_("AnalyzeMenu"), _("Analyze"));
 	ActionManager::register_action (editor_menu_actions, X_("SetLoopMenu"), _("Loop"));
 	ActionManager::register_action (editor_menu_actions, X_("SetPunchMenu"), _("Punch"));
 	ActionManager::register_action (editor_menu_actions, X_("Solo"), _("Solo"));
 	ActionManager::register_action (editor_menu_actions, X_("Subframes"), _("Subframes"));
 	ActionManager::register_action (editor_menu_actions, X_("SyncMenu"), _("Sync"));
 	ActionManager::register_action (editor_menu_actions, X_("TempoMenu"), _("Tempo"));
+	ActionManager::register_action (editor_menu_actions, X_("MappingMenu"), _("Mapping"));
 	ActionManager::register_action (editor_menu_actions, X_("Timecode"), _("Timecode fps"));
 	ActionManager::register_action (editor_menu_actions, X_("LayerDisplay"), _("Region Layers"));
+
+	ActionManager::register_action (editor_menu_actions, X_("GridChoiceTriplets"), _("Triplets"));
+	ActionManager::register_action (editor_menu_actions, X_("GridChoiceQuintuplets"), _("Quintuplets"));
+	ActionManager::register_action (editor_menu_actions, X_("GridChoiceSeptuplets"), _("Septuplets"));
 
 	act = ActionManager::register_action (editor_menu_actions, X_("TrackHeightMenu"), _("Height"));
 	ActionManager::stripable_selection_sensitive_actions.push_back (act);
@@ -196,6 +205,10 @@ Editor::register_actions ()
 	   when required. Editor::unlock() must be invoked directly.
 	*/
 	ActionManager::register_action (editor_actions, "lock", S_("Session|Lock"), sigc::mem_fun (*this, &Editor::lock));
+
+	RadioAction::Group tempo_edit_group;
+	ActionManager::register_radio_action (editor_actions, tempo_edit_group, "tempo-edit-is-mapping", _("Map Tempo"), sigc::bind (sigc::mem_fun (*this, &Editor::tempo_edit_behavior_toggled), Editing::TempoMapping));
+	ActionManager::register_radio_action (editor_actions, tempo_edit_group, "tempo-edit-is-changing", _("Change Tempo"), sigc::bind (sigc::mem_fun (*this, &Editor::tempo_edit_behavior_toggled), Editing::TempoChanging));
 
 	toggle_reg_sens (editor_actions, "show-editor-mixer", _("Show Editor Mixer"), sigc::mem_fun (*this, &Editor::editor_mixer_button_toggled));
 	toggle_reg_sens (editor_actions, "show-editor-list", _("Show Editor List"), sigc::mem_fun (*this, &Editor::editor_list_button_toggled));
@@ -239,7 +252,7 @@ Editor::register_actions ()
 	reg_sens (editor_actions, "select-from-regions", _("Set Range to Selected Regions"), sigc::mem_fun(*this, &Editor::set_selection_from_region));
 
 	reg_sens (editor_actions, "edit-current-tempo", _("Edit Current Tempo"), sigc::mem_fun(*this, &Editor::edit_current_tempo));
-	reg_sens (editor_actions, "edit-current-meter", _("Edit Current Meter"), sigc::mem_fun(*this, &Editor::edit_current_meter));
+	reg_sens (editor_actions, "edit-current-meter", _("Edit Current Time Signature"), sigc::mem_fun(*this, &Editor::edit_current_meter));
 
 	reg_sens (editor_actions, "select-all-after-edit-cursor", _("Select All After Edit Point"), sigc::bind (sigc::mem_fun(*this, &Editor::select_all_selectables_using_edit), true, false));
 	reg_sens (editor_actions, "alternate-select-all-after-edit-cursor", _("Select All After Edit Point"), sigc::bind (sigc::mem_fun(*this, &Editor::select_all_selectables_using_edit), true, false));
@@ -327,9 +340,9 @@ Editor::register_actions ()
 	reg_sens (editor_actions, "zoom_5_min", _("Zoom to 5 min"), sigc::bind (sigc::mem_fun(*this, &Editor::set_zoom_preset), 5 * 60 * 1000));
 	reg_sens (editor_actions, "zoom_10_min", _("Zoom to 10 min"), sigc::bind (sigc::mem_fun(*this, &Editor::set_zoom_preset), 10 * 60 * 1000));
 
-	act = reg_sens (editor_actions, "move-selected-tracks-up", _("Move Selected Tracks Up"), sigc::bind (sigc::mem_fun(*_routes, &EditorRoutes::move_selected_tracks), true));
+	act = reg_sens (editor_actions, "move-selected-tracks-up", _("Move Selected Tracks Up"), sigc::bind (sigc::mem_fun(*this, &Editor::move_selected_tracks), true));
 	ActionManager::stripable_selection_sensitive_actions.push_back (act);
-	act = reg_sens (editor_actions, "move-selected-tracks-down", _("Move Selected Tracks Down"), sigc::bind (sigc::mem_fun(*_routes, &EditorRoutes::move_selected_tracks), false));
+	act = reg_sens (editor_actions, "move-selected-tracks-down", _("Move Selected Tracks Down"), sigc::bind (sigc::mem_fun(*this, &Editor::move_selected_tracks), false));
 	ActionManager::stripable_selection_sensitive_actions.push_back (act);
 
 	act = reg_sens (editor_actions, "scroll-tracks-up", _("Scroll Tracks Up"), sigc::mem_fun(*this, &Editor::scroll_tracks_up));
@@ -355,9 +368,18 @@ Editor::register_actions ()
 	reg_sens (editor_actions, "set-punch-from-edit-range", _("Set Punch from Selection"), sigc::mem_fun(*this, &Editor::set_punch_from_selection));
 	reg_sens (editor_actions, "set-session-from-edit-range", _("Set Session Start/End from Selection"), sigc::mem_fun(*this, &Editor::set_session_extents_from_selection));
 
+	reg_sens (editor_actions, "copy-paste-section", _("Copy/Paste Range Section to Edit Point"), sigc::bind (sigc::mem_fun(*this, &Editor::cut_copy_section), CopyPasteSection));
+	reg_sens (editor_actions, "cut-paste-section", _("Cut/Paste Range Section to Edit Point"), sigc::bind (sigc::mem_fun(*this, &Editor::cut_copy_section), CutPasteSection));
+	reg_sens (editor_actions, "insert-section", _("Insert Time Section at Edit Point"), sigc::bind (sigc::mem_fun(*this, &Editor::cut_copy_section), InsertSection));
+	reg_sens (editor_actions, "delete-section", _("Delete Range Section"), sigc::bind (sigc::mem_fun(*this, &Editor::cut_copy_section), DeleteSection));
+	reg_sens (editor_actions, "alternate-delete-section", _("Delete Range Section"), sigc::bind (sigc::mem_fun(*this, &Editor::cut_copy_section), DeleteSection));
+
 	/* this is a duplicated action so that the main menu can use a different label */
 	reg_sens (editor_actions, "main-menu-play-selected-regions", _("Play Selected Regions"), sigc::mem_fun (*this, &Editor::play_selected_region));
 	reg_sens (editor_actions, "main-menu-tag-selected-regions", _("Tag Selected Regions"), sigc::mem_fun (*this, &Editor::tag_selected_region));
+
+	reg_sens (editor_actions, "group-selected-regions", _("Group Selected Regions"), sigc::mem_fun (*this, &Editor::group_selected_regions));
+	reg_sens (editor_actions, "ungroup-selected-regions", _("Ungroup Selected Regions"), sigc::mem_fun (*this, &Editor::ungroup_selected_regions));
 
 	reg_sens (editor_actions, "play-from-edit-point", _("Play from Edit Point"), sigc::mem_fun(*this, &Editor::play_from_edit_point));
 	reg_sens (editor_actions, "play-from-edit-point-and-return", _("Play from Edit Point and Return"), sigc::mem_fun(*this, &Editor::play_from_edit_point_and_return));
@@ -393,6 +415,21 @@ Editor::register_actions ()
 	act = reg_sens (editor_actions, "separate-from-loop", _("Separate Using Loop Range"), sigc::mem_fun(*this, &Editor::separate_region_from_loop));
 
 	act = reg_sens (editor_actions, "editor-crop", _("Crop"), sigc::mem_fun(*this, &Editor::crop_region_to_selection));
+	ActionManager::time_selection_sensitive_actions.push_back (act);
+
+	act = reg_sens (editor_actions, "add-range-marker-from-selection", _("Add Range Marker from Selection"), sigc::mem_fun(*this, &Editor::add_location_from_selection));
+	ActionManager::session_sensitive_actions.push_back (act);
+
+	act = reg_sens (editor_actions, "editor-consolidate-with-processing", _("Consolidate Range (with processing)"), sigc::bind (sigc::mem_fun(*this, &Editor::bounce_range_selection), ReplaceRange, true));
+	ActionManager::time_selection_sensitive_actions.push_back (act);
+	act = reg_sens (editor_actions, "editor-consolidate", _("Consolidate Range"), sigc::bind (sigc::mem_fun(*this, &Editor::bounce_range_selection), ReplaceRange, false));
+	ActionManager::time_selection_sensitive_actions.push_back (act);
+
+	act = reg_sens (editor_actions, "editor-analyze-loudness", _("Loudness Analysis"), sigc::mem_fun(*this, &Editor::loudness_analyze_range_selection));
+	ActionManager::time_selection_sensitive_actions.push_back (act);
+	act = reg_sens (editor_actions, "editor-analyze-spectrum", _("Spectral Analysis"), sigc::mem_fun(*this, &Editor::spectral_analyze_range_selection));
+	ActionManager::time_selection_sensitive_actions.push_back (act);
+	act = reg_sens (editor_actions, "editor-loudness-assistant", _("Loudness Assistant"), sigc::bind (sigc::mem_fun(*this, &Editor::loudness_assistant), true));
 	ActionManager::time_selection_sensitive_actions.push_back (act);
 
 	reg_sens (editor_actions, "editor-cut", _("Cut"), sigc::mem_fun(*this, &Editor::cut));
@@ -535,7 +572,7 @@ Editor::register_actions ()
 	smart_mode_button.set_text (_("Smart"));
 	smart_mode_button.set_name ("mouse mode button");
 
-	act = ActionManager::register_radio_action (mouse_mode_actions, mouse_mode_group, "set-mouse-mode-object", _("Object Tool"), sigc::bind (sigc::mem_fun(*this, &Editor::mouse_mode_toggled), Editing::MouseObject));
+	act = ActionManager::register_radio_action (mouse_mode_actions, mouse_mode_group, "set-mouse-mode-object", _("Grab (Object Tool)"), sigc::bind (sigc::mem_fun(*this, &Editor::mouse_mode_toggled), Editing::MouseObject));
 	mouse_move_button.set_related_action (act);
 	mouse_move_button.set_icon (ArdourWidgets::ArdourIcon::ToolGrab);
 	mouse_move_button.set_name ("mouse mode button");
@@ -560,7 +597,7 @@ Editor::register_actions ()
 	mouse_timefx_button.set_icon (ArdourWidgets::ArdourIcon::ToolStretch);
 	mouse_timefx_button.set_name ("mouse mode button");
 
-	act = ActionManager::register_radio_action (mouse_mode_actions, mouse_mode_group, "set-mouse-mode-content", _("Content Tool"), sigc::bind (sigc::mem_fun(*this, &Editor::mouse_mode_toggled), Editing::MouseContent));
+	act = ActionManager::register_radio_action (mouse_mode_actions, mouse_mode_group, "set-mouse-mode-content", _("Internal Edit (Content Tool)"), sigc::bind (sigc::mem_fun(*this, &Editor::mouse_mode_toggled), Editing::MouseContent));
 	mouse_content_button.set_related_action (act);
 	mouse_content_button.set_icon (ArdourWidgets::ArdourIcon::ToolContent);
 	mouse_content_button.set_name ("mouse mode button");
@@ -581,10 +618,13 @@ Editor::register_actions ()
 	ActionManager::register_action (editor_actions, "cycle-edit-point-with-marker", _("Change Edit Point Including Marker"), sigc::bind (sigc::mem_fun (*this, &Editor::cycle_edit_point), true));
 
 	ActionManager::register_action (editor_actions, "set-edit-ripple", _("Ripple"), bind (mem_fun (*this, &Editor::set_edit_mode), Ripple));
-	ActionManager::register_action (editor_actions, "set-edit-ripple-all", _("Ripple All"), bind (mem_fun (*this, &Editor::set_edit_mode), RippleAll));
 	ActionManager::register_action (editor_actions, "set-edit-slide", _("Slide"), sigc::bind (sigc::mem_fun (*this, &Editor::set_edit_mode), Slide));
 	ActionManager::register_action (editor_actions, "set-edit-lock", S_("EditMode|Lock"), sigc::bind (sigc::mem_fun (*this, &Editor::set_edit_mode), Lock));
 	ActionManager::register_action (editor_actions, "cycle-edit-mode", _("Cycle Edit Mode"), sigc::mem_fun (*this, &Editor::cycle_edit_mode));
+
+	ActionManager::register_action (editor_actions, "set-ripple-selected", _("Selected"), bind (mem_fun (*this, &Editor::set_ripple_mode), RippleSelected));
+	ActionManager::register_action (editor_actions, "set-ripple-all", _("All"), sigc::bind (sigc::mem_fun (*this, &Editor::set_ripple_mode), RippleAll));
+	ActionManager::register_action (editor_actions, "set-ripple-interview", S_("Interview"), sigc::bind (sigc::mem_fun (*this, &Editor::set_ripple_mode), RippleInterview));
 
 	ActionManager::register_action (editor_actions, X_("GridChoice"), _("Snap & Grid"));
 
@@ -670,6 +710,7 @@ Editor::register_actions ()
 
 	ActionManager::register_radio_action (snap_actions, grid_choice_group, X_("grid-type-beat"),           grid_type_strings[(int)GridTypeBeat].c_str(),      (sigc::bind (sigc::mem_fun(*this, &Editor::grid_type_chosen), Editing::GridTypeBeat)));
 	ActionManager::register_radio_action (snap_actions, grid_choice_group, X_("grid-type-bar"),            grid_type_strings[(int)GridTypeBar].c_str(),       (sigc::bind (sigc::mem_fun(*this, &Editor::grid_type_chosen), Editing::GridTypeBar)));
+	ActionManager::register_radio_action (snap_actions, grid_choice_group, X_("grid-type-playhead"),       grid_type_strings[(int)GridTypePlayhead].c_str(),       (sigc::bind (sigc::mem_fun(*this, &Editor::grid_type_chosen), Editing::GridTypePlayhead)));
 
 	ActionManager::register_radio_action (snap_actions, grid_choice_group, X_("grid-type-none"),           grid_type_strings[(int)GridTypeNone].c_str(),      (sigc::bind (sigc::mem_fun(*this, &Editor::grid_type_chosen), Editing::GridTypeNone)));
 
@@ -678,21 +719,21 @@ Editor::register_actions ()
 	/* RULERS */
 
 	Glib::RefPtr<ActionGroup> ruler_actions = ActionManager::create_action_group (bindings, X_("Rulers"));
-	ruler_tempo_action = Glib::RefPtr<ToggleAction>::cast_static (ActionManager::register_toggle_action (ruler_actions, X_("toggle-tempo-ruler"), _("Tempo"), sigc::mem_fun(*this, &Editor::toggle_ruler_visibility)));
-	ruler_meter_action = Glib::RefPtr<ToggleAction>::cast_static (ActionManager::register_toggle_action (ruler_actions, X_("toggle-meter-ruler"), _("Meter"), sigc::mem_fun(*this, &Editor::toggle_ruler_visibility)));
-	ruler_range_action = Glib::RefPtr<ToggleAction>::cast_static (ActionManager::register_toggle_action (ruler_actions, X_("toggle-range-ruler"), _("Ranges"), sigc::mem_fun(*this, &Editor::toggle_ruler_visibility)));
-	ruler_marker_action = Glib::RefPtr<ToggleAction>::cast_static (ActionManager::register_toggle_action (ruler_actions, X_("toggle-marker-ruler"), _("Markers"), sigc::mem_fun(*this, &Editor::toggle_ruler_visibility)));
-	ruler_cd_marker_action = Glib::RefPtr<ToggleAction>::cast_static (ActionManager::register_toggle_action (ruler_actions, X_("toggle-cd-marker-ruler"), _("CD Markers"), sigc::mem_fun(*this, &Editor::toggle_ruler_visibility)));
-	ruler_cue_marker_action = Glib::RefPtr<ToggleAction>::cast_static (ActionManager::register_toggle_action (ruler_actions, X_("toggle-cue-marker-ruler"), _("Cue Markers"), sigc::mem_fun(*this, &Editor::toggle_ruler_visibility)));
-	ruler_loop_punch_action = Glib::RefPtr<ToggleAction>::cast_static (ActionManager::register_toggle_action (ruler_actions, X_("toggle-loop-punch-ruler"), _("Loop/Punch"), sigc::mem_fun(*this, &Editor::toggle_ruler_visibility)));
-	ruler_bbt_action = Glib::RefPtr<ToggleAction>::cast_static (ActionManager::register_toggle_action (ruler_actions, X_("toggle-bbt-ruler"), _("Bars & Beats"), sigc::mem_fun(*this, &Editor::toggle_ruler_visibility)));
-	ruler_samples_action = Glib::RefPtr<ToggleAction>::cast_static (ActionManager::register_toggle_action (ruler_actions, X_("toggle-samples-ruler"), _("Samples"), sigc::mem_fun(*this, &Editor::toggle_ruler_visibility)));
+	ruler_minsec_action = Glib::RefPtr<ToggleAction>::cast_static (ActionManager::register_toggle_action (ruler_actions, X_("toggle-minsec-ruler"), _("Mins:Secs"), sigc::mem_fun(*this, &Editor::toggle_ruler_visibility)));
 	ruler_timecode_action = Glib::RefPtr<ToggleAction>::cast_static (ActionManager::register_toggle_action (ruler_actions, X_("toggle-timecode-ruler"), _("Timecode"), sigc::mem_fun(*this, &Editor::toggle_ruler_visibility)));
-	ruler_minsec_action = Glib::RefPtr<ToggleAction>::cast_static (ActionManager::register_toggle_action (ruler_actions, X_("toggle-minsec-ruler"), _("Min:Sec"), sigc::mem_fun(*this, &Editor::toggle_ruler_visibility)));
+	ruler_samples_action = Glib::RefPtr<ToggleAction>::cast_static (ActionManager::register_toggle_action (ruler_actions, X_("toggle-samples-ruler"), _("Samples"), sigc::mem_fun(*this, &Editor::toggle_ruler_visibility)));
+	ruler_bbt_action = Glib::RefPtr<ToggleAction>::cast_static (ActionManager::register_toggle_action (ruler_actions, X_("toggle-bbt-ruler"), _("Bars:Beats"), sigc::mem_fun(*this, &Editor::toggle_ruler_visibility)));
+	ruler_meter_action = Glib::RefPtr<ToggleAction>::cast_static (ActionManager::register_toggle_action (ruler_actions, X_("toggle-meter-ruler"), _("Time Signature"), sigc::mem_fun(*this, &Editor::toggle_ruler_visibility)));
+	ruler_tempo_action = Glib::RefPtr<ToggleAction>::cast_static (ActionManager::register_toggle_action (ruler_actions, X_("toggle-tempo-ruler"), _("Tempo"), sigc::mem_fun(*this, &Editor::toggle_ruler_visibility)));
+	ruler_range_action = Glib::RefPtr<ToggleAction>::cast_static (ActionManager::register_toggle_action (ruler_actions, X_("toggle-range-ruler"), _("Range Markers"), sigc::mem_fun(*this, &Editor::toggle_ruler_visibility)));
+	ruler_loop_punch_action = Glib::RefPtr<ToggleAction>::cast_static (ActionManager::register_toggle_action (ruler_actions, X_("toggle-loop-punch-ruler"), _("Loop/Punch Ranges"), sigc::mem_fun(*this, &Editor::toggle_ruler_visibility)));
+	ruler_cd_marker_action = Glib::RefPtr<ToggleAction>::cast_static (ActionManager::register_toggle_action (ruler_actions, X_("toggle-cd-marker-ruler"), _("CD Markers"), sigc::mem_fun(*this, &Editor::toggle_ruler_visibility)));
+	ruler_marker_action = Glib::RefPtr<ToggleAction>::cast_static (ActionManager::register_toggle_action (ruler_actions, X_("toggle-marker-ruler"), _("Location Markers"), sigc::mem_fun(*this, &Editor::toggle_ruler_visibility)));
+	ruler_cue_marker_action = Glib::RefPtr<ToggleAction>::cast_static (ActionManager::register_toggle_action (ruler_actions, X_("toggle-cue-marker-ruler"), _("Cue Markers"), sigc::mem_fun(*this, &Editor::toggle_ruler_visibility)));
 
 	ActionManager::register_action (editor_menu_actions, X_("VideoMonitorMenu"), _("Video Monitor"));
 
-	ruler_video_action = Glib::RefPtr<ToggleAction>::cast_static (ActionManager::register_toggle_action (ruler_actions, X_("toggle-video-ruler"), _("Video"), sigc::mem_fun(*this, &Editor::toggle_ruler_visibility)));
+	ruler_video_action = Glib::RefPtr<ToggleAction>::cast_static (ActionManager::register_toggle_action (ruler_actions, X_("toggle-video-ruler"), _("Video Timeline"), sigc::mem_fun(*this, &Editor::toggle_ruler_visibility)));
 	xjadeo_proc_action = Glib::RefPtr<ToggleAction>::cast_static (ActionManager::register_toggle_action (editor_actions, X_("ToggleJadeo"), _("Video Monitor"), sigc::mem_fun (*this, &Editor::set_xjadeo_proc)));
 
 	xjadeo_ontop_action = Glib::RefPtr<ToggleAction>::cast_static (ActionManager::register_toggle_action (editor_actions, X_("toggle-vmon-ontop"), _("Always on Top"), sigc::bind (sigc::mem_fun (*this, &Editor::set_xjadeo_viewoption), (int) 1)));
@@ -707,17 +748,17 @@ Editor::register_actions ()
 
 	no_ruler_shown_update = true;
 
-	ruler_marker_action->set_active (true);
+	ruler_minsec_action->set_active (false);
+	ruler_timecode_action->set_active (true);
+	ruler_samples_action->set_active (false);
+	ruler_bbt_action->set_active (true);
 	ruler_meter_action->set_active (true);
 	ruler_tempo_action->set_active (true);
 	ruler_range_action->set_active (true);
 	ruler_loop_punch_action->set_active (true);
-	ruler_loop_punch_action->set_active (true);
-	ruler_bbt_action->set_active (true);
 	ruler_cd_marker_action->set_active (true);
+	ruler_marker_action->set_active (true);
 	ruler_cue_marker_action->set_active (true);
-	ruler_timecode_action->set_active (true);
-	ruler_minsec_action->set_active (false);
 
 	ruler_video_action->set_active (false);
 	xjadeo_proc_action->set_active (false);
@@ -736,7 +777,6 @@ Editor::register_actions ()
 	xjadeo_letterbox_action->set_sensitive (false);
 	xjadeo_zoom_100->set_sensitive (false);
 
-	ruler_samples_action->set_active (false);
 	no_ruler_shown_update = false;
 
 	/* REGION LIST */
@@ -788,12 +828,10 @@ Editor::register_midi_actions (Bindings* midi_bindings)
 
 	/* two versions to allow same action for Delete and Backspace */
 
-	ActionManager::register_action (_midi_actions, X_("delete"), _("Delete Selection"), sigc::bind (sigc::mem_fun (*this, &Editor::midi_action), &MidiRegionView::delete_selection));
-	ActionManager::register_action (_midi_actions, X_("alt-delete"), _("Delete Selection (alternate)"), sigc::bind (sigc::mem_fun (*this, &Editor::midi_action), &MidiRegionView::delete_selection));
-
 	ActionManager::register_action (_midi_actions, X_("clear-selection"), _("Clear Note Selection"), sigc::bind (sigc::mem_fun (*this, &Editor::midi_action), &MidiRegionView::clear_note_selection));
 	ActionManager::register_action (_midi_actions, X_("invert-selection"), _("Invert Note Selection"), sigc::bind (sigc::mem_fun (*this, &Editor::midi_action), &MidiRegionView::invert_selection));
 	ActionManager::register_action (_midi_actions, X_("extend-selection"), _("Extend Note Selection"), sigc::bind (sigc::mem_fun (*this, &Editor::midi_action), &MidiRegionView::extend_selection));
+	ActionManager::register_action (_midi_actions, X_("duplicate-selection"), _("Duplicate Note Selection"), sigc::bind (sigc::mem_fun (*this, &Editor::midi_action), &MidiRegionView::duplicate_selection));
 
 	/* Lengthen */
 
@@ -857,6 +895,8 @@ Editor::register_midi_actions (Bindings* midi_bindings)
 	ActionManager::register_action (_midi_actions, X_("edit-channels"), _("Edit Note Channels"), sigc::bind (sigc::mem_fun (*this, &Editor::midi_action), &MidiRegionView::channel_edit));
 	ActionManager::register_action (_midi_actions, X_("edit-velocities"), _("Edit Note Velocities"), sigc::bind (sigc::mem_fun (*this, &Editor::midi_action), &MidiRegionView::velocity_edit));
 
+	ActionManager::register_action (_midi_actions, X_("quantize-selected-notes"), _("Quantize Selected Notes"), sigc::bind (sigc::mem_fun (*this, &Editor::midi_action), &MidiRegionView::quantize_selected_notes));
+
 	ActionManager::set_sensitive (_midi_actions, false);
 }
 
@@ -868,7 +908,7 @@ static void _lua_print (std::string s) {
 }
 
 void
-Editor::trigger_script_by_name (const std::string script_name)
+Editor::trigger_script_by_name (const std::string script_name, const std::string in_args)
 {
 	string script_path;
 	ARDOUR::LuaScriptList scr = LuaScripting::instance ().scripts(LuaScriptInfo::EditorAction);
@@ -895,6 +935,8 @@ Editor::trigger_script_by_name (const std::string script_name)
 			lua.do_command ("function ardour () end");
 			lua.do_file (script_path);
 			luabridge::LuaRef args (luabridge::newTable (L));
+
+			args[1] = in_args;
 
 			try {
 				luabridge::LuaRef fn = luabridge::getGlobal (L, "factory");
@@ -1099,13 +1141,13 @@ Editor::set_xjadeo_viewoption (int what)
 void
 Editor::edit_current_meter ()
 {
-	edit_meter_section (Temporal::TempoMap::use()->metric_at (ARDOUR_UI::instance()->primary_clock->absolute_time()).get_editable_meter());
+	edit_meter_section (Temporal::TempoMap::use()->metric_at (ARDOUR_UI::instance()->primary_clock->last_when()).get_editable_meter());
 }
 
 void
 Editor::edit_current_tempo ()
 {
-	edit_tempo_section (Temporal::TempoMap::use()->metric_at (ARDOUR_UI::instance()->primary_clock->absolute_time()).get_editable_tempo());
+	edit_tempo_section (Temporal::TempoMap::use()->metric_at (ARDOUR_UI::instance()->primary_clock->last_when()).get_editable_tempo());
 }
 
 RefPtr<RadioAction>
@@ -1214,6 +1256,9 @@ Editor::draw_length_action (GridType type)
 	case Editing::GridTypeBar:
 		action = "draw-length-bar";
 		break;
+	case Editing::GridTypePlayhead:
+		action = "draw-length-playhead";
+		break;
 	case Editing::GridTypeNone:
 		action = "draw-length-auto";
 		break;
@@ -1295,6 +1340,9 @@ Editor::grid_type_action (GridType type)
 	case Editing::GridTypeBar:
 		action = "grid-type-bar";
 		break;
+	case Editing::GridTypePlayhead:
+		action = "grid-type-playhead";
+		break;
 	case Editing::GridTypeNone:
 		action = "grid-type-none";
 		break;
@@ -1350,6 +1398,9 @@ Editor::next_grid_choice ()
 		set_grid_to (Editing::GridTypeBeat);
 		break;
 	case Editing::GridTypeNone:
+		set_grid_to (Editing::GridTypePlayhead);
+		break;
+	case Editing::GridTypePlayhead:
 		set_grid_to (Editing::GridTypeBar);
 		break;
 	case Editing::GridTypeBeatDiv3:
@@ -1392,7 +1443,10 @@ Editor::prev_grid_choice ()
 		set_grid_to (Editing::GridTypeBar);
 		break;
 	case Editing::GridTypeBar:
-		set_grid_to (Editing::GridTypeNone);
+		set_grid_to (Editing::GridTypePlayhead);
+		break;
+	case Editing::GridTypePlayhead:
+		set_grid_to (Editing::GridTypeBar);
 		break;
 	case Editing::GridTypeNone:
 		set_grid_to (Editing::GridTypeBeatDiv32);
@@ -1665,8 +1719,15 @@ Editor::parameter_changed (std::string p)
 		update_just_timecode ();
 	} else if (p == "show-region-fades") {
 		update_region_fade_visibility ();
+	} else if (p == "ripple-mode") {
+		ripple_mode_selector.set_text (ripple_mode_strings [Config->get_ripple_mode()]);
 	} else if (p == "edit-mode") {
-		edit_mode_selector.set_text (edit_mode_to_string (Config->get_edit_mode()));
+		edit_mode_selector.set_text (edit_mode_strings [Config->get_edit_mode()]);
+		if (Config->get_edit_mode()==Ripple) {
+			ripple_mode_selector.show();
+		} else {
+			ripple_mode_selector.hide();
+		}
 	} else if (p == "show-track-meters") {
 		toggle_meter_updating();
 	} else if (p == "show-summary") {
@@ -1713,6 +1774,8 @@ Editor::parameter_changed (std::string p)
 		if (tact->get_active () != s) {
 			tact->set_active (s);
 		}
+	} else if (p == "track-name-number") {
+		queue_redisplay_track_views ();
 	}
 }
 
@@ -1870,9 +1933,10 @@ Editor::register_region_actions ()
 	register_region_action (_region_actions, RegionActionTarget (SelectedRegions), "spectral-analyze-region", _("Spectral Analysis..."), sigc::mem_fun (*this, &Editor::spectral_analyze_region_selection));
 
 	register_region_action (_region_actions, RegionActionTarget (SelectedRegions|EnteredRegions), "reset-region-gain-envelopes", _("Reset Envelope"), sigc::mem_fun (*this, &Editor::reset_region_gain_envelopes));
-	register_region_action (_region_actions, RegionActionTarget (SelectedRegions|EnteredRegions), "reset-region-scale-amplitude", _("Reset Gain"), sigc::mem_fun (*this, &Editor::reset_region_scale_amplitude));
 
 	register_toggle_region_action (_region_actions, RegionActionTarget (SelectedRegions|EnteredRegions), "toggle-region-gain-envelope-active", _("Envelope Active"), sigc::mem_fun (*this, &Editor::toggle_gain_envelope_active));
+
+	register_toggle_region_action (_region_actions, RegionActionTarget (SelectedRegions|EnteredRegions), "toggle-region-polarity", _("Invert Polarity"), sigc::mem_fun (*this, &Editor::toggle_region_polarity));
 
 	register_region_action (_region_actions, RegionActionTarget (SelectedRegions|EnteredRegions), "quantize-region", _("Quantize..."), sigc::mem_fun (*this, &Editor::quantize_region));
 	register_region_action (_region_actions, RegionActionTarget (SelectedRegions|EnteredRegions), "legatize-region", _("Legatize"), sigc::bind(sigc::mem_fun (*this, &Editor::legatize_region), false));
@@ -1881,7 +1945,8 @@ Editor::register_region_actions ()
 	register_region_action (_region_actions, RegionActionTarget (SelectedRegions|EnteredRegions), "remove-overlap", _("Remove Overlap"), sigc::bind(sigc::mem_fun (*this, &Editor::legatize_region), true));
 	register_region_action (_region_actions, RegionActionTarget (SelectedRegions|EnteredRegions), "insert-patch-change", _("Insert Patch Change..."), sigc::bind (sigc::mem_fun (*this, &Editor::insert_patch_change), false));
 	register_region_action (_region_actions, RegionActionTarget (SelectedRegions|EnteredRegions), "insert-patch-change-context", _("Insert Patch Change..."), sigc::bind (sigc::mem_fun (*this, &Editor::insert_patch_change), true));
-	register_region_action (_region_actions, RegionActionTarget (SelectedRegions|EnteredRegions), "fork-region", _("Unlink from other copies"), sigc::mem_fun (*this, &Editor::fork_region));
+	register_region_action (_region_actions, RegionActionTarget (SelectedRegions|EnteredRegions), "fork-region", _("Unlink all selected regions"), sigc::mem_fun (*this, &Editor::fork_selected_regions));
+	register_region_action (_region_actions, RegionActionTarget (SelectedRegions|EnteredRegions), "fork-regions-from-unselected", _("Unlink from unselected"), sigc::mem_fun (*this, &Editor::fork_regions_from_unselected));
 	register_region_action (_region_actions, RegionActionTarget (SelectedRegions|EnteredRegions), "strip-region-silence", _("Strip Silence..."), sigc::mem_fun (*this, &Editor::strip_region_silence));
 	register_region_action (_region_actions, RegionActionTarget (SelectedRegions), "set-selection-from-region", _("Set Range Selection"), sigc::mem_fun (*this, &Editor::set_selection_from_region));
 

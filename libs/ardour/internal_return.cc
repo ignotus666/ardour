@@ -28,8 +28,8 @@
 using namespace std;
 using namespace ARDOUR;
 
-InternalReturn::InternalReturn (Session& s, Temporal::TimeDomain td, std::string const& name)
-	: Processor (s, name, td)
+InternalReturn::InternalReturn (Session& s, Temporal::TimeDomainProvider const & tdp, std::string const& name)
+	: Processor (s, name, tdp)
 {
 	_display_to_user = false;
 }
@@ -80,7 +80,7 @@ InternalReturn::set_playback_offset (samplecnt_t cnt)
 }
 
 XMLNode&
-InternalReturn::state ()
+InternalReturn::state () const
 {
 	XMLNode& node (Processor::state ());
 	/* override type */

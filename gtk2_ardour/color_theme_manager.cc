@@ -155,8 +155,8 @@ ColorThemeManager::ColorThemeManager ()
 	a->add (reset_button);
 	table.attach (*a, 0, 1, n, n + 1);
 
-	color_dialog.get_colorsel()->set_has_opacity_control (true);
-	color_dialog.get_colorsel()->set_has_palette (true);
+	color_dialog.get_color_selection()->set_has_opacity_control (true);
+	color_dialog.get_color_selection()->set_has_palette (true);
 	color_dialog.get_ok_button()->signal_clicked().connect (sigc::bind (sigc::mem_fun (color_dialog, &Gtk::Dialog::response), RESPONSE_ACCEPT));
 	color_dialog.get_cancel_button()->signal_clicked().connect (sigc::bind (sigc::mem_fun (color_dialog, &Gtk::Dialog::response), RESPONSE_CANCEL));
 
@@ -193,7 +193,8 @@ ColorThemeManager::setup_modifiers ()
 	for (UIConfiguration::Modifiers::const_iterator m = modifiers.begin(); m != modifiers.end(); ++m) {
 		mod_hbox = manage (new HBox);
 
-		mod_scale = manage (new HScale (0.0, 1.0, 0.01));
+		Adjustment* adj = manage (new Adjustment (0.0, 0.0, 1.0, 0.01, 0.1, 0));
+		mod_scale = manage (new HScale (*adj));
 		mod_scale->set_draw_value (false);
 		mod_scale->set_value (m->second.a());
 		mod_scale->set_update_policy (Gtk::UPDATE_DISCONTINUOUS);
@@ -380,10 +381,10 @@ ColorThemeManager::edit_palette_color (std::string name)
 	color_to_rgba (c, r, g, b, a);
 
 	gdkcolor.set_rgb_p (r, g, b);
-	color_dialog.get_colorsel()->set_previous_color (gdkcolor);
-	color_dialog.get_colorsel()->set_current_color (gdkcolor);
-	color_dialog.get_colorsel()->set_previous_alpha ((guint16) (a * 65535));
-	color_dialog.get_colorsel()->set_current_alpha ((guint16) (a * 65535));
+	color_dialog.get_color_selection()->set_previous_color (gdkcolor);
+	color_dialog.get_color_selection()->set_current_color (gdkcolor);
+	color_dialog.get_color_selection()->set_previous_alpha ((guint16) (a * 65535));
+	color_dialog.get_color_selection()->set_current_alpha ((guint16) (a * 65535));
 
 	color_dialog_connection.disconnect ();
 	color_dialog_connection = color_dialog.signal_response().connect (sigc::bind (sigc::mem_fun (*this, &ColorThemeManager::palette_color_response), name));
@@ -404,8 +405,8 @@ ColorThemeManager::palette_color_response (int result, std::string name)
 	switch (result) {
 	case RESPONSE_ACCEPT:
 	case RESPONSE_OK:
-		gdkcolor = color_dialog.get_colorsel()->get_current_color();
-		a = color_dialog.get_colorsel()->get_current_alpha() / 65535.0;
+		gdkcolor = color_dialog.get_color_selection()->get_current_color();
+		a = color_dialog.get_color_selection()->get_current_alpha() / 65535.0;
 		r = gdkcolor.get_red_p();
 		g = gdkcolor.get_green_p();
 		b = gdkcolor.get_blue_p();

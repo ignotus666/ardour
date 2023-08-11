@@ -146,6 +146,8 @@ SessionDialog::SessionDialog (bool require_new, const std::string& session_name,
 	if (require_new) {
 		setup_untitled_session ();
 	}
+
+	disallow_idle ();
 }
 
 SessionDialog::SessionDialog ()
@@ -173,6 +175,7 @@ SessionDialog::SessionDialog ()
 		recent_scroller.set_size_request (-1, 80);
 	}
 
+	disallow_idle ();
 }
 
 SessionDialog::~SessionDialog()
@@ -251,7 +254,7 @@ SessionDialog::master_channel_count ()
 bool
 SessionDialog::use_session_template () const
 {
-	if (!back_button->sensitive () && !new_only) {
+	if (!back_button->is_sensitive () && !new_only) {
 		/* open session -- not create a new one */
 		return false;
 	}
@@ -473,7 +476,7 @@ SessionDialog::setup_initial_choice_box ()
 	/* --disable plugins UI */
 
 	_disable_plugins.set_label (_("Safe Mode: Disable all Plugins"));
-	_disable_plugins.set_flags (Gtk::CAN_FOCUS);
+	_disable_plugins.set_can_focus ();
 	_disable_plugins.set_relief (Gtk::RELIEF_NORMAL);
 	_disable_plugins.set_mode (true);
 	_disable_plugins.set_active (ARDOUR::Session::get_disable_all_loaded_plugins());
@@ -601,8 +604,8 @@ SessionDialog::populate_session_templates ()
 	row[session_template_columns.name] = (_("Empty Template"));
 	row[session_template_columns.path] = string();
 	row[session_template_columns.description] = _("An empty session with factory default settings.\n\nSelect this option if you are importing files to mix.");
-	row[session_template_columns.modified_with_short] = _("");
-	row[session_template_columns.modified_with_long] = _("");
+	row[session_template_columns.modified_with_short] = ("");
+	row[session_template_columns.modified_with_long] = ("");
 
 	//auto-select the first item in the list
 	Gtk::TreeModel::Row first = template_model->children()[0];
@@ -783,14 +786,7 @@ SessionDialog::redisplay_recent_sessions ()
 	int session_snapshot_count = 0;
 
 	for (vector<std::string>::const_iterator i = session_directories.begin(); i != session_directories.end(); ++i) {
-		std::vector<std::string> state_file_paths;
 
-		// now get available states for this session
-
-		get_state_files_in_directory (*i, state_file_paths);
-
-		vector<string> states;
-		vector<const gchar*> item;
 		string dirname = *i;
 
 		/* remove any trailing / */
@@ -810,17 +806,10 @@ SessionDialog::redisplay_recent_sessions ()
 		}
 
 		/* now get available states for this session */
-
-		states = Session::possible_states (dirname);
-
-		if (states.empty()) {
-			/* no state file? */
-			continue;
-		}
-
-		std::vector<string> state_file_names(get_file_names_no_extension (state_file_paths));
+		vector<string> state_file_names = Session::possible_states (dirname);
 
 		if (state_file_names.empty()) {
+			/* no state file? */
 			continue;
 		}
 

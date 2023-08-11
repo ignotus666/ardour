@@ -32,6 +32,8 @@
 #include "pbd/convert.h"
 #include "pbd/signals.h"
 
+#include "temporal/tempo.h"
+
 #include "ardour/types.h"
 #include "ardour/dB.h"
 #include "ardour/lmath.h"
@@ -77,7 +79,7 @@ PBD::Signal0<void> WaveView::ClipLevelChanged;
 #define ENABLE_THREADED_WAVEFORM_RENDERING
 #endif
 
-WaveView::WaveView (Canvas* c, boost::shared_ptr<ARDOUR::AudioRegion> region)
+WaveView::WaveView (Canvas* c, std::shared_ptr<ARDOUR::AudioRegion> region)
 	: Item (c)
 	, _region (region)
 	, _props (new WaveViewProperties (region))
@@ -90,7 +92,7 @@ WaveView::WaveView (Canvas* c, boost::shared_ptr<ARDOUR::AudioRegion> region)
 	init ();
 }
 
-WaveView::WaveView (Item* parent, boost::shared_ptr<ARDOUR::AudioRegion> region)
+WaveView::WaveView (Item* parent, std::shared_ptr<ARDOUR::AudioRegion> region)
 	: Item (parent)
 	, _region (region)
 	, _props (new WaveViewProperties (region))
@@ -202,7 +204,7 @@ WaveView::set_samples_per_pixel (double samples_per_pixel)
 		begin_change ();
 
 		_props->samples_per_pixel = samples_per_pixel;
-		_bounding_box_dirty = true;
+		set_bbox_dirty ();
 
 		end_change ();
 	}
@@ -230,14 +232,14 @@ WaveView::set_clip_level (double dB)
 	}
 }
 
-boost::shared_ptr<WaveViewDrawRequest>
+std::shared_ptr<WaveViewDrawRequest>
 WaveView::create_draw_request (WaveViewProperties const& props) const
 {
 	assert (props.is_valid());
 
-	boost::shared_ptr<WaveViewDrawRequest> request (new WaveViewDrawRequest);
+	std::shared_ptr<WaveViewDrawRequest> request (new WaveViewDrawRequest);
 
-	request->image = boost::shared_ptr<WaveViewImage> (new WaveViewImage (_region, props));
+	request->image = std::shared_ptr<WaveViewImage> (new WaveViewImage (_region, props));
 	return request;
 }
 
@@ -277,7 +279,7 @@ WaveView::prepare_for_render (Rect const& area) const
 		}
 	}
 
-	boost::shared_ptr<WaveViewDrawRequest> request = create_draw_request (required_props);
+	std::shared_ptr<WaveViewDrawRequest> request = create_draw_request (required_props);
 
 	queue_draw_request (request);
 }
@@ -329,7 +331,7 @@ WaveView::get_item_and_draw_rect_in_window_coords (Rect const& canvas_rect, Rect
 }
 
 void
-WaveView::queue_draw_request (boost::shared_ptr<WaveViewDrawRequest> const& request) const
+WaveView::queue_draw_request (std::shared_ptr<WaveViewDrawRequest> const& request) const
 {
 	// Don't enqueue any requests without a thread to dequeue them.
 	assert (WaveViewThreads::enabled());
@@ -342,7 +344,7 @@ WaveView::queue_draw_request (boost::shared_ptr<WaveViewDrawRequest> const& requ
 		current_request->cancel ();
 	}
 
-	boost::shared_ptr<WaveViewImage> cached_image =
+	std::shared_ptr<WaveViewImage> cached_image =
 	    get_cache_group ()->lookup_image (request->image->props);
 
 	if (cached_image) {
@@ -449,7 +451,7 @@ struct ImageSet {
 
 void
 WaveView::draw_image (Cairo::RefPtr<Cairo::ImageSurface>& image, PeakData* peaks, int n_peaks,
-                      boost::shared_ptr<WaveViewDrawRequest> req)
+                      std::shared_ptr<WaveViewDrawRequest> req)
 {
 	const double height = image->get_height();
 
@@ -481,7 +483,7 @@ WaveView::draw_image (Cairo::RefPtr<Cairo::ImageSurface>& image, PeakData* peaks
 	   has been scaled by scale_amplitude() already.
 	*/
 
-	const double clip_level = _global_clip_level * req->image->props.amplitude;
+	const double clip_level = _global_clip_level * fabs (req->image->props.amplitude);
 
 	const Shape shape = req->image->props.shape;
 	const bool logscaled = req->image->props.logscaled;
@@ -668,7 +670,7 @@ WaveView::draw_image (Cairo::RefPtr<Cairo::ImageSurface>& image, PeakData* peaks
 		for (int i = 0; i < n_peaks; ++i) {
 
 			bool connected_segment = false;
-			/* http://lac.linuxaudio.org/2013/papers/36.pdf Fig3 */
+			/* https://lac.linuxaudio.org/2013/papers/36.pdf Fig3 */
 			if (i + 1 == n_peaks) {
 				wave_context->move_to (i, tips[i].top);
 				wave_context->line_to (i, tips[i].bot);
@@ -865,16 +867,16 @@ WaveView::optimal_image_width_samples () const
 }
 
 void
-WaveView::set_image (boost::shared_ptr<WaveViewImage> img) const
+WaveView::set_image (std::shared_ptr<WaveViewImage> img) const
 {
 	get_cache_group ()->add_image (img);
 	_image = img;
 }
 
 void
-WaveView::process_draw_request (boost::shared_ptr<WaveViewDrawRequest> req)
+WaveView::process_draw_request (std::shared_ptr<WaveViewDrawRequest> req)
 {
-	boost::shared_ptr<const ARDOUR::AudioRegion> region = req->image->region.lock();
+	std::shared_ptr<const ARDOUR::AudioRegion> region = req->image->region.lock();
 
 	if (!region) {
 		return;
@@ -883,6 +885,8 @@ WaveView::process_draw_request (boost::shared_ptr<WaveViewDrawRequest> req)
 	if (req->stopped()) {
 		return;
 	}
+
+	(void) Temporal::TempoMap::fetch();
 
 	WaveViewProperties const& props = req->image->props;
 
@@ -908,10 +912,10 @@ WaveView::process_draw_request (boost::shared_ptr<WaveViewDrawRequest> req)
 	Cairo::RefPtr<Cairo::ImageSurface> cairo_image =
 	    Cairo::ImageSurface::create (Cairo::FORMAT_ARGB32, n_peaks, req->image->props.height);
 
-	// http://cairographics.org/manual/cairo-Image-Surfaces.html#cairo-image-surface-create
+	// https://cairographics.org/manual/cairo-Image-Surfaces.html#cairo-image-surface-create
 	// This function always returns a valid pointer, but it will return a pointer to a "nil" surface..
 	// but there's some evidence that req->image can be NULL.
-	// http://tracker.ardour.org/view.php?id=6478
+	// https://tracker.ardour.org/view.php?id=6478
 	assert (cairo_image);
 
 	if (peaks_read > 0) {
@@ -999,7 +1003,7 @@ WaveView::render (Rect const & area, Cairo::RefPtr<Cairo::Context> context) cons
 
 	assert (required_props.is_valid());
 
-	boost::shared_ptr<WaveViewImage> image_to_draw;
+	std::shared_ptr<WaveViewImage> image_to_draw;
 
 	if (current_request) {
 		if (!current_request->image->props.is_equivalent (required_props)) {
@@ -1036,7 +1040,7 @@ WaveView::render (Rect const & area, Cairo::RefPtr<Cairo::Context> context) cons
 	if (!image_to_draw) {
 		// No existing image to draw
 
-		boost::shared_ptr<WaveViewDrawRequest> const request = create_draw_request (required_props);
+		std::shared_ptr<WaveViewDrawRequest> const request = create_draw_request (required_props);
 
 		if (draw_image_in_gui_thread ()) {
 			// now that we have to draw something, draw more than required.
@@ -1145,7 +1149,7 @@ WaveView::compute_bounding_box () const
 		_bounding_box = Rect ();
 	}
 
-	_bounding_box_dirty = false;
+	set_bbox_clean ();
 }
 
 void
@@ -1157,7 +1161,7 @@ WaveView::set_height (Distance height)
 		_props->height = height;
 		_draw_image_in_gui_thread = true;
 
-		_bounding_box_dirty = true;
+		set_bbox_dirty ();
 		end_change ();
 	}
 }
@@ -1169,7 +1173,7 @@ WaveView::set_channel (int channel)
 		begin_change ();
 		_props->channel = channel;
 		reset_cache_group ();
-		_bounding_box_dirty = true;
+		set_bbox_dirty ();
 		end_change ();
 	}
 }
@@ -1319,7 +1323,7 @@ WaveView::set_region_start (sampleoffset_t start)
 
 	begin_change ();
 	_props->region_start = start;
-	_bounding_box_dirty = true;
+	set_bbox_dirty ();
 	end_change ();
 }
 
@@ -1336,7 +1340,7 @@ WaveView::region_resized ()
 	begin_change ();
 	_props->region_start = _region->start_sample();
 	_props->region_end = _region->start_sample() + _region->length_samples();
-	_bounding_box_dirty = true;
+	set_bbox_dirty ();
 	end_change ();
 }
 
@@ -1376,14 +1380,14 @@ WaveView::set_image_cache_size (uint64_t sz)
 	WaveViewCache::get_instance()->set_image_cache_threshold (sz);
 }
 
-boost::shared_ptr<WaveViewCacheGroup>
+std::shared_ptr<WaveViewCacheGroup>
 WaveView::get_cache_group () const
 {
 	if (_cache_group) {
 		return _cache_group;
 	}
 
-	boost::shared_ptr<AudioSource> source = _region->audio_source (_props->channel);
+	std::shared_ptr<AudioSource> source = _region->audio_source (_props->channel);
 	assert (source);
 
 	_cache_group = WaveViewCache::get_instance ()->get_cache_group (source);

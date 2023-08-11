@@ -61,8 +61,13 @@ using namespace Editing;
 AudioStreamView::AudioStreamView (AudioTimeAxisView& tv)
 	: StreamView (tv)
 {
-	color_handler ();
+	/* use a dedicated group for Audio regions (on top of the grid) */
+	_region_group = new ArdourCanvas::Container (_canvas_group);
+	_region_group->raise_to_top ();
+	_region_group->set_render_with_alpha (UIConfiguration::instance().modifier ("region alpha").a());
+
 	_amplitude_above_axis = 1.0;
+	color_handler ();
 }
 
 int
@@ -86,10 +91,10 @@ AudioStreamView::set_amplitude_above_axis (gdouble app)
 }
 
 RegionView*
-AudioStreamView::create_region_view (boost::shared_ptr<Region> r, bool wait_for_waves, bool recording)
+AudioStreamView::create_region_view (std::shared_ptr<Region> r, bool wait_for_waves, bool recording)
 {
 	AudioRegionView *region_view = 0;
-	boost::shared_ptr<AudioRegion> region = boost::dynamic_pointer_cast<AudioRegion> (r);
+	std::shared_ptr<AudioRegion> region = std::dynamic_pointer_cast<AudioRegion> (r);
 
 	if (region == 0) {
 		return 0;
@@ -100,14 +105,14 @@ AudioStreamView::create_region_view (boost::shared_ptr<Region> r, bool wait_for_
 	case NonLayered:
 	case Normal:
 		if (recording) {
-			region_view = new AudioRegionView (_canvas_group, _trackview, region,
+			region_view = new AudioRegionView (_region_group, _trackview, region,
 							   _samples_per_pixel, region_color, recording, TimeAxisViewItem::Visibility(
 								   TimeAxisViewItem::ShowFrame |
 								   TimeAxisViewItem::HideFrameRight |
 								   TimeAxisViewItem::HideFrameLeft |
 								   TimeAxisViewItem::HideFrameTB));
 		} else {
-			region_view = new AudioRegionView (_canvas_group, _trackview, region,
+			region_view = new AudioRegionView (_region_group, _trackview, region,
 					_samples_per_pixel, region_color);
 		}
 		break;
@@ -134,7 +139,7 @@ AudioStreamView::create_region_view (boost::shared_ptr<Region> r, bool wait_for_
 }
 
 RegionView*
-AudioStreamView::add_region_view_internal (boost::shared_ptr<Region> r, bool wait_for_waves, bool recording)
+AudioStreamView::add_region_view_internal (std::shared_ptr<Region> r, bool wait_for_waves, bool recording)
 {
 	RegionView *region_view = create_region_view (r, wait_for_waves, recording);
 
@@ -146,11 +151,21 @@ AudioStreamView::add_region_view_internal (boost::shared_ptr<Region> r, bool wai
 
 	/* catch region going away */
 
-	r->DropReferences.connect (*this, invalidator (*this), boost::bind (&AudioStreamView::remove_region_view, this, boost::weak_ptr<Region> (r)), gui_context());
+	r->DropReferences.connect (*this, invalidator (*this), boost::bind (&AudioStreamView::remove_region_view, this, std::weak_ptr<Region> (r)), gui_context());
 
 	RegionViewAdded (region_view);
 
 	return region_view;
+}
+
+void
+AudioStreamView::set_layer_display (LayerDisplay d)
+{
+	StreamView::set_layer_display (d);
+
+	for (auto& rv : region_views) {
+		rv->set_frame_color ();
+	}
 }
 
 void
@@ -161,14 +176,11 @@ AudioStreamView::redisplay_track ()
 	// Flag region views as invalid and disable drawing
 	for (i = region_views.begin(); i != region_views.end(); ++i) {
 		(*i)->set_valid (false);
-		(*i)->enable_display (false);
 	}
 
 	// Add and display views, and flag them as valid
 	if (_trackview.is_audio_track()) {
-		_trackview.track()->playlist()->foreach_region(
-			sigc::hide_return (sigc::mem_fun (*this, &StreamView::add_region_view))
-			);
+		_trackview.track()->playlist()->foreach_region (sigc::hide_return (sigc::mem_fun (*this, &StreamView::add_region_view)));
 	}
 
 	// Stack regions by layer, and remove invalid regions
@@ -209,15 +221,15 @@ AudioStreamView::setup_rec_box ()
 				SourceList sources;
 
 				rec_data_ready_connections.drop_connections ();
-				boost::shared_ptr<AudioTrack> tr = _trackview.audio_track();
+				std::shared_ptr<AudioTrack> tr = _trackview.audio_track();
 
 				for (uint32_t n = 0; n < tr->n_channels().n_audio(); ++n) {
-					boost::shared_ptr<AudioFileSource> src = tr->write_source (n);
+					std::shared_ptr<AudioFileSource> src = tr->write_source (n);
 					if (src) {
 						sources.push_back (src);
 						src->PeakRangeReady.connect (rec_data_ready_connections,
 						                             invalidator (*this),
-						                             boost::bind (&AudioStreamView::rec_peak_range_ready, this, _1, _2, boost::weak_ptr<Source>(src)),
+						                             boost::bind (&AudioStreamView::rec_peak_range_ready, this, _1, _2, std::weak_ptr<Source>(src)),
 						                             gui_context());
 					}
 				}
@@ -237,8 +249,8 @@ AudioStreamView::setup_rec_box ()
 				plist.add (Properties::name, string());
 				plist.add (Properties::layer, 0);
 
-				boost::shared_ptr<AudioRegion> region (
-					boost::dynamic_pointer_cast<AudioRegion>(RegionFactory::create (sources, plist, false)));
+				std::shared_ptr<AudioRegion> region (
+					std::dynamic_pointer_cast<AudioRegion>(RegionFactory::create (sources, plist, false)));
 
 				assert(region);
 				region->set_position (timepos_t (_trackview.session()->transport_sample()));
@@ -247,7 +259,7 @@ AudioStreamView::setup_rec_box ()
 
 			/* start a new rec box */
 
-			boost::shared_ptr<AudioTrack> at = _trackview.audio_track();
+			std::shared_ptr<AudioTrack> at = _trackview.audio_track();
 			samplepos_t const sample_pos = at->current_capture_start ();
 
 			create_rec_box(sample_pos, 0);
@@ -264,49 +276,16 @@ AudioStreamView::setup_rec_box ()
 
 		// cerr << "\tNOT rolling, rec_rects = " << rec_rects.size() << " rec_regions = " << rec_regions.size() << endl;
 
-		if (!rec_rects.empty() || !rec_regions.empty()) {
-
-			/* disconnect rapid update */
-			screen_update_connection.disconnect();
-			rec_data_ready_connections.drop_connections ();
-			rec_updating = false;
-			rec_active = false;
-
-			/* remove temp regions */
-
-			for (list<pair<boost::shared_ptr<Region>,RegionView*> >::iterator iter = rec_regions.begin(); iter != rec_regions.end(); ) {
-				list<pair<boost::shared_ptr<Region>,RegionView*> >::iterator tmp;
-
-				tmp = iter;
-				++tmp;
-
-				(*iter).first->drop_references ();
-
-				iter = tmp;
-			}
-
-			rec_regions.clear();
-
-			// cerr << "\tclear " << rec_rects.size() << " rec rects\n";
-
-			/* transport stopped, clear boxes */
-			for (vector<RecBoxInfo>::iterator iter=rec_rects.begin(); iter != rec_rects.end(); ++iter) {
-				RecBoxInfo &rect = (*iter);
-				delete rect.rectangle;
-			}
-
-			rec_rects.clear();
-
-		}
+		cleanup_rec_box ();
 	}
 }
 
 void
-AudioStreamView::rec_peak_range_ready (samplepos_t start, samplecnt_t cnt, boost::weak_ptr<Source> weak_src)
+AudioStreamView::rec_peak_range_ready (samplepos_t start, samplecnt_t cnt, std::weak_ptr<Source> weak_src)
 {
 	ENSURE_GUI_THREAD (*this, &AudioStreamView::rec_peak_range_ready, start, cnt, weak_src)
 
-	boost::shared_ptr<Source> src (weak_src.lock());
+	std::shared_ptr<Source> src (weak_src.lock());
 
 	if (!src) {
 		return;
@@ -335,9 +314,9 @@ AudioStreamView::update_rec_regions (samplepos_t start, samplecnt_t cnt)
 
 	uint32_t n = 0;
 
-	for (list<pair<boost::shared_ptr<Region>,RegionView*> >::iterator iter = rec_regions.begin(); iter != rec_regions.end(); n++) {
+	for (list<pair<std::shared_ptr<Region>,RegionView*> >::iterator iter = rec_regions.begin(); iter != rec_regions.end(); n++) {
 
-		list<pair<boost::shared_ptr<Region>,RegionView*> >::iterator tmp = iter;
+		list<pair<std::shared_ptr<Region>,RegionView*> >::iterator tmp = iter;
 		++tmp;
 
 		assert (n < rec_rects.size());
@@ -348,7 +327,7 @@ AudioStreamView::update_rec_regions (samplepos_t start, samplecnt_t cnt)
 			continue;
 		}
 
-		boost::shared_ptr<AudioRegion> region = boost::dynamic_pointer_cast<AudioRegion>(iter->first);
+		std::shared_ptr<AudioRegion> region = std::dynamic_pointer_cast<AudioRegion>(iter->first);
 
 		if (!region) {
 			iter = tmp;
@@ -443,7 +422,7 @@ AudioStreamView::hide_all_fades ()
  *  second is the AudioRegionViews that end xfades were hidden for.
  */
 pair<list<AudioRegionView*>, list<AudioRegionView*> >
-AudioStreamView::hide_xfades_with (boost::shared_ptr<AudioRegion> ar)
+AudioStreamView::hide_xfades_with (std::shared_ptr<AudioRegion> ar)
 {
 	list<AudioRegionView*> start_hidden;
 	list<AudioRegionView*> end_hidden;
@@ -473,6 +452,8 @@ AudioStreamView::hide_xfades_with (boost::shared_ptr<AudioRegion> ar)
 void
 AudioStreamView::color_handler ()
 {
+	_region_group->set_render_with_alpha (UIConfiguration::instance().modifier ("region alpha").a());
+
 	//case cAudioTrackBase:
 	if (_trackview.is_track()) {
 		canvas_rect->set_fill_color (UIConfiguration::instance().color_mod ("audio track base", "audio track base"));

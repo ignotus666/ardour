@@ -23,7 +23,6 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
-#include <cstdio>
 #include <cmath>
 
 #include <sigc++/bind.h>
@@ -49,11 +48,10 @@
 
 #include "LuaBridge/LuaBridge.h"
 
-#include "ardour_message.h"
 #include "add_route_dialog.h"
 #include "ardour_ui.h"
 #include "route_group_dialog.h"
-#include "utils.h"
+#include "ui_config.h"
 
 #include "pbd/i18n.h"
 
@@ -65,7 +63,7 @@ using namespace ARDOUR;
 using namespace ARDOUR_UI_UTILS;
 
 std::vector<std::string> AddRouteDialog::channel_combo_strings;
-std::vector<std::pair<std::string,std::string> > AddRouteDialog::builtin_types;
+std::vector<std::pair<std::string, std::string>> AddRouteDialog::builtin_types;
 
 AddRouteDialog::AddRouteDialog ()
 	: ArdourDialog (_("Add Track/Bus/VCA"))
@@ -80,6 +78,8 @@ AddRouteDialog::AddRouteDialog ()
 	, strict_io_label (_("Pin Mode:"))
 	, mode_label (_("Record Mode:"))
 	, instrument_label (_("Instrument:"))
+	, instrument_combo (InstrumentSelector::ForTrackSelector)
+	, show_on_cue_chkbox (_("Show on Cue Page"))
 	, last_route_count (1)
 	, route_count_set_by_template (false)
 	, name_edited_by_user (false)
@@ -97,8 +97,7 @@ AddRouteDialog::AddRouteDialog ()
 	refill_track_modes ();
 
 	if (builtin_types.empty()) {
-		builtin_types.push_back (
-		   std::pair<string,string> (_("Audio Tracks"), std::string () +
+		builtin_types.emplace_back(_("Audio Tracks"), std::string () +
 		     _("Use these settings to create one or more audio tracks.") + "\n\n" +
 		     _("You may select:") + "\n" +
 		     "* " + _("The number of tracks to add") + "\n" +
@@ -109,10 +108,9 @@ AddRouteDialog::AddRouteDialog ()
 		     "* " + _("The pin connections mode (see tooltip for details)") + "\n" +
 #endif
 		     "\n" + _("The track(s) will be added at the location specified by \"Position\"")
-		     ));
+		     );
 
-		builtin_types.push_back (
-		   std::pair<string,string> (_("MIDI Tracks"), std::string () +
+		builtin_types.emplace_back(_("MIDI Tracks"), std::string () +
 		     _("Use these settings to create one or more MIDI tracks.") + "\n\n" +
 		     _("You may select:") + "\n" +
 		     "* " + _("The number of tracks to add") + "\n" +
@@ -123,10 +121,9 @@ AddRouteDialog::AddRouteDialog ()
 		     "* " + _("The pin connections mode (see tooltip for details)") + "\n" +
 #endif
 		     "\n" + _("The track(s) will be added at the location specified by \"Position\"")
-		     ));
+		     );
 
-		builtin_types.push_back (
-		   std::pair<string,string> (_("Audio Busses"), std::string () +
+		builtin_types.emplace_back(_("Audio Busses"), std::string () +
 		     _("Use these settings to create one or more audio busses.") + "\n\n" +
 		     _("You may select:") + "\n" +
 		     "* " + _("The number of busses to add") + "\n" +
@@ -136,10 +133,9 @@ AddRouteDialog::AddRouteDialog ()
 		     "* " + _("The pin connections mode (see tooltip for details)") + "\n" +
 #endif
 		     "\n" + _("The buss(es) will be added at the location specified by \"Position\"")
-		     ));
+		     );
 
-		builtin_types.push_back (
-		   std::pair<string,string> (_("MIDI Busses"), std::string () +
+		builtin_types.emplace_back(_("MIDI Busses"), std::string () +
 		     _("Use these settings to create one or more MIDI busses.") + "\n\n" +
 		     _("MIDI busses can combine the output of multiple tracks. They are sometimes used\nto host a single \"heavy\" instrument plugin which is fed from multiple MIDI tracks.") + "\n\n" +
 		     _("You may select:") + "\n" +
@@ -151,35 +147,36 @@ AddRouteDialog::AddRouteDialog ()
 		     "* " + _("The pin connections mode (see tooltip for details)") + "\n" +
 #endif
 		     "\n" + _("The buss(es) will be added at the location specified by \"Position\"")
-		     ));
+		     );
 
-		builtin_types.push_back (
-		   std::pair<string,string> (_("VCA Masters"), std::string () +
+		builtin_types.emplace_back(_("VCA Masters"), std::string () +
 		     _("Use these settings to create one or more VCA masters.") + "\n\n" +
 		     _("You may select:") + "\n" +
 		     "* " + _("The number of VCAs to add") + "\n" +
 		     "* " + _("A name for the VCA(s). \"%n\" will be replaced by an index number for each VCA")
-		     ));
+		     );
 
-		builtin_types.push_back (
-		   std::pair<string,string> (_("Foldback Busses"), std::string () +
+		builtin_types.emplace_back(_("Foldback Busses"), std::string () +
 		     _("Use these settings to create one or more foldback busses.") + "\n\n" +
 		     _("Foldback busses are used as master outputs for monitor channels and are fed by\nhidden monitor sends.") + "\n\n" +
 		     _("You may select:") + "\n" +
 		     "* " + _("The number of busses to add") + "\n" +
 		     "* " + _("A name for the buss(es)")
-		     ));
+		     );
 	}
 
-	insert_at_combo.append_text (_("First"));
-	insert_at_combo.append_text (_("Before Selection"));
-	insert_at_combo.append_text (_("After Selection"));
-	insert_at_combo.append_text (_("Last"));
-	insert_at_combo.set_active (3);
+	/* order needs to match enum InsertAt */
+	insert_at_combo.append (_("First"));
+	insert_at_combo.append (_("Before Selection"));
+	insert_at_combo.append (_("After Selection"));
+	insert_at_combo.append (_("Last"));
+	insert_at_combo.set_active (min(UIConfiguration::instance().get_insert_at_position (), (uint32_t)3));
 
-	strict_io_combo.append_text (_("Flexible-I/O"));
-	strict_io_combo.append_text (_("Strict-I/O"));
+	strict_io_combo.append (_("Flexible-I/O"));
+	strict_io_combo.append (_("Strict-I/O"));
 	strict_io_combo.set_active (Config->get_strict_io () ? 1 : 0);
+
+	show_on_cue_chkbox.set_active (UIConfiguration::instance().get_show_on_cue_page ());
 
 	/* top-level VBox */
 	VBox* vbox = manage (new VBox);
@@ -259,7 +256,7 @@ AddRouteDialog::AddRouteDialog ()
 	++n;
 
 	/* Number */
-	add_label.set_alignment (Gtk::ALIGN_RIGHT, Gtk::ALIGN_CENTER);
+	add_label.set_alignment (Gtk::ALIGN_END, Gtk::ALIGN_CENTER);
 	settings_table->attach (add_label, 0, 1, n, n + 1, Gtk::FILL, Gtk::SHRINK, 0, 0);
 	Gtk::Alignment *align = manage (new Alignment (0, .5, 0, 0));
 	align->add (routes_spinner);
@@ -268,24 +265,24 @@ AddRouteDialog::AddRouteDialog ()
 	++n;
 
 	/* Name */
-	name_label.set_alignment (Gtk::ALIGN_RIGHT, Gtk::ALIGN_CENTER);
+	name_label.set_alignment (Gtk::ALIGN_END, Gtk::ALIGN_CENTER);
 	settings_table->attach (name_label, 0, 1, n, n + 1, Gtk::FILL, Gtk::SHRINK, 0, 0);
 	settings_table->attach (name_template_entry, 1, 3, n, n + 1, Gtk::FILL, Gtk::SHRINK, 0, 0);
 
 	/* Route configuration */
-	configuration_label.set_alignment (Gtk::ALIGN_RIGHT, Gtk::ALIGN_CENTER);
+	configuration_label.set_alignment (Gtk::ALIGN_END, Gtk::ALIGN_CENTER);
 	settings_table->attach (configuration_label, 4, 5, n, n + 1, Gtk::FILL, Gtk::SHRINK, 0, 0);
 	settings_table->attach (channel_combo, 5, 6, n, n + 1, Gtk::FILL, Gtk::SHRINK, 0, 0);
 
 	++n;
 
 	/* instrument choice (for MIDI) */
-	instrument_label.set_alignment (Gtk::ALIGN_RIGHT, Gtk::ALIGN_CENTER);
+	instrument_label.set_alignment (Gtk::ALIGN_END, Gtk::ALIGN_CENTER);
 	settings_table->attach (instrument_label, 0, 1, n, n + 1, Gtk::FILL, Gtk::SHRINK, 0, 0);
 	settings_table->attach (instrument_combo, 1, 3, n, n + 1, Gtk::FILL, Gtk::SHRINK, 0, 0);
 
 	/* Group choice */
-	group_label.set_alignment (Gtk::ALIGN_RIGHT, Gtk::ALIGN_CENTER);
+	group_label.set_alignment (Gtk::ALIGN_END, Gtk::ALIGN_CENTER);
 	settings_table->attach (group_label, 4, 5, n, n + 1, Gtk::FILL, Gtk::SHRINK, 0, 0);
 	settings_table->attach (route_group_combo, 5, 6, n, n + 1, Gtk::FILL, Gtk::SHRINK, 0, 0);
 
@@ -295,7 +292,7 @@ AddRouteDialog::AddRouteDialog ()
 	if (Profile->get_mixbus ()) {
 		strict_io_combo.set_active (1);
 	} else {
-		strict_io_label.set_alignment (Gtk::ALIGN_RIGHT, Gtk::ALIGN_CENTER);
+		strict_io_label.set_alignment (Gtk::ALIGN_END, Gtk::ALIGN_CENTER);
 		settings_table->attach (strict_io_label, 0, 1, n, n + 1, Gtk::FILL, Gtk::SHRINK, 0, 0);
 		settings_table->attach (strict_io_combo, 1, 3, n, n + 1, Gtk::FILL, Gtk::SHRINK, 0, 0);
 
@@ -303,9 +300,10 @@ AddRouteDialog::AddRouteDialog ()
 				_("With strict-i/o enabled, Effect Processors will not modify the number of channels on a track. The number of output channels will always match the number of input channels."));
 
 		/* recording mode */
-		mode_label.set_alignment (Gtk::ALIGN_RIGHT, Gtk::ALIGN_CENTER);
-		settings_table->attach (mode_label, 4, 5, n, n + 1, Gtk::FILL, Gtk::SHRINK, 0, 0);
-		settings_table->attach (mode_combo, 5, 6, n, n + 1, Gtk::FILL, Gtk::SHRINK, 0, 0);
+		/* XXX disabled Sept 2022 because at present this does nothing */
+		// mode_label.set_alignment (Gtk::ALIGN_END, Gtk::ALIGN_CENTER);
+		// settings_table->attach (mode_label, 4, 5, n, n + 1, Gtk::FILL, Gtk::SHRINK, 0, 0);
+		// settings_table->attach (mode_combo, 5, 6, n, n + 1, Gtk::FILL, Gtk::SHRINK, 0, 0);
 
 		++n;
 	}
@@ -316,9 +314,10 @@ AddRouteDialog::AddRouteDialog ()
 	outer_box->set_spacing (4);
 
 	/* New route will be inserted at.. */
-	insert_label.set_alignment (Gtk::ALIGN_RIGHT, Gtk::ALIGN_CENTER);
+	insert_label.set_alignment (Gtk::ALIGN_END, Gtk::ALIGN_CENTER);
 	outer_box->pack_start (insert_label, false, false);
 	outer_box->pack_start (insert_at_combo, false, false);
+	outer_box->pack_start (show_on_cue_chkbox, false, false);
 
 	/* quick-add button (add item but don't close dialog) */
 	Gtk::Button* addnoclose_button = manage (new Gtk::Button(_("Add selected items (and leave dialog open)")));
@@ -355,13 +354,19 @@ AddRouteDialog::AddRouteDialog ()
 	refill_channel_setups ();
 }
 
-AddRouteDialog::~AddRouteDialog ()
-{
-}
+AddRouteDialog::~AddRouteDialog () = default;
 
 void
 AddRouteDialog::on_response (int r)
 {
+	/* stash the user's visibility-settings in the config */
+	UIConfiguration::instance().set_show_on_cue_page (show_on_cue_page());
+	UIConfiguration::instance().set_insert_at_position ((int) insert_at());
+
+	/* save last route type */
+	auto* node = _session->extra_xml ("AddRouteDialog", true);
+	node->set_property (X_("LastRouteType"), enum_2_string (type_wanted ()));
+
 	reset_name_edited ();
 	/* Don't call ArdourDialog::on_response() because that will
 	   automatically hide the dialog.
@@ -473,6 +478,7 @@ AddRouteDialog::trk_template_row_selected ()
 		name_label.set_sensitive (true);
 		group_label.set_sensitive (false);
 		strict_io_label.set_sensitive (false);
+		show_on_cue_chkbox.set_sensitive (false);
 		configuration_label.set_sensitive (false);
 		mode_label.set_sensitive (false);
 		instrument_label.set_sensitive (false);
@@ -494,6 +500,7 @@ AddRouteDialog::trk_template_row_selected ()
 		name_label.set_sensitive (true);
 		group_label.set_sensitive (true);
 		strict_io_label.set_sensitive (true);
+		show_on_cue_chkbox.set_sensitive (true);
 
 		routes_spinner.set_sensitive (true);
 		name_template_entry.set_sensitive (true);
@@ -566,7 +573,7 @@ AddRouteDialog::get_template_path ()
 AddRouteDialog::TypeWanted
 AddRouteDialog::type_wanted()
 {
-	if (trk_template_chooser.get_selection()->count_selected_rows() != 1) {
+	if (trk_template_chooser.get_selection ()->count_selected_rows () != 1) {
 		return AudioTrack;
 	}
 	TreeIter iter = trk_template_chooser.get_selection ()->get_selected ();
@@ -575,9 +582,9 @@ AddRouteDialog::type_wanted()
 	const string str = (*iter)[track_template_columns.name];
 	if (str == _("Audio Busses")) {
 		return AudioBus;
-	} else if (str == _("MIDI Busses")){
+	} else if (str == _("MIDI Busses")) {
 		return MidiBus;
-	} else if (str == _("MIDI Tracks")){
+	} else if (str == _("MIDI Tracks")) {
 		return MidiTrack;
 	} else if (str == _("Audio Tracks")) {
 		return AudioTrack;
@@ -586,8 +593,28 @@ AddRouteDialog::type_wanted()
 	} else if (str == _("Foldback Busses")) {
 		return FoldbackBus;
 	} else {
-		assert (0);
 		return AudioTrack;
+	}
+}
+
+std::string
+AddRouteDialog::type_wanted_to_localized_string (AddRouteDialog::TypeWanted type_wanted) {
+	switch(type_wanted) {
+		case AudioBus:
+			return _("Audio Busses");
+		case MidiBus:
+			return _("MIDI Busses");
+		case MidiTrack:
+			return _("MIDI Tracks");
+		case AudioTrack:
+			return _("Audio Tracks");
+		case VCAMaster:
+			return _("VCA Masters");
+		case FoldbackBus:
+			return _("Foldback Busses");
+		default:
+			return _("Audio Tracks");
+			break;
 	}
 }
 
@@ -617,7 +644,7 @@ AddRouteDialog::maybe_update_name_template_entry ()
 		name_template_entry.set_text (VCA::default_name_template());
 		break;
 	}
-	/* ignore programatic change, restore false */
+	/* ignore programmatic change, restore false */
 	reset_name_edited ();
 }
 
@@ -642,6 +669,8 @@ AddRouteDialog::track_type_chosen ()
 		strict_io_label.set_sensitive (true);
 		strict_io_combo.set_sensitive (true);
 
+		show_on_cue_chkbox.set_sensitive (true);
+
 		insert_label.set_sensitive (true);
 		insert_at_combo.set_sensitive (true);
 
@@ -662,6 +691,8 @@ AddRouteDialog::track_type_chosen ()
 
 		strict_io_label.set_sensitive (true);
 		strict_io_combo.set_sensitive (true);
+
+		show_on_cue_chkbox.set_sensitive (true);
 
 		insert_label.set_sensitive (true);
 		insert_at_combo.set_sensitive (true);
@@ -684,6 +715,8 @@ AddRouteDialog::track_type_chosen ()
 		strict_io_label.set_sensitive (true);
 		strict_io_combo.set_sensitive (true);
 
+		show_on_cue_chkbox.set_sensitive (false);
+
 		insert_label.set_sensitive (true);
 		insert_at_combo.set_sensitive (true);
 
@@ -704,6 +737,8 @@ AddRouteDialog::track_type_chosen ()
 
 		strict_io_label.set_sensitive (false);
 		strict_io_combo.set_sensitive (false);
+
+		show_on_cue_chkbox.set_sensitive (false);
 
 		insert_label.set_sensitive (false);
 		insert_at_combo.set_sensitive (false);
@@ -726,6 +761,8 @@ AddRouteDialog::track_type_chosen ()
 		strict_io_label.set_sensitive (true);
 		strict_io_combo.set_sensitive (true);
 
+		show_on_cue_chkbox.set_sensitive (false);
+
 		insert_label.set_sensitive (true);
 		insert_at_combo.set_sensitive (true);
 
@@ -746,6 +783,8 @@ AddRouteDialog::track_type_chosen ()
 
 		strict_io_label.set_sensitive (false);
 		strict_io_combo.set_sensitive (false);
+
+		show_on_cue_chkbox.set_sensitive (false);
 
 		insert_label.set_sensitive (false);
 		insert_at_combo.set_sensitive (false);
@@ -797,6 +836,10 @@ AddRouteDialog::refill_track_modes ()
 ARDOUR::TrackMode
 AddRouteDialog::mode ()
 {
+	return ARDOUR::Normal;
+
+	/* XXX septemeber 2022: the dialog offers no way to choose anything here */
+
 	std::string str = mode_combo.get_active_text();
 	if (str == _("Normal")) {
 		return ARDOUR::Normal;
@@ -977,6 +1020,26 @@ AddRouteDialog::refill_channel_setups ()
 		row[track_template_columns.modified_with] = x->modified_with;
 	}
 
+	/* load and select last route type */
+	if (_session) {
+		auto        node = _session->extra_xml (X_("AddRouteDialog"), false);
+		std::string last_route{};
+
+		if (node && node->get_property (X_ ("LastRouteType"), last_route)) {
+			auto type_wanted = static_cast<TypeWanted> (string_2_enum (last_route, TypeWanted));
+
+			for (const auto& row : trk_template_chooser.get_model ()->children ()) {
+				std::string node_value{};
+				row.get_value (0, node_value);
+
+				if (node_value == type_wanted_to_localized_string (type_wanted)) {
+					trk_template_chooser.get_selection ()->select (row);
+					break;
+				}
+			}
+		}
+	}
+
 	set_popdown_strings (channel_combo, channel_combo_strings);
 
 	if (!channel_current_choice.empty()) {
@@ -989,7 +1052,7 @@ AddRouteDialog::refill_channel_setups ()
 void
 AddRouteDialog::add_route_group (RouteGroup* g)
 {
-	route_group_combo.insert_text (3, g->name ());
+	route_group_combo.insert (3, g->name ());
 }
 
 RouteGroup*
@@ -1007,15 +1070,20 @@ AddRouteDialog::use_strict_io() {
 	return strict_io_combo.get_active_row_number () == 1;
 }
 
+bool
+AddRouteDialog::show_on_cue_page() {
+	return show_on_cue_chkbox.get_active();
+}
+
 void
 AddRouteDialog::refill_route_groups ()
 {
 	route_group_combo.clear ();
-	route_group_combo.append_text (_("New Group..."));
+	route_group_combo.append (_("New Group..."));
 
-	route_group_combo.append_text ("separator");
+	route_group_combo.append ("separator");
 
-	route_group_combo.append_text (_("No Group"));
+	route_group_combo.append (_("No Group"));
 
 	if (_session) {
 		_session->foreach_route_group (sigc::mem_fun (*this, &AddRouteDialog::add_route_group));
@@ -1065,15 +1133,19 @@ AddRouteDialog::insert_at ()
 	using namespace RouteDialogs;
 
 	std::string str = insert_at_combo.get_active_text();
+	RouteDialogs::InsertAt choice = Last;
 
 	if (str == _("First")) {
-		return First;
+		choice = First;
 	} else if (str == _("After Selection")) {
-		return AfterSelection;
+		choice = AfterSelection;
 	} else if (str == _("Before Selection")){
-		return BeforeSelection;
+		choice = BeforeSelection;
 	}
-	return Last;
+
+	UIConfiguration::instance().set_insert_at_position (choice);
+
+	return choice;
 }
 
 bool

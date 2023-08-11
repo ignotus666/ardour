@@ -68,7 +68,7 @@ ExportFormatSpecification::Time::get_samples_at (samplepos_t position, samplecnt
 }
 
 XMLNode &
-ExportFormatSpecification::Time::get_state ()
+ExportFormatSpecification::Time::get_state () const
 {
 
 	XMLNode * node = new XMLNode ("Duration");
@@ -163,6 +163,7 @@ ExportFormatSpecification::ExportFormatSpecification (Session & s)
 	, _demo_noise_interval (0)
 	, _command ("")
 	, _analyse (true)
+	, _reimport (false)
 	, _codec_quality (0)
 {
 	format_ids.insert (F_None);
@@ -203,6 +204,7 @@ ExportFormatSpecification::ExportFormatSpecification (Session & s, XMLNode const
 	, _demo_noise_interval (0)
 	, _command ("")
 	, _analyse (true)
+	, _reimport (false)
 	, _codec_quality (0)
 {
 	_silence_beginning.type = Time::Timecode;
@@ -225,6 +227,7 @@ ExportFormatSpecification::ExportFormatSpecification (ExportFormatSpecification 
 	, _demo_noise_interval (other._demo_noise_interval)
 	, _command (other._command)
 	, _analyse (other._analyse)
+	, _reimport (other._reimport)
 	, _codec_quality (other._codec_quality)
 {
 	if (modify_name) {
@@ -271,7 +274,7 @@ ExportFormatSpecification::~ExportFormatSpecification ()
 }
 
 XMLNode &
-ExportFormatSpecification::get_state ()
+ExportFormatSpecification::get_state () const
 {
 	XMLNode * node;
 	XMLNode * root = new XMLNode ("ExportFormatSpecification");
@@ -283,6 +286,7 @@ ExportFormatSpecification::get_state ()
 	root->set_property ("with-mp4chaps", _with_mp4chaps);
 	root->set_property ("command", _command);
 	root->set_property ("analyse", _analyse);
+	root->set_property ("reimport", _reimport);
 	root->set_property ("soundcloud-upload", _soundcloud_upload);
 
 	node = root->add_child ("Encoding");
@@ -380,6 +384,10 @@ ExportFormatSpecification::set_state (const XMLNode & root)
 		_analyse = false;
 	}
 
+	if (!root.get_property ("reimport", _reimport)) {
+		_reimport = false;
+	}
+
 	if (!root.get_property ("soundcloud-upload", _soundcloud_upload)) {
 		_soundcloud_upload = false;
 	}
@@ -438,10 +446,18 @@ ExportFormatSpecification::set_state (const XMLNode & root)
 		 * hardcode them here for the time being.
 		 */
 		if (format_id() == F_FFMPEG) {
-			_codec_quality = -2; // ExportFormatOggVorbis::default_codec_quality();
+			_codec_quality = -2;
 		}
 		else if (format_id() == F_Ogg) {
-			_codec_quality = 40; // ExportFormatFFMPEG::default_codec_quality();
+			switch (sample_format ()) {
+				default:
+				case SF_Vorbis:
+					_codec_quality = 40;
+					break;
+				case SF_Opus:
+					_codec_quality = 49;
+					break;
+			}
 		}
 	}
 
@@ -516,7 +532,7 @@ ExportFormatSpecification::set_state (const XMLNode & root)
 bool
 ExportFormatSpecification::is_compatible_with (ExportFormatCompatibility const & compatibility) const
 {
-	boost::shared_ptr<ExportFormatBase> intersection = get_intersection (compatibility);
+	std::shared_ptr<ExportFormatBase> intersection = get_intersection (compatibility);
 
 	if (intersection->formats_empty() && format_id() != 0) {
 		return false;
@@ -565,12 +581,45 @@ ExportFormatSpecification::is_complete () const
 	return true;
 }
 
+bool ExportFormatSpecification::operator== (ExportFormatSpecification const& other) const
+{
+	const int a = format_id() | sample_format() | endianness();
+	const int b = other.format_id() | other.sample_format() | other.endianness();
+	if (a != b) {
+		return false;
+	}
+
+	/* BWF has the same format id with wav, so we need to check this. */
+	if (has_broadcast_info () != other.has_broadcast_info ()) {
+		return false;
+	}
+
+	if (_has_codec_quality && other._has_codec_quality) {
+		if (_codec_quality != other._codec_quality) {
+			return false;
+		}
+	}
+	return true;
+}
+
+bool
+ExportFormatSpecification::is_format (std::shared_ptr<ExportFormat> format) const
+{
+	assert (format);
+	return (format_id () == format->get_format_id () &&
+			/* BWF has the same format id with wav, so we need to check this. */
+			has_broadcast_info () == format->has_broadcast_info () &&
+			/* F_Ogg can be Vorbis or OPUS */
+			(format_id () != ExportFormatBase::F_Ogg || (format->get_explicit_sample_format () == sample_format ())));
+}
+
 void
-ExportFormatSpecification::set_format (boost::shared_ptr<ExportFormat> format)
+ExportFormatSpecification::set_format (std::shared_ptr<ExportFormat> format)
 {
 	if (format) {
 		FormatId new_fmt = format->get_format_id ();
-		bool fmt_changed = format_id() != new_fmt;
+		bool fmt_changed = !is_format (format);
+
 		set_format_id (new_fmt);
 
 		set_type (format->get_type());
@@ -592,7 +641,7 @@ ExportFormatSpecification::set_format (boost::shared_ptr<ExportFormat> format)
 		if (!_has_codec_quality) {
 			_codec_quality = 0;
 		} else if (fmt_changed) {
-			_codec_quality = boost::dynamic_pointer_cast<HasCodecQuality> (format)->default_codec_quality();
+			_codec_quality = std::dynamic_pointer_cast<HasCodecQuality> (format)->default_codec_quality();
 		}
 
 		_supports_tagging = format->supports_tagging ();
@@ -650,6 +699,9 @@ ExportFormatSpecification::description (bool include_name)
 		break;
 	case SR_22_05:
 		components.push_back ("22,5 kHz");
+		break;
+	case SR_24:
+		components.push_back ("24 kHz");
 		break;
 	case SR_44_1:
 		components.push_back ("44,1 kHz");

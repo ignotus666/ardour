@@ -22,11 +22,11 @@
 #ifndef __ardour_audio_streamview_h__
 #define __ardour_audio_streamview_h__
 
-#include <list>
-#include <map>
 #include <cmath>
+#include <list>
+#include <memory>
+#include <map>
 
-#include <boost/weak_ptr.hpp>
 
 #include "ardour/location.h"
 #include "point_selection.h"
@@ -62,20 +62,24 @@ public:
 	void show_all_fades ();
 	void hide_all_fades ();
 
-	std::pair<std::list<AudioRegionView*>, std::list<AudioRegionView*> > hide_xfades_with (boost::shared_ptr<ARDOUR::AudioRegion> ar);
+	std::pair<std::list<AudioRegionView*>, std::list<AudioRegionView*> > hide_xfades_with (std::shared_ptr<ARDOUR::AudioRegion> ar);
 
-	RegionView* create_region_view (boost::shared_ptr<ARDOUR::Region>, bool, bool);
+	RegionView* create_region_view (std::shared_ptr<ARDOUR::Region>, bool, bool);
 	void set_selected_points (PointSelection&);
 
 	void reload_waves ();
 
+	void set_layer_display (LayerDisplay);
+
+	ArdourCanvas::Container* region_canvas () const { return _region_group; }
+
 private:
 	void setup_rec_box ();
-	void rec_peak_range_ready (samplepos_t start, ARDOUR::samplecnt_t cnt, boost::weak_ptr<ARDOUR::Source> src);
+	void rec_peak_range_ready (samplepos_t start, ARDOUR::samplecnt_t cnt, std::weak_ptr<ARDOUR::Source> src);
 	void update_rec_regions (ARDOUR::samplepos_t, ARDOUR::samplecnt_t);
 
-	RegionView* add_region_view_internal (boost::shared_ptr<ARDOUR::Region>, bool wait_for_waves, bool recording = false);
-	void remove_audio_region_view (boost::shared_ptr<ARDOUR::AudioRegion> );
+	RegionView* add_region_view_internal (std::shared_ptr<ARDOUR::Region>, bool wait_for_waves, bool recording = false);
+	void remove_audio_region_view (std::shared_ptr<ARDOUR::AudioRegion> );
 
 	void redisplay_track ();
 
@@ -83,7 +87,9 @@ private:
 
 	double _amplitude_above_axis;
 
-	std::map<boost::shared_ptr<ARDOUR::Source>, bool> rec_data_ready_map;
+	std::map<std::shared_ptr<ARDOUR::Source>, bool> rec_data_ready_map;
+
+	ArdourCanvas::Container* _region_group;
 
 	bool outline_region;
 };

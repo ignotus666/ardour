@@ -163,7 +163,7 @@ ExportReport::init (const AnalysisResults & ar, bool with_file)
 			l = manage (new Label (string_compose ("%1", info.channels), ALIGN_START));
 			t->attach (*l, 1, 2, 2, 3);
 
-			l = manage (new Label (_("Sample rate:"), ALIGN_END));
+			l = manage (new Label (_("Sample Rate:"), ALIGN_END));
 			t->attach (*l, 0, 1, 3, 4);
 			l = manage (new Label (string_compose (_("%1 Hz"), info.samplerate), ALIGN_START));
 			t->attach (*l, 1, 2, 3, 4);
@@ -357,7 +357,7 @@ ExportReport::init (const AnalysisResults & ar, bool with_file)
 				png_y0 += linesp;
 
 				IMGLABEL (lx0, _("Format:"), file_fmt);
-				IMGLABEL (lx1, _("Sample rate:"), string_compose (_("%1 Hz"), sample_rate));
+				IMGLABEL (lx1, _("Sample Rate:"), string_compose (_("%1 Hz"), sample_rate));
 				png_y0 += linesp;
 
 				if (_session) {
@@ -683,27 +683,15 @@ ExportReport::init (const AnalysisResults & ar, bool with_file)
 
 			/* calc max status width */
 			int max_wx = 10;
-			layout->set_font_description (UIConfiguration::instance ().get_LargeFont ());
+			layout->set_font_description (UIConfiguration::instance ().get_ArdourLargeFont ());
 
-#if (defined PLATFORM_WINDOWS || defined __APPLE__)
-			layout->set_text ("X");
-#else
-			layout->set_text ("\u274C"); // cross mark
-#endif
+			layout->set_text (u8"\u274C"); // cross mark
 			layout->get_pixel_size (w, h);
 			max_wx = std::max (max_wx, w);
-#ifdef PLATFORM_WINDOWS
-			layout->set_text ("\u2713"); // check mark
-#else
-			layout->set_text ("\U0001F509"); // speaker icon w/1 bar
-#endif
+			layout->set_text (u8"\U0001F509"); // speaker icon w/1 bar
 			layout->get_pixel_size (w, h);
 			max_wx = std::max (max_wx, w);
-#ifdef __APPLE__
-			layout->set_text ("\u2713"); // check mark
-#else
-			layout->set_text ("\u2714"); // heavy check mark
-#endif
+			layout->set_text (u8"\u2714"); // heavy check mark
 			layout->get_pixel_size (w, h);
 			max_wx = std::max (max_wx, w);
 
@@ -773,32 +761,20 @@ ExportReport::init (const AnalysisResults & ar, bool with_file)
 				layout->show_in_cairo_context (cr);
 				cr->move_to (xl + w + 5, yl);
 
-				layout->set_font_description (UIConfiguration::instance ().get_LargeFont ());
+				layout->set_font_description (UIConfiguration::instance ().get_ArdourLargeFont ());
 				cr->set_source_rgba (.9, .9, .9, 1.0);
 				if (lufs > pi->LUFS_range[0]
 						|| (pi->enable[0] && dbfs > pi->level[0])
 						|| (pi->enable[1] && dbtp > pi->level[1])
 					 ) {
 					cr->set_source_rgba (1, 0, .0, 1.0);
-#if (defined PLATFORM_WINDOWS || defined __APPLE__)
-					layout->set_text ("X");
-#else
-					layout->set_text ("\u274C"); // cross mark
-#endif
+					layout->set_text (u8"\u274C"); // cross mark
 				} else if (lufs < pi->LUFS_range[1]) {
 					cr->set_source_rgba (.6, .7, 0, 1.0);
-#ifdef PLATFORM_WINDOWS
-					layout->set_text ("\u2713"); // check mark
-#else
-					layout->set_text ("\U0001F509"); // speaker icon w/1 bar
-#endif
+					layout->set_text (u8"\U0001F509"); // speaker icon w/1 bar
 				} else {
 					cr->set_source_rgba (.1, 1, .1, 1.0);
-#ifdef __APPLE__
-					layout->set_text ("\u2713"); // check mark
-#else
-					layout->set_text ("\u2714"); // heavy check mark
-#endif
+					layout->set_text (u8"\u2714"); // heavy check mark
 				}
 				int ww, hh;
 				layout->get_pixel_size (ww, hh);
@@ -944,9 +920,9 @@ ExportReport::audition (std::string path, unsigned n_chn, int page)
 	}
 	if (SMFSource::valid_midi_file (path)) { return; }
 
-	boost::shared_ptr<Region> r;
+	std::shared_ptr<Region> r;
 	SourceList srclist;
-	boost::shared_ptr<AudioFileSource> afs;
+	std::shared_ptr<AudioFileSource> afs;
 	bool old_sbp = AudioSource::get_build_peakfiles ();
 
 	/* don't even think of building peakfiles for these files */
@@ -954,12 +930,12 @@ ExportReport::audition (std::string path, unsigned n_chn, int page)
 
 	for (unsigned int n = 0; n < n_chn; ++n) {
 		try {
-			afs = boost::dynamic_pointer_cast<AudioFileSource> (
+			afs = std::dynamic_pointer_cast<AudioFileSource> (
 				SourceFactory::createExternal (DataType::AUDIO, *_session,
 										 path, n,
 										 Source::Flag (ARDOUR::AudioFileSource::NoPeakFile), false));
 			if (afs->sample_rate() != _session->nominal_sample_rate()) {
-				boost::shared_ptr<SrcFileSource> sfs (new SrcFileSource(*_session, afs, ARDOUR::SrcGood));
+				std::shared_ptr<SrcFileSource> sfs (new SrcFileSource(*_session, afs, ARDOUR::SrcGood));
 				srclist.push_back(sfs);
 			} else {
 				srclist.push_back(afs);
@@ -977,7 +953,7 @@ ExportReport::audition (std::string path, unsigned n_chn, int page)
 		return;
 	}
 
-	afs = boost::dynamic_pointer_cast<AudioFileSource> (srclist[0]);
+	afs = std::dynamic_pointer_cast<AudioFileSource> (srclist[0]);
 	std::string rname = region_name_from_path (afs->path(), false);
 
 	PBD::PropertyList plist;
@@ -987,7 +963,7 @@ ExportReport::audition (std::string path, unsigned n_chn, int page)
 	plist.add (ARDOUR::Properties::name, rname);
 	plist.add (ARDOUR::Properties::layer, 0);
 
-	r = boost::dynamic_pointer_cast<AudioRegion> (RegionFactory::create (srclist, plist, false));
+	r = std::dynamic_pointer_cast<AudioRegion> (RegionFactory::create (srclist, plist, false));
 
 	r->set_position (timepos_t ());
 	_session->audition_region(r);

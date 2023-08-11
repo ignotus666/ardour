@@ -40,7 +40,7 @@ using namespace ARDOUR;
 using namespace PBD;
 
 int
-Filter::make_new_sources (boost::shared_ptr<Region> region, SourceList& nsrcs, std::string suffix, bool use_session_sample_rate)
+Filter::make_new_sources (std::shared_ptr<Region> region, SourceList& nsrcs, std::string suffix, bool use_session_sample_rate)
 {
 	vector<string> names = region->master_source_names();
 	const SourceList::size_type nsrc = region->sources().size();
@@ -72,20 +72,16 @@ Filter::make_new_sources (boost::shared_ptr<Region> region, SourceList& nsrcs, s
 		}
 
 		try {
-			samplecnt_t sample_rate;
-			if (use_session_sample_rate) {
-				sample_rate = session.sample_rate();
-			} else {
-				boost::shared_ptr<AudioRegion> aregion = boost::dynamic_pointer_cast<AudioRegion>(region);
+			samplecnt_t sample_rate = session.sample_rate ();
+			if (!use_session_sample_rate) {
+				std::shared_ptr<AudioRegion> aregion = std::dynamic_pointer_cast<AudioRegion>(region);
 
 				if (aregion) {
 					sample_rate = aregion->audio_source()->sample_rate();
-				} else {
-					return -1;
 				}
 			}
 
-			nsrcs.push_back (boost::dynamic_pointer_cast<Source> (
+			nsrcs.push_back (std::dynamic_pointer_cast<Source> (
 				                 SourceFactory::createWritable (region->data_type(), session,
 				                                                path, sample_rate)));
 		}
@@ -100,7 +96,7 @@ Filter::make_new_sources (boost::shared_ptr<Region> region, SourceList& nsrcs, s
 }
 
 int
-Filter::finish (boost::shared_ptr<Region> region, SourceList& nsrcs, string region_name)
+Filter::finish (std::shared_ptr<Region> region, SourceList& nsrcs, string region_name)
 {
 	/* update headers on new sources */
 
@@ -112,14 +108,14 @@ Filter::finish (boost::shared_ptr<Region> region, SourceList& nsrcs, string regi
 
 	/* this is ugly. */
 	for (SourceList::iterator si = nsrcs.begin(); si != nsrcs.end(); ++si) {
-		boost::shared_ptr<AudioFileSource> afs = boost::dynamic_pointer_cast<AudioFileSource>(*si);
+		std::shared_ptr<AudioFileSource> afs = std::dynamic_pointer_cast<AudioFileSource>(*si);
 		if (afs) {
 			afs->done_with_peakfile_writes ();
 			afs->update_header (region->position_sample(), *now, xnow);
 			afs->mark_immutable ();
 		}
 
-		boost::shared_ptr<SMFSource> smfs = boost::dynamic_pointer_cast<SMFSource>(*si);
+		std::shared_ptr<SMFSource> smfs = std::dynamic_pointer_cast<SMFSource>(*si);
 		if (smfs) {
 			smfs->set_natural_position (region->position());
 			smfs->flush ();
@@ -137,26 +133,13 @@ Filter::finish (boost::shared_ptr<Region> region, SourceList& nsrcs, string regi
 	}
 	results.clear ();
 
-	PropertyList plist;
+	PropertyList plist (region->derive_properties (true, false));
 
-	plist.add (Properties::start, std::numeric_limits<timecnt_t>::min());
-	plist.add (Properties::length, region->length());
+	plist.add (Properties::start, std::numeric_limits<timepos_t>::min());
 	plist.add (Properties::name, region_name);
 	plist.add (Properties::whole_file, true);
-	plist.add (Properties::position, region->position());
 
-	boost::shared_ptr<Region> r = RegionFactory::create (nsrcs, plist);
-
-	boost::shared_ptr<AudioRegion> audio_region = boost::dynamic_pointer_cast<AudioRegion> (region);
-	boost::shared_ptr<AudioRegion> audio_r = boost::dynamic_pointer_cast<AudioRegion> (r);
-	if (audio_region && audio_r) {
-		audio_r->set_scale_amplitude (audio_region->scale_amplitude());
-		audio_r->set_fade_in_active (audio_region->fade_in_active ());
-		audio_r->set_fade_in (audio_region->fade_in ());
-		audio_r->set_fade_out_active (audio_region->fade_out_active ());
-		audio_r->set_fade_out (audio_region->fade_out ());
-		*(audio_r->envelope()) = *(audio_region->envelope ());
-	}
+	std::shared_ptr<Region> r = RegionFactory::create (nsrcs, plist);
 	results.push_back (r);
 
 	return 0;

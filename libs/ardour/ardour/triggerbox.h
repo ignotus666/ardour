@@ -36,9 +36,14 @@
 #include "pbd/ringbuffer.h"
 #include "pbd/stateful.h"
 
+#include "midi++/types.h"
+
 #include "temporal/beats.h"
 #include "temporal/bbt_time.h"
 #include "temporal/tempo.h"
+
+#include "evoral/PatchChange.h"
+#include "evoral/SMF.h"
 
 #include "ardour/midi_model.h"
 #include "ardour/midi_state_tracker.h"
@@ -55,6 +60,10 @@ namespace RubberBand {
 	class RubberBandStretcher;
 }
 
+namespace MIDI {
+	class Parser;
+}
+
 namespace ARDOUR {
 
 class Session;
@@ -62,46 +71,69 @@ class AudioRegion;
 class MidiRegion;
 class TriggerBox;
 class SideChain;
+class MidiPort;
 
 typedef uint32_t color_t;
+
+LIBARDOUR_API std::string cue_marker_name (int32_t);
+
+class Trigger;
+
+typedef std::shared_ptr<Trigger> TriggerPtr;
 
 class LIBARDOUR_API Trigger : public PBD::Stateful {
   public:
 	enum State {
 		/* This is the initial state for a Trigger, and means that it is not
-		 *doing anything at all
+		 * doing anything at all
 		 */
 		Stopped,
 		/* A Trigger in this state has been chosen by its parent TriggerBox
 		 * (e.g. because of a bang() call that put it in the queue), a Trigger in
 		 * this state is waiting for the next occurence of its quantization to
-		 *  occur before transitioning to Running
+		 * occur before transitioning to Running
 		 */
 		WaitingToStart,
 		/* a Trigger in this state is going to deliver data during calls
-		 *  to its ::run() method.
+		 * to its ::run() method.
 		 */
 		Running,
 		/* a Trigger in this state was running, has been re-triggered e.g. by a
-		 *  ::bang() call with LaunchStyle set to Repeat, and is waiting for the
-		 *  next occurence of its quantization to occur before transitioning
-		 *  back to Running.
+		 * ::bang() call with LaunchStyle set to Repeat, and is waiting for the
+		 * next occurence of its quantization to occur before transitioning
+		 * back to Running.
 		 */
 		WaitingForRetrigger,
 		/* a Trigger in this state is delivering data during calls to ::run(), but
-		 *  is waiting for the next occurence of its quantization to occur when it will
-		 *transition to Stopping and then Stopped.
+		 * is waiting for the next occurence of its quantization to occur when it will
+		 * transition to Stopping and then Stopped.
 		 */
 		WaitingToStop,
+		/* a Trigger in this state is delivering data during calls to ::run(), but
+		 * is waiting for the next occurence of another Trigger's quantization to occur when it will
+		 * transition to Stopping and then Stopped (and be followed by
+		 * the other Trigger.
+		 */
+		WaitingToSwitch,
 		/* a Trigger in this state was Running but noticed that it should stop
 		 * during the current call to ::run(). By the end of that call, it will
 		 * have transitioned to Stopped.
 		 */
 		Stopping,
-		/* a Trigger in this state has played all of its data and is
-		 * now silent-filling until we reach the "true end" of the trigger
-		 */
-		Playout,
+	};
+
+	enum LaunchStyle {
+		OneShot,  /* mouse down/NoteOn starts; mouse up/NoteOff ignored */
+		ReTrigger, /* mouse down/NoteOn starts or retriggers; mouse up/NoteOff */
+		Gate,     /* runs till mouse up/note off then to next quantization */
+		Toggle,   /* runs till next mouse down/NoteOn */
+		Repeat,   /* plays only quantization extent until mouse up/note off */
+	};
+
+	enum StretchMode { /* currently mapped to the matching RubberBand::RubberBandStretcher::Option  */
+		Crisp,
+		Mixed,
+		Smooth,
 	};
 
 	Trigger (uint32_t index, TriggerBox&);
@@ -109,23 +141,130 @@ class LIBARDOUR_API Trigger : public PBD::Stateful {
 
 	static void make_property_quarks ();
 
-	void set_name (std::string const &);
-	std::string name() const { return _name; }
+  protected:
+	/* properties controllable by the user */
 
-	void set_stretchable (bool yn);
-	bool stretchable () const { return _stretchable; }
+	PBD::Property<LaunchStyle>          _launch_style;
+	PBD::Property<FollowAction>         _follow_action0;
+	PBD::Property<FollowAction>         _follow_action1;
+	PBD::Property<int>                  _follow_action_probability; /* 1 .. 100 */
+	PBD::Property<uint32_t>             _follow_count;
+	PBD::Property<Temporal::BBT_Offset> _quantization;
+	PBD::Property<Temporal::BBT_Offset> _follow_length;
+	PBD::Property<bool>                 _use_follow_length;
+	PBD::Property<bool>                 _legato;
+	PBD::Property<gain_t>               _gain;
+	PBD::Property<float>                _velocity_effect;
+	PBD::Property<bool>                 _stretchable;
+	PBD::Property<bool>                 _cue_isolated;
+	PBD::Property<bool>                 _allow_patch_changes;
+	PBD::Property<StretchMode>          _stretch_mode;
 
-	void set_scene_isolated (bool isolate);
-	bool scene_isolated () const { return _isolated; }
+	/* Properties that are not CAS-updated at retrigger */
+
+	PBD::Property<std::string>          _name;
+	PBD::Property<color_t>              _color;
+
+  public:
+	/* this is positioner here so that we can easily keep it in sync
+	   with the properties list above.
+	*/
+	struct UIState {
+		std::atomic<unsigned int> generation; /* used for CAS */
+
+		LaunchStyle launch_style = OneShot;
+		FollowAction follow_action0 = FollowAction (FollowAction::Again);
+		FollowAction follow_action1 = FollowAction (FollowAction::Stop);
+		int follow_action_probability = 0;
+		uint32_t follow_count = 1;
+		Temporal::BBT_Offset quantization = Temporal::BBT_Offset (1, 0, 0);
+		Temporal::BBT_Offset follow_length = Temporal::BBT_Offset (1, 0, 0);
+		bool use_follow_length = false;
+		bool legato = false;
+		gain_t gain = 1.0;
+		float velocity_effect = 0;
+		bool stretchable = true;
+		bool cue_isolated = false;
+		bool allow_patch_changes = true;
+		StretchMode stretch_mode = Trigger::Crisp;
+
+		Evoral::SMF::UsedChannels used_channels = Evoral::SMF::UsedChannels();
+		Evoral::PatchChange<MidiBuffer::TimeType> patch_change[16];
+
+		std::string  name = "";
+		color_t      color = 0xBEBEBEFF;
+		double       tempo = 0;  //unset
+
+		UIState() : generation (0) {}
+
+		UIState& operator= (UIState const & other) {
+
+			/* we do not copy generation */
+
+			generation = 0;
+
+			launch_style = other.launch_style;
+			follow_action0 = other.follow_action0;
+			follow_action1 = other.follow_action1;
+			follow_action_probability = other.follow_action_probability;
+			follow_count = other.follow_count;
+			quantization = other.quantization;
+			follow_length = other.follow_length;
+			use_follow_length = other.use_follow_length;
+			legato = other.legato;
+			gain = other.gain;
+			velocity_effect = other.velocity_effect;
+			stretchable = other.stretchable;
+			cue_isolated = other.cue_isolated;
+			allow_patch_changes = other.allow_patch_changes;
+			stretch_mode = other.stretch_mode;
+			used_channels = other.used_channels;
+
+			for (int i = 0; i<16; i++) {
+				if (other.patch_change[i].is_set()) {
+					patch_change[i] = other.patch_change[i];
+				}
+			}
+
+			name = other.name;
+			color = other.color;
+			tempo = other.tempo;
+
+			return *this;
+		}
+	};
+
+#define TRIGGERBOX_PROPERTY_DECL(name,type) void set_ ## name (type); type name () const;
+#define TRIGGERBOX_PROPERTY_DECL_CONST_REF(name,type) void set_ ## name (type const &); type name () const
+
+	TRIGGERBOX_PROPERTY_DECL (launch_style, LaunchStyle);
+	TRIGGERBOX_PROPERTY_DECL_CONST_REF (follow_action0, FollowAction);
+	TRIGGERBOX_PROPERTY_DECL_CONST_REF (follow_action1, FollowAction);
+	TRIGGERBOX_PROPERTY_DECL (follow_action_probability, int);
+	TRIGGERBOX_PROPERTY_DECL (follow_count, uint32_t);
+	TRIGGERBOX_PROPERTY_DECL_CONST_REF (quantization, Temporal::BBT_Offset);
+	TRIGGERBOX_PROPERTY_DECL_CONST_REF (follow_length, Temporal::BBT_Offset);
+	TRIGGERBOX_PROPERTY_DECL (use_follow_length, bool);
+	TRIGGERBOX_PROPERTY_DECL (legato, bool);
+	TRIGGERBOX_PROPERTY_DECL (velocity_effect, float);
+	TRIGGERBOX_PROPERTY_DECL (stretchable, bool);
+	TRIGGERBOX_PROPERTY_DECL (cue_isolated, bool);
+	TRIGGERBOX_PROPERTY_DECL (allow_patch_changes, bool);
+	TRIGGERBOX_PROPERTY_DECL (gain, gain_t);
+	TRIGGERBOX_PROPERTY_DECL (stretch_mode, StretchMode);
+	TRIGGERBOX_PROPERTY_DECL (color, color_t);
+	TRIGGERBOX_PROPERTY_DECL_CONST_REF (name, std::string);
+
+#undef TRIGGERBOX_PROPERTY_DECL
+#undef TRIGGERBOX_PROPERTY_DECL_CONST_REF
 
 	/* Calling ::bang() will cause this Trigger to be placed in its owning
 	   TriggerBox's queue.
 	*/
 	void bang ();
 
-	/* Calling ::unbang() will cause a running Trigger to begin the process
-	   of stopping. If the Trigger is not running, it will move it to a
-	   full Stopped state.
+	/* Calling ::unbang() is equivalent to a mouse-up or note-off
+	    ... it MIGHT cause a clip to stop, but more likely has no effect, depending on the slot's launch-style.
 	*/
 	void unbang ();
 
@@ -134,22 +273,36 @@ class LIBARDOUR_API Trigger : public PBD::Stateful {
 	 */
 	void request_stop ();
 
+	/* Call ::stop_quantized() to stop a Trigger at the next quantization point.
+	 */
+	void stop_quantized ();
+
+	virtual void tempo_map_changed() {}
+
 	virtual pframes_t run (BufferSet&, samplepos_t start_sample, samplepos_t end_sample,
 	                       Temporal::Beats const & start, Temporal::Beats const & end,
-	                       pframes_t nframes, pframes_t offset, bool first, double bpm, bool can_clear) = 0;
+	                       pframes_t nframes, pframes_t offset, double bpm, pframes_t& quantize_offset) = 0;
 	virtual void set_start (timepos_t const &) = 0;
 	virtual void set_end (timepos_t const &) = 0;
 	virtual void set_length (timecnt_t const &) = 0;
 	virtual void reload (BufferSet&, void*) = 0;
 	virtual void io_change () {}
+	virtual void set_legato_offset (timepos_t const & offset) = 0;
 
-	virtual double position_as_fraction() const = 0;
-	virtual void set_expected_end_sample (Temporal::TempoMap::SharedPtr const &, Temporal::BBT_Time const &, samplepos_t) = 0;
+	timepos_t current_pos() const;
+	double position_as_fraction() const;
+
+	Temporal::BBT_Argument compute_start (Temporal::TempoMap::SharedPtr const &, samplepos_t start, samplepos_t end, Temporal::BBT_Offset const & q, samplepos_t& start_samples, bool& will_start);
+	virtual timepos_t compute_end (Temporal::TempoMap::SharedPtr const &, Temporal::BBT_Time const &, samplepos_t, Temporal::Beats &) = 0;
+	virtual void start_and_roll_to (samplepos_t start, samplepos_t position, uint32_t cnt) = 0;
 
 	/* because follow actions involve probability is it easier to code the will-not-follow case */
 
 	bool will_not_follow() const;
 	bool will_follow() const { return !will_not_follow(); }
+
+	/* assumes that this is currently playing but does not enforce it */
+	bool cue_launched() const { return _cue_launched; }
 
 	virtual bool probably_oneshot () const = 0;
 
@@ -162,30 +315,10 @@ class LIBARDOUR_API Trigger : public PBD::Stateful {
 	bool active() const { return _state >= Running; }
 	State state() const { return _state; }
 
-	enum LaunchStyle {
-		OneShot,  /* mouse down/NoteOn starts; mouse up/NoteOff ignored */
-		ReTrigger, /* mouse down/NoteOn starts or retriggers; mouse up/NoteOff */
-		Gate,     /* runs till mouse up/note off then to next quantization */
-		Toggle,   /* runs till next mouse down/NoteOn */
-		Repeat,   /* plays only quantization extent until mouse up/note off */
-	};
-
-	LaunchStyle launch_style() const;
-	void set_launch_style (LaunchStyle);
-
-	FollowAction follow_action (uint32_t n) const { assert (n < 2); return n ? _follow_action1 : _follow_action0; }
-	void set_follow_action (FollowAction, uint32_t n);
-
-	color_t  color() const { return _color; }
-	void set_color (color_t);
-
-	void set_region (boost::shared_ptr<Region>, bool use_thread = true);
+	void set_region (std::shared_ptr<Region>, bool use_thread = true);
 	void clear_region ();
-	virtual int set_region_in_worker_thread (boost::shared_ptr<Region>) = 0;
-	boost::shared_ptr<Region> region() const { return _region; }
-
-	Temporal::BBT_Offset quantization() const;
-	void set_quantization (Temporal::BBT_Offset const &);
+	virtual int set_region_in_worker_thread (std::shared_ptr<Region>) = 0;
+	std::shared_ptr<Region> region() const { return _region; }
 
 	uint32_t index() const { return _index; }
 
@@ -195,44 +328,47 @@ class LIBARDOUR_API Trigger : public PBD::Stateful {
 	 */
 	samplepos_t transition_samples;
 	Temporal::Beats transition_beats;
+	Temporal::BBT_Time _transition_bbt;
 
-	XMLNode& get_state (void);
+	XMLNode& get_state () const;
 	int set_state (const XMLNode&, int version);
 
-	void maybe_compute_next_transition (samplepos_t start_sample, Temporal::Beats const & start, Temporal::Beats const & end, pframes_t& nframes, pframes_t& dest_offset, bool passthru);
+	void maybe_compute_next_transition (samplepos_t start_sample, Temporal::Beats const & start, Temporal::Beats const & end, pframes_t& nframes, pframes_t& dest_offset);
 
+
+	bool compute_quantized_transition (samplepos_t start_sample, Temporal::Beats const & start, Temporal::Beats const & end,
+	                                   Temporal::BBT_Argument& t_bbt, Temporal::Beats& t_beats, samplepos_t& t_samples,
+	                                   Temporal::TempoMap::SharedPtr const & tmap, Temporal::BBT_Offset const & q);
+
+	pframes_t compute_next_transition (samplepos_t start_sample, Temporal::Beats const & start, Temporal::Beats const & end, pframes_t nframes,
+	                                   Temporal::BBT_Argument& t_bbt, Temporal::Beats& t_beats, samplepos_t& t_samples,
+	                                   Temporal::TempoMap::SharedPtr const & tmap);
+
+
+	template<typename TriggerType>
+		void start_and_roll_to (samplepos_t start_pos, samplepos_t end_position, TriggerType& trigger,
+		                        pframes_t (TriggerType::*run_method) (BufferSet& bufs, samplepos_t start_sample, samplepos_t end_sample,
+		                                                              Temporal::Beats const & start_beats, Temporal::Beats const & end_beats,
+		                                                              pframes_t nframes, pframes_t dest_offset, double bpm, pframes_t&), uint32_t cnt);
 	void set_next_trigger (int n);
 	int next_trigger() const { return _next_trigger; }
-
-	void set_use_follow_length (bool);
-	bool use_follow_length() const { return _use_follow_length; }
-
-	void set_follow_length (Temporal::BBT_Offset const &);
-	Temporal::BBT_Offset follow_length() const { return _follow_length; }
-
-	void set_follow_action_probability (int zero_to_a_hundred);
-	int  follow_action_probability() const { return _follow_action_probability; }
-
-	virtual void set_legato_offset (timepos_t const & offset) = 0;
-	virtual timepos_t current_pos() const = 0;
-	void set_legato (bool yn);
-	bool legato () const { return _legato; }
 
 	/* any non-zero value will work for the default argument, and means
 	   "use your own launch quantization". BBT_Offset (0, 0, 0) means what
 	   it says: start immediately
 	*/
-	void startup (Temporal::BBT_Offset const & start_quantization = Temporal::BBT_Offset (9, 3,0));
+	void startup (BufferSet&, pframes_t dest_offset, Temporal::BBT_Offset const & start_quantization = Temporal::BBT_Offset (9, 3,0));
+	void startup_from_ffwd (BufferSet&, uint32_t loop_cnt);
+	void shutdown_from_fwd ();
 	virtual void shutdown (BufferSet& bufs, pframes_t dest_offset);
 	virtual void jump_start ();
 	virtual void jump_stop (BufferSet& bufs, pframes_t dest_offset);
 	void begin_stop (bool explicit_stop = false);
+	void begin_switch (TriggerPtr);
 
 	bool explicitly_stopped() const { return _explicitly_stopped; }
 
 	uint32_t loop_count() const { return _loop_cnt; }
-	uint32_t follow_count() const { return _follow_count; }
-	void set_follow_count (uint32_t n);
 
 	void set_ui (void*);
 	void* ui () const { return _ui; }
@@ -241,24 +377,32 @@ class LIBARDOUR_API Trigger : public PBD::Stateful {
 
 	double estimated_tempo() const { return _estimated_tempo; }
 
-	Temporal::Meter meter() const { return _meter; }
+	/* the following functions deal with audio- or midi-specific SegmentDescriptor properties, provided as virtuals so we don't have to do lots of dynamic_casting  */
+	/* segment_tempo is currently a no-op for MIDI, but may be implemented later  */
+	virtual double segment_tempo() const = 0;
+	virtual void set_segment_tempo (double t) = 0;
 
-	gain_t gain() const { return _gain; }
-	void set_gain (gain_t);
+	/* used_channels is a no-op for audio  */
+	virtual Evoral::SMF::UsedChannels used_channels() const { return Evoral::SMF::UsedChannels(); }
+	virtual void set_used_channels (Evoral::SMF::UsedChannels) {}
+
+	/* patch changes are a no-op for audio */
+	virtual void set_patch_change (Evoral::PatchChange<MidiBuffer::TimeType> const &) {}
+	virtual Evoral::PatchChange<MidiBuffer::TimeType> const patch_change (uint8_t) const { return Evoral::PatchChange<MidiBuffer::TimeType>(); }
+	virtual void unset_patch_change (uint8_t channel) {}
+	virtual void unset_all_patch_changes () {}
+	virtual bool patch_change_set (uint8_t channel) const { return false; }
+
+	virtual void setup_stretcher () = 0;
+
+	Temporal::Meter meter() const { return _meter; }
 
 	void set_velocity_gain (gain_t g) {_pending_velocity_gain=g;}
 
-	float midi_velocity_effect() const { return _midi_velocity_effect; }
-	void set_midi_velocity_effect (float);
-
-	enum StretchMode { /* currently mapped to the matching RubberBand::RubberBandStretcher::Option  */
-		Crisp,
-		Mixed,
-		Smooth,
-	};
-
 	void set_pending (Trigger*);
 	Trigger* swap_pending (Trigger*);
+
+	void update_properties ();
 
 	static Trigger * const MagicClearPointerValue;
 
@@ -266,16 +410,25 @@ class LIBARDOUR_API Trigger : public PBD::Stateful {
 
 	static void request_trigger_delete (Trigger* t);
 
+	/* these operations are provided to get/set all the "user visible" trigger properties at once */
+	/* examples: drag+dropping from slot to slot, or "Range->Bounce to Slot", where a single operation sets many  */
+	void get_ui_state (UIState &state) const;
+	void set_ui_state (UIState &state);
+
   protected:
 	struct UIRequests {
 		std::atomic<bool> stop;
 		UIRequests() : stop (false) {}
 	};
 
-	boost::shared_ptr<Region> _region;
+	std::shared_ptr<Region> _region;
+	samplecnt_t                process_index;
+	samplepos_t                final_processed_sample;  /* where we stop playing, in process time, compare with process_index */
+	UIState                    ui_state;
 	TriggerBox&               _box;
 	UIRequests                _requests;
 	State                     _state;
+	bool                      _playout;
 	std::atomic<int>          _bang;
 	std::atomic<int>          _unbang;
 	uint32_t                  _index;
@@ -283,57 +436,62 @@ class LIBARDOUR_API Trigger : public PBD::Stateful {
 	uint32_t                  _loop_cnt; /* how many times in a row has this played */
 	void*                     _ui;
 	bool                      _explicitly_stopped;
-
 	gain_t                    _pending_velocity_gain;
 	gain_t                    _velocity_gain;
+	bool                      _cue_launched;
 
-	/* properties controllable by the user */
+	/* these are only used by midi triggers but the ui_state API needs them */
+	Evoral::SMF::UsedChannels _used_channels;
+	Evoral::PatchChange<MidiBuffer::TimeType> _patch_change[16];
+	std::vector<int> _channel_map;
 
-	PBD::Property<LaunchStyle>          _launch_style;
-	PBD::Property<FollowAction>         _follow_action0;
-	PBD::Property<FollowAction>         _follow_action1;
-	PBD::Property<int>                  _follow_action_probability; /* 1 .. 100 */
-	PBD::Property<uint32_t>             _follow_count;
-	PBD::Property<Temporal::BBT_Offset> _quantization;
-	PBD::Property<Temporal::BBT_Offset> _follow_length;
-	PBD::Property<bool>                 _use_follow_length;
-	PBD::Property<bool>                 _legato;
-	PBD::Property<std::string>          _name;
-	PBD::Property<gain_t>               _gain;
-	PBD::Property<float>                _midi_velocity_effect;
-	PBD::Property<bool>                 _stretchable;
-	PBD::Property<bool>                 _isolated;
-	PBD::Property<color_t>              _color;
-	PBD::Property<StretchMode>          _stretch_mode;
+	void copy_to_ui_state ();
 
-	bool cue_launched;
 
 	/* computed from data */
 
 	double                    _estimated_tempo;  //TODO:  this should come from the MIDI file
 	double                    _segment_tempo;  //TODO: this will likely get stored in the SegmentDescriptor for audio triggers
 
-	double                    _barcnt; /* our estimate of the number of bars in the region */
+	/* basic process is :
+	   1) when a file is loaded, we infer its bpm either by minibpm's estimate, a flag in the filename, metadata (TBD) or other means
+	   2) we assume the clip must have an integer number of beats in it  (simplest case is a one-bar loop with 4 beats in it)
+	   3) ...so we round to the nearest beat length, and set the tempo to *exactly* fit the sample-length into the assumed beat-length
+	   4) the user may recognize a problem:  "this was a 3/4 beat, which was rounded to 4 beats but it should have been 3"
+	   5) if the user changes the beat-length, then the tempo is recalculated for use during stretching
+	   6) someday, we will also allow the sample start and length to be adjusted in a trimmer, and that will also adjust the tempo
+	   7) in all cases the user should be in final control; but our "internal" value for stretching are just sample-start and BPM, end of story
+	*/
+	double                    _beatcnt;
 	Temporal::Meter           _meter;
 
 	samplepos_t                expected_end_sample;
 	Temporal::BBT_Offset      _start_quantization;
+	Temporal::BBT_Offset      _nxt_quantization;
 	std::atomic<Trigger*>     _pending;
+	std::atomic<unsigned int>  last_property_generation;
 
 	void when_stopped_during_run (BufferSet& bufs, pframes_t dest_offset);
-	void set_region_internal (boost::shared_ptr<Region>);
-	virtual void retrigger() = 0;
-	virtual void _startup (Temporal::BBT_Offset const &);
-};
+	void set_region_internal (std::shared_ptr<Region>);
+	virtual void retrigger();
+	virtual void _startup (BufferSet&, pframes_t dest_offset, Temporal::BBT_Offset const &);
 
-typedef boost::shared_ptr<Trigger> TriggerPtr;
+	bool internal_use_follow_length() const;
+	void send_property_change (PBD::PropertyChange pc);
+};
 
 class LIBARDOUR_API AudioTrigger : public Trigger {
   public:
 	AudioTrigger (uint32_t index, TriggerBox&);
 	~AudioTrigger ();
 
-	pframes_t run (BufferSet&, samplepos_t start_sample, samplepos_t end_sample, Temporal::Beats const & start, Temporal::Beats const & end, pframes_t nframes, pframes_t offset, bool first, double bpm, bool);
+	template<bool actually_run>  pframes_t audio_run (BufferSet& bufs, samplepos_t start_sample, samplepos_t end_sample,
+	                                                  Temporal::Beats const & start, Temporal::Beats const & end,
+	                                                  pframes_t nframes, pframes_t dest_offset, double bpm, pframes_t& quantize_offset);
+
+	pframes_t run (BufferSet& bufs, samplepos_t start_sample, samplepos_t end_sample, Temporal::Beats const & start, Temporal::Beats const & end, pframes_t nframes, pframes_t dest_offset, double bpm, pframes_t& quantize_offset) {
+		return audio_run<true> (bufs, start_sample, end_sample, start, end, nframes, dest_offset, bpm, quantize_offset);
+	}
 
 	StretchMode stretch_mode() const { return _stretch_mode; }
 	void set_stretch_mode (StretchMode);
@@ -341,16 +499,12 @@ class LIBARDOUR_API AudioTrigger : public Trigger {
 	double segment_tempo() const { return _segment_tempo; }
 	void set_segment_tempo (double t);
 
-	Temporal::Meter segment_meter() const { return _meter; }  //TODO: might be different?
-	void set_segment_meter(Temporal::Meter const &);  //TODO: disambiguated from a future midi::metrum
-
-	double segment_barcnt () { return _barcnt; }
-	void set_segment_barcnt (double count);
+	double segment_beatcnt () { return _beatcnt; }
+	void set_segment_beatcnt (double count);
 
 	void set_start (timepos_t const &);
 	void set_end (timepos_t const &);
 	void set_legato_offset (timepos_t const &);
-	timepos_t current_pos() const;
 	void set_length (timecnt_t const &);
 	timepos_t start_offset () const; /* offset from start of data */
 	timepos_t current_length() const; /* offset from start of data */
@@ -359,19 +513,18 @@ class LIBARDOUR_API AudioTrigger : public Trigger {
 	void io_change ();
 	bool probably_oneshot () const;
 
-	double position_as_fraction() const;
-
-	int set_region_in_worker_thread (boost::shared_ptr<Region>);
+	int set_region_in_worker_thread (std::shared_ptr<Region>);
 	void jump_start ();
 	void jump_stop (BufferSet& bufs, pframes_t dest_offset);
 
-	XMLNode& get_state (void);
+	XMLNode& get_state () const;
 	int set_state (const XMLNode&, int version);
 
 	RubberBand::RubberBandStretcher* stretcher() { return (_stretcher); }
 
 	SegmentDescriptor get_segment_descriptor () const;
-	void set_expected_end_sample (Temporal::TempoMap::SharedPtr const &, Temporal::BBT_Time const &, samplepos_t);
+	timepos_t compute_end (Temporal::TempoMap::SharedPtr const &, Temporal::BBT_Time const &, samplepos_t, Temporal::Beats &);
+	void start_and_roll_to (samplepos_t start, samplepos_t position, uint32_t cnt);
 
 	bool stretching () const;
 
@@ -389,26 +542,24 @@ class LIBARDOUR_API AudioTrigger : public Trigger {
 	RubberBand::RubberBandStretcher*  _stretcher;
 	samplepos_t _start_offset;
 
-	/* computed after data is reset */
-
-	samplepos_t last_sample;   /* where the data runs out, relative to the start of the data, compare with read_index */
 
 	/* computed during run */
 
 	samplecnt_t read_index;
-	samplecnt_t process_index;
-	samplepos_t final_sample;  /* where we stop playing, relative to the timeline */
+	samplepos_t last_readable_sample;   /* where the data runs out, relative to the start of the data, compare with read_index */
 	samplepos_t _legato_offset;
 	samplecnt_t retrieved;
 	samplecnt_t got_stretcher_padding;
 	samplecnt_t to_pad;
 	samplecnt_t to_drop;
 
+	virtual void setup_stretcher ();
+
 	void drop_data ();
-	int load_data (boost::shared_ptr<AudioRegion>);
+	int load_data (std::shared_ptr<AudioRegion>);
 	void estimate_tempo ();
-	void setup_stretcher ();
-	void _startup (Temporal::BBT_Offset const &);
+	void reset_stretcher ();
+	void _startup (BufferSet&, pframes_t dest_offset, Temporal::BBT_Offset const &);
 };
 
 
@@ -417,12 +568,16 @@ class LIBARDOUR_API MIDITrigger : public Trigger {
 	MIDITrigger (uint32_t index, TriggerBox&);
 	~MIDITrigger ();
 
-	pframes_t run (BufferSet&, samplepos_t start_sample, samplepos_t end_sample, Temporal::Beats const & start_beats, Temporal::Beats const & end_beats, pframes_t nframes, pframes_t offset, bool passthru, double bpm, bool can_clear);
+	template<bool actually_run> pframes_t midi_run (BufferSet&, samplepos_t start_sample, samplepos_t end_sample,
+	                                                Temporal::Beats const & start_beats, Temporal::Beats const & end_beats, pframes_t nframes, pframes_t offset, double bpm, pframes_t& quantize_offset);
+
+	pframes_t run (BufferSet& bufs, samplepos_t start_sample, samplepos_t end_sample, Temporal::Beats const & start, Temporal::Beats const & end, pframes_t nframes, pframes_t dest_offset, double bpm, pframes_t& quantize_offset) {
+		return midi_run<true> (bufs, start_sample, end_sample, start, end, nframes, dest_offset, bpm, quantize_offset);
+	}
 
 	void set_start (timepos_t const &);
 	void set_end (timepos_t const &);
 	void set_legato_offset (timepos_t const &);
-	timepos_t current_pos() const;
 	void set_length (timecnt_t const &);
 	timepos_t start_offset () const;
 	timepos_t end() const;            /* offset from start of data */
@@ -431,41 +586,65 @@ class LIBARDOUR_API MIDITrigger : public Trigger {
 	void reload (BufferSet&, void*);
 	bool probably_oneshot () const;
 
-	double position_as_fraction() const;
+	void tempo_map_changed();
+	void estimate_midi_patches ();
 
-	int set_region_in_worker_thread (boost::shared_ptr<Region>);
+	int set_region_in_worker_thread (std::shared_ptr<Region>);
 	void jump_start ();
 	void shutdown (BufferSet& bufs, pframes_t dest_offset);
 	void jump_stop (BufferSet& bufs, pframes_t dest_offset);
 
-	XMLNode& get_state (void);
+	XMLNode& get_state () const;
 	int set_state (const XMLNode&, int version);
 
 	SegmentDescriptor get_segment_descriptor () const;
-	void set_expected_end_sample (Temporal::TempoMap::SharedPtr const &, Temporal::BBT_Time const &, samplepos_t);
+	timepos_t compute_end (Temporal::TempoMap::SharedPtr const &, Temporal::BBT_Time const &, samplepos_t, Temporal::Beats &);
+	void start_and_roll_to (samplepos_t start, samplepos_t position, uint32_t cnt);
+
+	void set_patch_change (Evoral::PatchChange<MidiBuffer::TimeType> const &);
+	Evoral::PatchChange<MidiBuffer::TimeType> const patch_change (uint8_t) const;
+	void unset_patch_change (uint8_t channel);
+	void unset_all_patch_changes ();
+	bool patch_change_set (uint8_t channel) const;
+
+	/* It's possible that a portion of a midi file would use a subset of the total channels used, so store that info in the segment descriptor */
+	Evoral::SMF::UsedChannels used_channels() const { return ui_state.used_channels; }
+	void set_used_channels (Evoral::SMF::UsedChannels);
+
+	/* theoretically, MIDI files can have a dedicated tempo outside the session tempo map (*un-stretched*) but this is currently unimplemented */
+	/* boilerplate tempo functions are provided here so we don't have to do constant dynamic_cast checks to use the tempo+stretch APIs */
+	virtual double segment_tempo() const {return 120.0;}
+	virtual void set_segment_tempo (double t) {}
+	virtual void setup_stretcher () {}
+
+	void set_channel_map (int channel, int target);
+	void unset_channel_map (int channel);
+	int channel_map (int channel);
+	std::vector<int> const & channel_map() const { return _channel_map; }
 
   protected:
 	void retrigger ();
 
   private:
 	PBD::ID data_source;
-	MidiStateTracker tracker;
 	PBD::ScopedConnection content_connection;
 
 	Temporal::Beats final_beat;
 
 	Temporal::DoubleableBeats data_length;   /* using timestamps from data */
 	Temporal::DoubleableBeats last_event_beats;
+	samplepos_t last_event_samples;
 
 	Temporal::BBT_Offset _start_offset;
 	Temporal::BBT_Offset _legato_offset;
 
+	std::shared_ptr<MidiModel> model;
 	MidiModel::const_iterator iter;
-	boost::shared_ptr<MidiModel> model;
+	bool                      map_change;
 
-	int load_data (boost::shared_ptr<MidiRegion>);
+	int load_data (std::shared_ptr<MidiRegion>);
 	void compute_and_set_length ();
-	void _startup (Temporal::BBT_Offset const &);
+	void _startup (BufferSet&, pframes_t dest_offset, Temporal::BBT_Offset const &);
 };
 
 class LIBARDOUR_API TriggerBoxThread
@@ -476,7 +655,7 @@ class LIBARDOUR_API TriggerBoxThread
 
 	static void init_request_pool() { Request::init_pool(); }
 
-	void set_region (TriggerBox&, uint32_t slot, boost::shared_ptr<Region>);
+	void set_region (TriggerBox&, uint32_t slot, std::shared_ptr<Region>);
 	void request_delete_trigger (Trigger* t);
 
 	void summon();
@@ -501,14 +680,14 @@ class LIBARDOUR_API TriggerBoxThread
 		/* for set region */
 		TriggerBox* box;
 		uint32_t slot;
-		boost::shared_ptr<Region> region;
+		std::shared_ptr<Region> region;
 		/* for DeleteTrigger */
 		Trigger* trigger;
 
 		void* operator new (size_t);
 		void  operator delete (void* ptr, size_t);
 
-		static MultiAllocSingleReleasePool* pool;
+		static PBD::MultiAllocSingleReleasePool* pool;
 		static void init_pool ();
 	};
 
@@ -520,16 +699,42 @@ class LIBARDOUR_API TriggerBoxThread
 	void delete_trigger (Trigger*);
 };
 
+struct CueRecord {
+	int32_t cue_number;
+	samplepos_t when;
+
+	CueRecord (int32_t cn, samplepos_t t): cue_number (cn), when (t) {}
+	CueRecord () : cue_number (0), when (0) {}
+
+	static const int32_t stop_all = INT32_MAX;
+};
+
+typedef PBD::RingBuffer<CueRecord> CueRecords;
 
 class LIBARDOUR_API TriggerBox : public Processor
 {
   public:
+
+#ifdef MIXBUS
+	static const int32_t default_triggers_per_box = 8;
+#else
+	static const int32_t default_triggers_per_box = 16;
+#endif
+
 	TriggerBox (Session&, DataType dt);
 	~TriggerBox ();
+
+	static CueRecords cue_records;
+	static bool cue_recording () { return _cue_recording; }
+	static void set_cue_recording (bool yn);
+	static PBD::Signal0<void> CueRecordingChanged;
 
 	void run (BufferSet& bufs, samplepos_t start_sample, samplepos_t end_sample, double speed, pframes_t nframes, bool result_required);
 	bool can_support_io_configuration (const ChanCount& in, ChanCount& out);
 	bool configure_io (ChanCount in, ChanCount out);
+
+	bool empty() const { return _active_slots == 0; }
+	PBD::Signal0<void> EmptyStatusChanged;
 
 	int32_t order() const { return _order; }
 	void set_order(int32_t n);
@@ -538,17 +743,24 @@ class LIBARDOUR_API TriggerBox : public Processor
 
 	TriggerPtr trigger (Triggers::size_type);
 
-	bool bang_trigger (TriggerPtr);
-	bool unbang_trigger (TriggerPtr);
+	void bang_trigger_at (Triggers::size_type row);
+	void unbang_trigger_at (Triggers::size_type row);
+
 	void add_trigger (TriggerPtr);
+
+	void fast_forward (CueEvents const &, samplepos_t transport_postiion);
+	bool fast_forwarding() const { return _fast_forwarding; }
 
 	void set_pending (uint32_t slot, Trigger*);
 
-	XMLNode& get_state (void);
+	XMLNode& get_state () const;
 	int set_state (const XMLNode&, int version);
 
+	void deep_sources (std::set<std::shared_ptr<Source>>&);
+	void used_regions (std::set<std::shared_ptr<Region>>&);
+
 	void set_from_path (uint32_t slot, std::string const & path);
-	void set_from_selection (uint32_t slot, boost::shared_ptr<Region>);
+	void set_from_selection (uint32_t slot, std::shared_ptr<Region>);
 
 	DataType data_type() const { return _data_type; }
 
@@ -556,6 +768,8 @@ class LIBARDOUR_API TriggerBox : public Processor
 	void stop_all_quantized ();
 
 	TriggerPtr currently_playing() const { return _currently_playing; }
+
+	TriggerPtr trigger_by_id (PBD::ID);
 
 	void clear_all_triggers ();
 	void set_all_follow_action (ARDOUR::FollowAction const &, uint32_t n=0);
@@ -573,14 +787,16 @@ class LIBARDOUR_API TriggerBox : public Processor
 	TriggerPtr get_next_trigger ();
 	TriggerPtr peek_next_trigger ();
 
-	void add_midi_sidechain ();
-	void update_sidechain_name ();
-
-	bool pass_thru() const { return _requests.pass_thru; }
-	void set_pass_thru (bool yn);
-
 	void request_reload (int32_t slot, void*);
-	void set_region (uint32_t slot, boost::shared_ptr<Region> region);
+	void set_region (uint32_t slot, std::shared_ptr<Region> region);
+
+	void non_realtime_transport_stop (samplepos_t now, bool flush);
+	void non_realtime_locate (samplepos_t now);
+	void realtime_handle_transport_stopped ();
+
+	void enqueue_trigger_state_for_region (std::shared_ptr<Region>, std::shared_ptr<Trigger::UIState>);
+
+	void tempo_map_changed ();
 
 	/* valid only within the ::run() call tree */
 	int32_t active_scene() const { return _active_scene; }
@@ -590,8 +806,24 @@ class LIBARDOUR_API TriggerBox : public Processor
 	enum TriggerMidiMapMode {
 		AbletonPush,
 		SequentialNote,
-		ByMidiChannel
+		ByMidiChannel,
+		Custom,
 	};
+
+	/* This is null for TriggerBoxen constructed with DataType::AUDIO */
+	MidiStateTracker* tracker;
+
+	static bool lookup_custom_midi_binding (std::vector<uint8_t> const &, int& x, int& y);
+	static void add_custom_midi_binding (std::vector<uint8_t> const &, int x, int y);
+	static void remove_custom_midi_binding (int x, int y);
+	static void clear_custom_midi_bindings ();
+	static int  save_custom_midi_bindings (std::string const & path);
+	static int  load_custom_midi_bindings (XMLNode const &);
+	static XMLNode* get_custom_midi_binding_state ();
+
+	void begin_midi_learn (int index);
+	void midi_unlearn (int index);
+	void stop_midi_learn ();
 
 	static Temporal::BBT_Offset assumed_trigger_duration () { return _assumed_trigger_duration; }
 	static void set_assumed_trigger_duration (Temporal::BBT_Offset const &);
@@ -603,24 +835,29 @@ class LIBARDOUR_API TriggerBox : public Processor
 	static void set_first_midi_note (int n);
 
 	static void init ();
+	static void static_init (Session&);
+	static void begin_process_cycle ();
 
 	static TriggerBoxThread* worker;
 
 	static void start_transport_stop (Session&);
 
+	static PBD::PropertyChange all_trigger_props();
+
+	void dump (std::ostream &) const;
+
   private:
 	struct Requests {
 		std::atomic<bool> stop_all;
-		std::atomic<bool> pass_thru;
 
-		Requests () : stop_all (false), pass_thru (false) {}
+		Requests () : stop_all (false) {}
 	};
 
 	static Temporal::BBT_Offset _assumed_trigger_duration;
 
 	DataType _data_type;
 	int32_t _order;
-	Glib::Threads::RWLock trigger_lock; /* protects all_triggers */
+	mutable Glib::Threads::RWLock trigger_lock; /* protects all_triggers */
 	Triggers all_triggers;
 
 	typedef std::vector<Trigger*> PendingTriggers;
@@ -630,10 +867,11 @@ class LIBARDOUR_API TriggerBox : public Processor
 	TriggerPtr               _currently_playing;
 	Requests                 _requests;
 	bool                     _stop_all;
-	bool                     _pass_thru;
 	int32_t                  _active_scene;
-
-	boost::shared_ptr<SideChain> _sidechain;
+	int32_t                  _active_slots;
+	bool                     _locate_armed;
+	bool                     _cancel_locate_armed;
+	bool                     _fast_forwarding;
 
 	PBD::PCGRand _pcg;
 
@@ -647,13 +885,8 @@ class LIBARDOUR_API TriggerBox : public Processor
 
 	void maybe_swap_pending (uint32_t);
 
-	int note_to_trigger (int node, int channel);
-
-	void note_on (int note_number, int velocity);
-	void note_off (int note_number, int velocity);
-
-	void reconnect_to_default ();
 	void parameter_changed (std::string const &);
+	static void static_parameter_changed (std::string const &);
 
 	static int _first_midi_note;
 	static TriggerMidiMapMode _midi_map_mode;
@@ -676,7 +909,7 @@ class LIBARDOUR_API TriggerBox : public Processor
 
 		Request (Type t) : type (t) {}
 
-		static MultiAllocSingleReleasePool* pool;
+		static PBD::MultiAllocSingleReleasePool* pool;
 		static void init_pool();
 
 		void* operator new (size_t);
@@ -691,11 +924,32 @@ class LIBARDOUR_API TriggerBox : public Processor
 
 	void reload (BufferSet& bufs, int32_t slot, void* ptr);
 
+	void cancel_locate_armed ();
+	void fast_forward_nothing_to_do ();
+	int handle_stopped_trigger (BufferSet& bufs, pframes_t dest_offset);
+
 	PBD::ScopedConnection stop_all_connection;
+
+	typedef  std::map<std::vector<uint8_t>,std::pair<int,int> > CustomMidiMap;
+	static CustomMidiMap _custom_midi_map;
+
+	static void midi_input_handler (MIDI::Parser&, MIDI::byte*, size_t, samplecnt_t);
+	static std::shared_ptr<MIDI::Parser> input_parser;
+	static PBD::ScopedConnection midi_input_connection;
+	static void input_port_check ();
+	static PBD::ScopedConnectionList static_connections;
+	static std::shared_ptr<MidiPort> current_input;
+
+	static bool _learning;
+	static std::pair<int,int> learning_for;
+	static PBD::Signal0<void> TriggerMIDILearned;
 
 	static void init_pool();
 
 	static std::atomic<int> active_trigger_boxes;
+	static std::atomic<bool> _cue_recording;
+	static bool roll_requested;
+	static void maybe_request_roll (Session&);
 };
 
 class TriggerReference
@@ -704,7 +958,7 @@ public:
 	TriggerReference () : box (0), slot (0) {}
 	TriggerReference (ARDOUR::TriggerBox& b, uint32_t s) : box (&b), slot (s) {}
 
-	boost::shared_ptr<ARDOUR::Trigger> trigger() const { assert (box); return box->trigger (slot); }
+	std::shared_ptr<ARDOUR::Trigger> trigger() const { assert (box); return box->trigger (slot); }
 
 	ARDOUR::TriggerBox* box;
 	uint32_t            slot;
@@ -712,7 +966,6 @@ public:
 
 namespace Properties {
 	LIBARDOUR_API extern PBD::PropertyDescriptor<bool> running;
-	LIBARDOUR_API extern PBD::PropertyDescriptor<bool> passthru;
 	LIBARDOUR_API extern PBD::PropertyDescriptor<bool> legato;
 	LIBARDOUR_API extern PBD::PropertyDescriptor<bool> use_follow_length;
 	LIBARDOUR_API extern PBD::PropertyDescriptor<Temporal::BBT_Offset> quantization;
@@ -726,8 +979,13 @@ namespace Properties {
 	LIBARDOUR_API extern PBD::PropertyDescriptor<float> velocity_effect;
 	LIBARDOUR_API extern PBD::PropertyDescriptor<gain_t> gain;
 	LIBARDOUR_API extern PBD::PropertyDescriptor<uint32_t> currently_playing;
+	LIBARDOUR_API extern PBD::PropertyDescriptor<uint32_t> queued;
 	LIBARDOUR_API extern PBD::PropertyDescriptor<bool> stretchable;
-	LIBARDOUR_API extern PBD::PropertyDescriptor<bool> isolated;
+	LIBARDOUR_API extern PBD::PropertyDescriptor<bool> cue_isolated;
+	LIBARDOUR_API extern PBD::PropertyDescriptor<bool> allow_patch_changes;
+	LIBARDOUR_API extern PBD::PropertyDescriptor<bool> patch_change; /* type not important */
+	LIBARDOUR_API extern PBD::PropertyDescriptor<bool> channel_map; /* type not important */
+	LIBARDOUR_API extern PBD::PropertyDescriptor<bool> used_channels; /* type not important */
 
 	LIBARDOUR_API extern PBD::PropertyDescriptor<bool> tempo_meter; /* only used to transmit changes, not storage */
 }

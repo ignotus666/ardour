@@ -28,7 +28,7 @@ using namespace ARDOUR;
 using namespace PBD;
 
 static ControlProtocol*
-new_wiimote_protocol (ControlProtocolDescriptor*, Session* s)
+new_wiimote_protocol (Session* s)
 {
 	WiimoteControlProtocol* wmcp = new WiimoteControlProtocol (*s);
 	wmcp->set_active (true);
@@ -36,34 +36,20 @@ new_wiimote_protocol (ControlProtocolDescriptor*, Session* s)
 }
 
 static void
-delete_wiimote_protocol (ControlProtocolDescriptor* /*descriptor*/, ControlProtocol* cp)
+delete_wiimote_protocol (ControlProtocol* cp)
 {
 	delete cp;
 }
 
-static bool
-probe_wiimote_protocol (ControlProtocolDescriptor*)
-{
-	return WiimoteControlProtocol::probe ();
-}
-static void*
-wiimote_request_buffer_factory (uint32_t num_requests)
-{
-	return WiimoteControlProtocol::request_factory (num_requests);
-}
-
-
 static ControlProtocolDescriptor wiimote_descriptor = {
-	name : "Wiimote",
-	id : "uri://ardour.org/surfaces/wiimote:0",
-	ptr : 0,
-	module : 0,
-	mandatory : 0,
-	supports_feedback : false,
-	probe : probe_wiimote_protocol,
-	initialize : new_wiimote_protocol,
-	destroy : delete_wiimote_protocol,
-	request_buffer_factory : wiimote_request_buffer_factory
+	/* name       */ "Wiimote",
+	/* id         */ "uri://ardour.org/surfaces/wiimote:0",
+	/* module     */ 0,
+	/* available  */ 0,
+	/* probe_port */ 0,
+	/* match usb  */ 0,
+	/* initialize */ new_wiimote_protocol,
+	/* destroy    */ delete_wiimote_protocol,
 };
 
 extern "C" ARDOURSURFACE_API ControlProtocolDescriptor* protocol_descriptor () { return &wiimote_descriptor; }

@@ -48,12 +48,15 @@ class LIBARDOUR_API ControlProtocolInfo {
 		std::string name;
 		std::string path;
 		bool requested;
-		bool mandatory;
-		bool supports_feedback;
+		bool automatic;
 		XMLNode* state;
 
-		ControlProtocolInfo() : descriptor (0), protocol (0), requested(false),
-		mandatory(false), supports_feedback(false), state (0)
+		ControlProtocolInfo()
+			: descriptor (0)
+			, protocol (0)
+			, requested (false)
+			, automatic (false)
+			, state (0)
 	{}
 		~ControlProtocolInfo();
 
@@ -69,10 +72,10 @@ class LIBARDOUR_API ControlProtocolManager : public PBD::Stateful, public ARDOUR
 	void set_session (Session*);
 	void discover_control_protocols ();
 	void foreach_known_protocol (boost::function<void(const ControlProtocolInfo*)>);
-	void load_mandatory_protocols ();
 	void midi_connectivity_established ();
 	void drop_protocols ();
-	void register_request_buffer_factories ();
+	void probe_midi_control_protocols ();
+	void probe_usb_control_protocols (bool, uint16_t, uint16_t);
 
 	int activate (ControlProtocolInfo&);
         int deactivate (ControlProtocolInfo&);
@@ -82,7 +85,7 @@ class LIBARDOUR_API ControlProtocolManager : public PBD::Stateful, public ARDOUR
 	static const std::string state_node_name;
 
 	int set_state (const XMLNode&, int version);
-	XMLNode& get_state (void);
+	XMLNode& get_state () const;
 
         PBD::Signal1<void,ControlProtocolInfo*> ProtocolStatusChange;
 
@@ -93,7 +96,7 @@ class LIBARDOUR_API ControlProtocolManager : public PBD::Stateful, public ARDOUR
 	ControlProtocolManager ();
 	static ControlProtocolManager* _instance;
 
-	Glib::Threads::RWLock protocols_lock;
+	mutable Glib::Threads::RWLock protocols_lock;
 	std::list<ControlProtocol*>    control_protocols;
 
 	void session_going_away ();

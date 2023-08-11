@@ -45,7 +45,7 @@ namespace PBD {
 
 
 //#include "midi_byte_array.h"
-#include "types.h"
+#include "control_protocol/types.h"
 
 #include "glibmm/main.h"
 
@@ -83,13 +83,7 @@ class CC121 : public ARDOUR::ControlProtocol, public AbstractUI<CC121Request> {
 
 	int set_active (bool yn);
 
-	/* we probe for a device when our ports are connected. Before that,
-	   there's no way to know if the device exists or not.
-	 */
-	static bool probe() { return true; }
-	static void* request_factory (uint32_t);
-
-	XMLNode& get_state ();
+	XMLNode& get_state () const;
 	int set_state (const XMLNode&, int version);
 
 	bool has_editor () const { return true; }
@@ -109,8 +103,8 @@ class CC121 : public ARDOUR::ControlProtocol, public AbstractUI<CC121Request> {
 
 	PBD::Signal0<void> ConnectionChange;
 
-	boost::shared_ptr<ARDOUR::Port> input_port();
-	boost::shared_ptr<ARDOUR::Port> output_port();
+	std::shared_ptr<ARDOUR::Port> input_port();
+	std::shared_ptr<ARDOUR::Port> output_port();
 
 	enum ButtonID {
 		Rec = 0x00,
@@ -160,29 +154,31 @@ class CC121 : public ARDOUR::ControlProtocol, public AbstractUI<CC121Request> {
 	void set_action (ButtonID, std::string const& action_name, bool on_press, CC121::ButtonState = ButtonState (0));
 	std::string get_action (ButtonID, bool on_press, CC121::ButtonState = ButtonState (0));
 
-	std::list<boost::shared_ptr<ARDOUR::Bundle> > bundles ();
+	std::list<std::shared_ptr<ARDOUR::Bundle> > bundles ();
+
+	CONTROL_PROTOCOL_THREADS_NEED_TEMPO_MAP_DECL();
 
   private:
-	boost::shared_ptr<ARDOUR::Stripable> _current_stripable;
-	boost::weak_ptr<ARDOUR::Stripable> pre_master_stripable;
-	boost::weak_ptr<ARDOUR::Stripable> pre_monitor_stripable;
+	std::shared_ptr<ARDOUR::Stripable> _current_stripable;
+	std::weak_ptr<ARDOUR::Stripable> pre_master_stripable;
+	std::weak_ptr<ARDOUR::Stripable> pre_monitor_stripable;
 
-	boost::shared_ptr<ARDOUR::AsyncMIDIPort> _input_port;
-	boost::shared_ptr<ARDOUR::AsyncMIDIPort> _output_port;
+	std::shared_ptr<ARDOUR::AsyncMIDIPort> _input_port;
+	std::shared_ptr<ARDOUR::AsyncMIDIPort> _output_port;
 
 	// Bundle to represent our input ports
-	boost::shared_ptr<ARDOUR::Bundle> _input_bundle;
+	std::shared_ptr<ARDOUR::Bundle> _input_bundle;
 	// Bundle to represent our output ports
-	boost::shared_ptr<ARDOUR::Bundle> _output_bundle;
+	std::shared_ptr<ARDOUR::Bundle> _output_bundle;
 
 	PBD::ScopedConnectionList midi_connections;
 
-	bool midi_input_handler (Glib::IOCondition ioc, boost::shared_ptr<ARDOUR::AsyncMIDIPort> port);
+	bool midi_input_handler (Glib::IOCondition ioc, std::shared_ptr<ARDOUR::AsyncMIDIPort> port);
 
 	mutable void *gui;
 	void build_gui ();
 
-	bool connection_handler (boost::weak_ptr<ARDOUR::Port>, std::string name1, boost::weak_ptr<ARDOUR::Port>, std::string name2, bool yn);
+	bool connection_handler (std::weak_ptr<ARDOUR::Port>, std::string name1, std::weak_ptr<ARDOUR::Port>, std::string name2, bool yn);
 	PBD::ScopedConnection port_connection;
 
 	enum ConnectionState {
@@ -232,7 +228,7 @@ class CC121 : public ARDOUR::ControlProtocol, public AbstractUI<CC121Request> {
 		void set_action (boost::function<void()> function, bool on_press, CC121::ButtonState = ButtonState (0));
 		std::string get_action (bool press, CC121::ButtonState bs = ButtonState (0));
 
-		void set_led_state (boost::shared_ptr<MIDI::Port>, bool onoff);
+		void set_led_state (std::shared_ptr<MIDI::Port>, bool onoff);
 		void invoke (ButtonState bs, bool press);
 		bool uses_flash () const { return flash; }
 		void set_flash (bool yn) { flash = yn; }
@@ -293,7 +289,7 @@ class CC121 : public ARDOUR::ControlProtocol, public AbstractUI<CC121Request> {
 	void start_blinking (ButtonID);
 	void stop_blinking (ButtonID);
 
-	void set_current_stripable (boost::shared_ptr<ARDOUR::Stripable>);
+	void set_current_stripable (std::shared_ptr<ARDOUR::Stripable>);
 	void drop_current_stripable ();
 	void use_master ();
 	void use_monitor ();
@@ -330,7 +326,7 @@ class CC121 : public ARDOUR::ControlProtocol, public AbstractUI<CC121Request> {
 	void jog ();
 	void rec_enable ();
 
-	void set_controllable (boost::shared_ptr<ARDOUR::AutomationControl>, float);
+	void set_controllable (std::shared_ptr<ARDOUR::AutomationControl>, float);
 
 	void punch ();
 };

@@ -86,6 +86,7 @@ TriggerEntry::TriggerEntry (Item* item, TriggerReference tr)
 	follow_button->set_outline (false);
 	follow_button->set_fill (true);
 	follow_button->name = ("slot_selector_button");
+	follow_button->set_tooltip (_("Click to select Follow-Actions for this clip"));
 	follow_button->show ();
 
 	name_button = new ArdourCanvas::Rectangle (this);
@@ -96,6 +97,7 @@ TriggerEntry::TriggerEntry (Item* item, TriggerReference tr)
 
 	name_text = new Text (name_button);
 	name_text->set_ignore_events (false);
+	name_text->set_tooltip (_("Click to select this clip and edit its properties\nRight-Click for context menu"));
 	name_text->show ();
 
 	/* this will trigger a call to on_trigger_changed() */
@@ -180,7 +182,6 @@ TriggerEntry::_size_allocate (ArdourCanvas::Rect const& alloc)
 void
 TriggerEntry::draw_follow_icon (Cairo::RefPtr<Cairo::Context> context, FollowAction const & icon, float size, float scale) const
 {
-	uint32_t bg_color = fill_color ();
 	uint32_t fg_color = UIConfiguration::instance ().color ("neutral:midground");
 
 	/* in the case where there is a random follow-action, just put a "?" */
@@ -210,90 +211,50 @@ TriggerEntry::draw_follow_icon (Cairo::RefPtr<Cairo::Context> context, FollowAct
 			context->arc (size / 2 + size * 0.2, size / 2, 1.5 * scale, 0, 2 * M_PI); // arrow head
 			context->fill ();
 			break;
-		case FollowAction::NextTrigger:
+		case FollowAction::ForwardTrigger:
 			context->move_to (size / 2, 3 * scale);
 			context->line_to (size / 2, size - 5 * scale);
 			context->stroke ();
 			context->arc (size / 2, size - 5 * scale, 2 * scale, 0, 2 * M_PI); // arrow head
 			context->fill ();
 			break;
-		case FollowAction::PrevTrigger:
+		case FollowAction::ReverseTrigger:
 			context->move_to (size / 2, 5 * scale);
 			context->line_to (size / 2, size - 3 * scale);
 			context->stroke ();
 			context->arc (size / 2, 5 * scale, 2 * scale, 0, 2 * M_PI); // arrow head
 			context->fill ();
 			break;
-		case FollowAction::ForwardTrigger:
-			context->move_to (size / 2, 3 * scale);
-			context->line_to (size / 2, size - 3 * scale);
-			context->stroke ();
-
-			context->arc (size / 2, 7 * scale, 2 * scale, 0, 2 * M_PI);
-			set_source_rgba (context, fg_color);
-			context->fill ();
-
-			context->arc (size / 2, 7 * scale, 1 * scale, 0, 2 * M_PI);
-			set_source_rgba (context, fill_color ());
-			context->fill ();
-
-			set_source_rgba (context, fg_color);
-			context->arc (size / 2, size - 3 * scale, 2 * scale, 0, 2 * M_PI); // arrow head
-			context->fill ();
-			break;
-		case FollowAction::ReverseTrigger:
-			context->arc (size / 2, 3 * scale, 2 * scale, 0, 2 * M_PI); // arrow head
-			set_source_rgba (context, fg_color);
-			context->fill ();
-
-			context->move_to (size / 2, 3 * scale);
-			context->line_to (size / 2, size - 3 * scale);
-			context->stroke ();
-
-			context->arc (size / 2, size - 7 * scale, 2 * scale, 0, 2 * M_PI);
-			set_source_rgba (context, fg_color);
-			context->fill ();
-
-			context->arc (size / 2, size - 7 * scale, 1 * scale, 0, 2 * M_PI);
-			set_source_rgba (context, bg_color);
-			context->fill ();
-
-			break;
-		case FollowAction::QueuedTrigger: {
-			Glib::RefPtr<Pango::Layout> layout = Pango::Layout::create (context);
-			layout->set_font_description (UIConfiguration::instance ().get_SmallMonospaceFont ());
-			layout->set_text (icon == FollowAction::AnyTrigger ? "&" : "@");
-			int tw, th;
-			layout->get_pixel_size (tw, th);
-			context->move_to (size / 2, size / 2);
-			context->rel_move_to (-tw / 2, -th / 2);
-			layout->show_in_cairo_context (context);
-		} break;
-		case FollowAction::AnyTrigger: {
-			for (int i = 0; i < 6; i++) {
-				Cairo::Matrix m = context->get_matrix ();
-				context->translate (size / 2, size / 2);
-				context->rotate (i * M_PI / 3);
-				context->move_to (0, 0);
-				context->line_to (0, (size / 2) - 4 * scale);
-				context->stroke ();
-				context->set_matrix (m);
+		case FollowAction::JumpTrigger: {
+			if ( icon.targets.count() == 1 ) {  //Jump to a specific row; just draw the letter of the row we are jumping to
+				int cue_idx = -1;
+				for (int i = 0; i < TriggerBox::default_triggers_per_box; i++) {
+					if (icon.targets.test(i)) {
+						cue_idx = i;
+						break;
+					}
+				}
+				Glib::RefPtr<Pango::Layout> layout = Pango::Layout::create (context);
+				layout->set_font_description (UIConfiguration::instance ().get_SmallMonospaceFont ());
+				layout->set_text (cue_marker_name (cue_idx));
+				int tw, th;
+				layout->get_pixel_size (tw, th);
+				context->move_to (size / 2, size / 2);
+				context->rel_move_to (-tw / 2, -th / 2);
+				layout->show_in_cairo_context (context);
+			} else { // Multi-Jump: draw a star-like icon
+				context->set_line_width (1.5 * scale);
+				set_source_rgba (context, HSV (UIConfiguration::instance ().color ("neutral:midground")).lighter (0.25).color ()); // needs to be brighter to maintain balance
+				for (int i = 0; i < 6; i++) {
+					Cairo::Matrix m = context->get_matrix ();
+					context->translate (size / 2, size / 2);
+					context->rotate (i * M_PI / 3);
+					context->move_to (0, 2 * scale);
+					context->line_to (0, (size / 2) - 4 * scale);
+					context->stroke ();
+					context->set_matrix (m);
+				}
 			}
-			context->set_identity_matrix ();
-		} break;
-		case FollowAction::OtherTrigger: {
-			context->set_line_width (1.5 * scale);
-			set_source_rgba (context, HSV (UIConfiguration::instance ().color ("neutral:midground")).lighter (0.25).color ()); // needs to be brighter to maintain balance
-			for (int i = 0; i < 6; i++) {
-				Cairo::Matrix m = context->get_matrix ();
-				context->translate (size / 2, size / 2);
-				context->rotate (i * M_PI / 3);
-				context->move_to (0, 2 * scale);
-				context->line_to (0, (size / 2) - 4 * scale);
-				context->stroke ();
-				context->set_matrix (m);
-			}
-			context->set_identity_matrix ();
 		} break;
 		case FollowAction::None:
 		default:
@@ -460,7 +421,7 @@ TriggerEntry::render (ArdourCanvas::Rect const& area, Cairo::RefPtr<Cairo::Conte
 
 	render_children (area, context);
 
-	if (trigger ()->scene_isolated ()) {
+	if (trigger ()->cue_isolated ()) {
 		/* left shadow */
 		context->set_identity_matrix ();
 		context->translate (self.x0, self.y0 - 0.5);
@@ -497,7 +458,7 @@ TriggerEntry::render (ArdourCanvas::Rect const& area, Cairo::RefPtr<Cairo::Conte
 		context->set_identity_matrix ();
 		context->translate (self.x0, self.y0 - 0.5);
 		context->translate (width - height, 0); // right side of the widget
-		draw_follow_icon (context, trigger ()->follow_action (0), height, scale);
+		draw_follow_icon (context, trigger ()->follow_action0 (), height, scale);
 		context->set_identity_matrix ();
 	}
 }
@@ -508,8 +469,10 @@ TriggerEntry::on_trigger_changed (PropertyChange const& change)
 	if (change.contains (ARDOUR::Properties::name)) {
 		if (trigger ()->region ()) {
 			name_text->set (short_version (trigger ()->name (), 16));
+			play_button->set_tooltip (_("Launch this clip\nRight-click to select Launch Options for this clip"));
 		} else {
 			name_text->set ("");
+			play_button->set_tooltip (_("Stop other clips on this track.\nRight-click to select Launch Options for this clip"));
 		}
 	}
 
@@ -523,7 +486,7 @@ TriggerEntry::on_trigger_changed (PropertyChange const& change)
 	interesting_stuff.add (ARDOUR::Properties::follow_action1);
 	interesting_stuff.add (ARDOUR::Properties::follow_action_probability);
 	interesting_stuff.add (ARDOUR::Properties::follow_count);
-	interesting_stuff.add (ARDOUR::Properties::isolated);
+	interesting_stuff.add (ARDOUR::Properties::cue_isolated);
 	interesting_stuff.add (ARDOUR::Properties::running);
 
 	if (change.contains (interesting_stuff)) {
@@ -591,15 +554,24 @@ TriggerEntry::name_button_event (GdkEvent* ev)
 			}
 			break;
 		case GDK_BUTTON_PRESS:
-			PublicEditor::instance ().get_selection ().set (this);
 			break;
 		case GDK_2BUTTON_PRESS:
+#if SELECTION_PROPERTIES_BOX_TODO
 			edit_trigger ();
+#endif
 			return true;
 		case GDK_BUTTON_RELEASE:
+			if (Gtkmm2ext::Keyboard::is_delete_event (&ev->button)) {
+				clear_trigger ();
+				return true;
+			}
 			switch (ev->button.button) {
 				case 3:
+					PublicEditor::instance ().get_selection ().set (this);
 					context_menu ();
+					return true;
+				case 1:
+					PublicEditor::instance ().get_selection ().set (this);
 					return true;
 				default:
 					break;
@@ -625,7 +597,6 @@ TriggerEntry::play_button_event (GdkEvent* ev)
 					} else {
 						trigger ()->box ().stop_all_quantized ();
 					}
-					return true;
 				}
 				break;
 			default:
@@ -634,6 +605,7 @@ TriggerEntry::play_button_event (GdkEvent* ev)
 	}
 
 	switch (ev->type) {
+		case GDK_2BUTTON_PRESS:  //need to un-grab in a double-click action
 		case GDK_BUTTON_PRESS:
 			switch (ev->button.button) {
 				case 1:
@@ -645,7 +617,6 @@ TriggerEntry::play_button_event (GdkEvent* ev)
 					} else {
 						trigger ()->bang ();
 					}
-					return true;
 				default:
 					break;
 			}
@@ -679,18 +650,21 @@ TriggerEntry::play_button_event (GdkEvent* ev)
 		default:
 			break;
 	}
-	return false;
+	return true;
 }
 
 bool
 TriggerEntry::follow_button_event (GdkEvent* ev)
 {
 	switch (ev->type) {
+		case GDK_BUTTON_PRESS:
+			return true;  //wait for release to show the menu
+			break;
 		case GDK_BUTTON_RELEASE:
 			switch (ev->button.button) {
+				case 1:
 				case 3:
 					follow_context_menu ();
-					return true;
 				default:
 					break;
 			}
@@ -708,7 +682,7 @@ TriggerEntry::follow_button_event (GdkEvent* ev)
 		default:
 			break;
 	}
-	return false;
+	return true;
 }
 
 bool
@@ -719,12 +693,19 @@ TriggerEntry::event (GdkEvent* ev)
 	}
 
 	switch (ev->type) {
-		case GDK_2BUTTON_PRESS:
-			gdk_pointer_ungrab (GDK_CURRENT_TIME);
-			break;
-
+		case GDK_2BUTTON_PRESS:  //need to un-grab in a double-click action
 		case GDK_BUTTON_RELEASE:
-			gdk_pointer_ungrab (GDK_CURRENT_TIME);
+			if(_grabbed) {
+				ungrab();
+				_grabbed = false;
+				if (ev->type == GDK_BUTTON_RELEASE) {
+					/* Pass event down to child item, as if this item was not grabbed.
+					 * This is needed to select item on release.
+					 */
+					name_button->Event (ev);
+					return true;
+				}
+			}
 			break;
 
 		case GDK_BUTTON_PRESS:
@@ -733,7 +714,8 @@ TriggerEntry::event (GdkEvent* ev)
 				if (bev->button == 1) {
 					_drag_start_x = bev->x;
 					_drag_start_y = bev->y;
-					gdk_pointer_grab (bev->window, false, GdkEventMask (Gdk::POINTER_MOTION_MASK | Gdk::BUTTON_PRESS_MASK | Gdk::BUTTON_RELEASE_MASK), NULL, NULL, bev->time);
+					_grabbed = true;
+					grab();
 					return true;
 				} else {
 					_drag_start_x = -1;
@@ -759,6 +741,7 @@ TriggerEntry::event (GdkEvent* ev)
 					}
 				}
 			}
+			break;
 		default:
 			break;
 	}
@@ -801,7 +784,7 @@ TriggerEntry::drag_begin (Glib::RefPtr<Gdk::DragContext> const& context)
 		/* ctx leaves scope, cr is destroyed, and pixmap surface is flush()ed */
 	}
 
-	boost::shared_ptr<Region> region = trigger ()->region ();
+	std::shared_ptr<Region> region = trigger ()->region ();
 	if (region) {
 		PublicEditor::instance ().pbdid_dragged_dt = region->data_type ();
 	} else {
@@ -828,13 +811,14 @@ TriggerEntry::drag_data_get (Glib::RefPtr<Gdk::DragContext> const&, Gtk::Selecti
 		 */
 		return;
 	}
-	if (data.get_target () != "x-ardour/region.pbdid") {
-		return;
+	if (data.get_target () == "x-ardour/region.pbdid") {
+		std::shared_ptr<Region> region = trigger ()->region ();
+		if (region) {
+			data.set (data.get_target (), region->id ().to_s ());
+		}
 	}
-
-	boost::shared_ptr<Region> region = trigger ()->region ();
-	if (region) {
-		data.set (data.get_target (), region->id ().to_s ());
+	if (data.get_target () == "x-ardour/trigger.pbdid") {
+		data.set (data.get_target (), trigger()->id ().to_s ());
 	}
 }
 
@@ -859,11 +843,13 @@ TriggerBoxUI::TriggerBoxUI (ArdourCanvas::Item* parent, TriggerBox& tb)
 
 	if (!_dnd_src) {
 		std::vector<Gtk::TargetEntry> source_table;
+		source_table.push_back (Gtk::TargetEntry ("x-ardour/trigger.pbdid", Gtk::TARGET_SAME_APP));
 		source_table.push_back (Gtk::TargetEntry ("x-ardour/region.pbdid", Gtk::TARGET_SAME_APP));
 		_dnd_src = Gtk::TargetList::create (source_table);
 	}
 
 	std::vector<Gtk::TargetEntry> target_table;
+	target_table.push_back (Gtk::TargetEntry ("x-ardour/trigger.pbdid", Gtk::TARGET_SAME_APP));
 	target_table.push_back (Gtk::TargetEntry ("x-ardour/region.pbdid", Gtk::TARGET_SAME_APP));
 	target_table.push_back (Gtk::TargetEntry ("text/uri-list"));
 	target_table.push_back (Gtk::TargetEntry ("text/plain"));
@@ -924,7 +910,7 @@ TriggerBoxUI::_size_allocate (ArdourCanvas::Rect const& alloc)
 	const float width  = alloc.width ();
 	const float height = alloc.height ();
 
-	const float slot_h = height / default_triggers_per_box; // TODO
+	const float slot_h = height / TriggerBox::default_triggers_per_box; // TODO
 
 	float ypos = 0;
 	for (auto& slot : _slots) {
@@ -951,7 +937,13 @@ TriggerBoxUI::slot_at_y (int y) const
 bool
 TriggerBoxUI::drag_motion (Glib::RefPtr<Gdk::DragContext> const& context, int, int y, guint time)
 {
-	bool can_drop = PublicEditor::instance ().pbdid_dragged_dt == _triggerbox.data_type ();
+	bool can_drop = true;
+	GtkCanvas* gtkcanvas = static_cast<GtkCanvas*> (canvas ());
+	std::string target = gtkcanvas->drag_dest_find_target (context, gtkcanvas->drag_dest_get_target_list ());
+
+	if ((target == "x-ardour/region.pbdid") || (target == "x-ardour/trigger.pbdid")) {
+		can_drop = PublicEditor::instance ().pbdid_dragged_dt == _triggerbox.data_type ();
+	}
 
 	uint64_t n = slot_at_y (y);
 	if (n >= _slots.size ()) {
@@ -997,9 +989,25 @@ TriggerBoxUI::drag_data_received (Glib::RefPtr<Gdk::DragContext> const& context,
 
 	if (data.get_target () == "x-ardour/region.pbdid") {
 		PBD::ID                   rid (data.get_data_as_string ());
-		boost::shared_ptr<Region> region = RegionFactory::region_by_id (rid);
+		std::shared_ptr<Region> region = RegionFactory::region_by_id (rid);
 		if (region) {
 			_triggerbox.set_from_selection (n, region);
+			context->drag_finish (true, false, time);
+		} else {
+			context->drag_finish (false, false, time);
+		}
+		return;
+	}
+
+	if (data.get_target () == "x-ardour/trigger.pbdid") {
+		PBD::ID tid (data.get_data_as_string ());
+		std::shared_ptr<Trigger> source = _triggerbox.session().trigger_by_id (tid);
+		if (source) {
+			Trigger::UIState *state = new Trigger::UIState();
+			source->get_ui_state(*state);
+			std::shared_ptr<Trigger::UIState> state_p (state);
+			_triggerbox.enqueue_trigger_state_for_region(source->region(), state_p);
+			_triggerbox.set_from_selection (n, source->region());
 			context->drag_finish (true, false, time);
 		} else {
 			context->drag_finish (false, false, time);
@@ -1012,6 +1020,9 @@ TriggerBoxUI::drag_data_received (Glib::RefPtr<Gdk::DragContext> const& context,
 		for (std::vector<std::string>::iterator s = paths.begin (); s != paths.end (); ++s) {
 			/* this will do nothing if n is too large */
 			_triggerbox.set_from_path (n, *s);
+#if 1 /* assume drop from sidebar -- TODO use a special data.get_target() ? */
+			ARDOUR_UI_UTILS::copy_patch_changes (_triggerbox.session().the_auditioner (), _triggerbox.trigger (n));
+#endif
 			++n;
 		}
 	}

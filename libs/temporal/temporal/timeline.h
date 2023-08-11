@@ -74,6 +74,7 @@ class LIBTEMPORAL_API timepos_t : public int62_t  {
 	bool is_positive () const { return val() > 0; }
 	bool is_negative () const { return val() < 0; }
 	bool is_zero ()     const { return val() == 0; }
+	bool operator! ()   const { return val() == 0; }
 
 	Temporal::TimeDomain time_domain () const { if (flagged()) return Temporal::BeatTime; return Temporal::AudioTime; }
 	void set_time_domain (Temporal::TimeDomain);
@@ -84,6 +85,8 @@ class LIBTEMPORAL_API timepos_t : public int62_t  {
 	Beats        beats() const { if (is_beats()) return Beats::ticks (val()); return _beats (); }
 
 	timepos_t & operator= (timecnt_t const & t); /* will throw() if val is negative */
+	timepos_t & operator= (Beats const & b) { v.store (build (true, b.to_ticks())); return *this; }
+	timepos_t & operator= (samplepos_t const & s) { v.store (build (false, samples_to_superclock (s, TEMPORAL_SAMPLE_RATE))); return *this; }
 
 	timepos_t operator-() const { return timepos_t (int62_t::operator-()); }
 
@@ -105,7 +108,7 @@ class LIBTEMPORAL_API timepos_t : public int62_t  {
 	timepos_t operator+(timecnt_t const & d) const;
 	timepos_t operator+(timepos_t const & d) const { if (is_beats() == d.is_beats()) return timepos_t (is_beats(), val() + d.val()); return expensive_add (d); }
 
-	/* donn't provide operator+(samplepos_t) or operator+(superclock_t)
+	/* don't provide operator+(samplepos_t) or operator+(superclock_t)
 	 * because the compiler can't disambiguate them and neither can we.
 	 * to add such types, create a timepo_t and then add that.
 	 */
@@ -139,22 +142,22 @@ class LIBTEMPORAL_API timepos_t : public int62_t  {
 	 * explicit methods with clear semantics.
 	*/
 
-	/* computes the distance between this timepos_t and @param p
+	/** Compute the distance between this timepos_t and @p p
 	 * such that: this + distance = p
 	 *
-	 * This means that if @param p is later than this, distance is positive;
-	 * if @param p is earlier than this, distance is negative.
-
+	 * This means that if @p p is later than this, distance is positive;
+	 * if @p p is earlier than this, distance is negative.
+	 *
 	 * Note that the return value is a timecnt_t whose position member
 	 * is equal to the value of this. That means if the distance uses
 	 * musical time value, the distance may not have constant value
 	 * at other positions on the timeline.
-	*/
-
-	timecnt_t distance (timecnt_t const & p) const;
+	 *
+	 * @return this - @p p
+	 */
 	timecnt_t distance (timepos_t const & p) const;
 
-	/* computes a new position value that is @param d earlier than this */
+	/* computes a new position value that is @p d earlier than this */
 	timepos_t earlier (timepos_t const & d) const; /* treat d as distance measured from timeline origin */
 	timepos_t earlier (timecnt_t const & d) const;
 
@@ -166,34 +169,46 @@ class LIBTEMPORAL_API timepos_t : public int62_t  {
 
 	timepos_t & shift_earlier (Temporal::BBT_Offset const &);
 
+	/* audio time nominally uses superclocks as its canonical unit. However
+	 * many things at a higher level only understand samples. If we
+	 * increment or decrement a superclock value by 1, the vast majority of
+	 * the time we will still get the same sample value after
+	 * conversion. Thus to correctly alter an audio time by an amount
+	 * that will manifest as 1 sample's difference, we have to use
+	 * samples_to_superclock(1)
+	 */
+
 	/* given the absence of operator- and thus also operator--, return a
 	 * timepos_t that is the previous (earlier) possible position given
 	 * this one
 	 */
-	timepos_t decrement () const { return timepos_t (flagged(), val() > 0 ? val() - 1 : 0); /* cannot go negative */ }
+	timepos_t decrement () const { return timepos_t (flagged(),
+	                                                           is_beats() ?
+	                                                           (val() > 0 ? val() - 1 : 0) :  /* reduce by 1 tick */
+	                                                           (val() > samples_to_superclock (1, TEMPORAL_SAMPLE_RATE) ? val() - samples_to_superclock (1, TEMPORAL_SAMPLE_RATE) : 0)); }
 
 	/* purely for reasons of symmetry with ::decrement(), return a
 	 * timepos_t that is the next (later) possible position given this one
 	 */
-	timepos_t increment () const { return timepos_t (flagged(), val() + 1); }
+	timepos_t increment () const { return timepos_t (flagged(), (is_beats() ? (val() + 1) : (val() + samples_to_superclock (1, TEMPORAL_SAMPLE_RATE)))); }
+
 
 	timepos_t & operator+=(timecnt_t const & d);
 	timepos_t & operator+=(timepos_t const & d);
 
 	timepos_t & operator+=(Temporal::BBT_Offset const &);
 
+#if 0 // not implemented, not used
 	timepos_t   operator% (timecnt_t const &) const;
 	timepos_t & operator%=(timecnt_t const &);
+#endif
 
 	/* Although multiplication and division of positions seems unusual,
 	 * these are used in Evoral::Curve when scaling a list of timed events
 	 * along the x (time) axis.
 	 */
 
-	timepos_t   operator/  (ratio_t const & n) const;
-	timepos_t   operator*  (ratio_t const & n) const;
-	timepos_t & operator/= (ratio_t const & n);
-	timepos_t & operator*= (ratio_t const & n);
+	timepos_t   scale  (ratio_t const & n) const;
 
 	bool operator<  (samplepos_t s) { return samples() < s; }
 	bool operator<  (Temporal::Beats const & b) { return beats() < b; }
@@ -226,7 +241,7 @@ class LIBTEMPORAL_API timepos_t : public int62_t  {
 
 	/* these can only be called after verifying that the time domain does
 	 * not match the relevant one i.e. call _beats() to get a Beats value
-	 * when this is using the audio time doamin
+	 * when this is using the audio time domain
 	 */
 
 	/* these three methods are to be called ONLY when we have already that
@@ -354,8 +369,7 @@ class LIBTEMPORAL_API timecnt_t {
 	timecnt_t operator++ () { _distance += 1; return *this; }
 	timecnt_t operator-- () { _distance -= 1; return *this; }
 
-	timecnt_t operator*(ratio_t const &) const;
-	timecnt_t operator/(ratio_t const &) const;
+	timecnt_t scale (ratio_t const &) const;
 
 	ratio_t operator/ (timecnt_t const &) const;
 
@@ -369,7 +383,17 @@ class LIBTEMPORAL_API timecnt_t {
 	timecnt_t & operator-= (timecnt_t const & t);
 	timecnt_t & operator+= (timecnt_t const & t);
 
-	timecnt_t decrement () const { return timecnt_t (_distance - 1, _position); }
+	/* audio time nominally uses superclocks as its canonical unit. However
+	 * many things at a higher level only understand samples. If we
+	 * increment or decrement a superclock value by 1, the vast majority of
+	 * the time we will still get the same sample value after
+	 * conversion. Thus to correctly alter an audio time by an amount
+	 * that will manifest as 1 sample's difference, we have to use
+	 * samples_to_superclock(1)
+	 */
+
+	timecnt_t decrement () const { return timecnt_t (_distance.flagged() ? _distance - 1 : _distance - samples_to_superclock (1, TEMPORAL_SAMPLE_RATE),  _position); }
+	timecnt_t increment () const { return timecnt_t (_distance.flagged() ? _distance + 1 : _distance + samples_to_superclock (1, TEMPORAL_SAMPLE_RATE),  _position); }
 
 	//timecnt_t operator- (timepos_t const & t) const;
 	//timecnt_t operator+ (timepos_t const & t) const;
@@ -379,7 +403,7 @@ class LIBTEMPORAL_API timecnt_t {
 	bool operator> (timecnt_t const & other) const { if (_distance.flagged() == other.distance().flagged()) return _distance > other.distance (); else return expensive_gt (other); }
 	bool operator>= (timecnt_t const & other) const { if (_distance.flagged() == other.distance().flagged()) return _distance >= other.distance(); else return expensive_gte (other); }
 	bool operator< (timecnt_t const & other) const { if (_distance.flagged() == other.distance().flagged()) return _distance < other.distance(); else return expensive_lt (other); }
-	bool operator<= (timecnt_t const & other) const { if (_distance.flagged() == other.distance().flagged()) return _distance <= other.distance(); else return expensive_gte (other); }
+	bool operator<= (timecnt_t const & other) const { if (_distance.flagged() == other.distance().flagged()) return _distance <= other.distance(); else return expensive_lte (other); }
 
 	timecnt_t & operator= (timecnt_t const & other) {
 		if (this != &other) {

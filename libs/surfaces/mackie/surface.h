@@ -68,6 +68,17 @@ class Led;
 class Surface : public PBD::ScopedConnectionList, public sigc::trackable
 {
 public:
+	enum XTouchColors {
+		Off,
+		Red,
+		Green,
+		Yellow,
+		Blue,
+		Purple,
+		Cyan,
+		White,
+	};
+	
 	Surface (MackieControlProtocol&, const std::string& name, uint32_t number, surface_type_t stype);
 	virtual ~Surface();
 
@@ -99,8 +110,8 @@ public:
 	uint32_t n_strips (bool with_locked_strips = true) const;
 	Strip* nth_strip (uint32_t n) const;
 
-	bool stripable_is_locked_to_strip (boost::shared_ptr<ARDOUR::Stripable>) const;
-	bool stripable_is_mapped (boost::shared_ptr<ARDOUR::Stripable>) const;
+	bool stripable_is_locked_to_strip (std::shared_ptr<ARDOUR::Stripable>) const;
+	bool stripable_is_mapped (std::shared_ptr<ARDOUR::Stripable>) const;
 
 	/// This collection owns the groups
 	typedef std::map<std::string,Group*> Groups;
@@ -108,7 +119,7 @@ public:
 
 	SurfacePort& port() const { return *_port; }
 
-	void map_stripables (const std::vector<boost::shared_ptr<ARDOUR::Stripable> >&);
+	void map_stripables (const std::vector<std::shared_ptr<ARDOUR::Stripable> >&);
 
 	void update_strip_selection ();
 
@@ -189,14 +200,17 @@ public:
 
 	void display_message_for (std::string const& msg, uint64_t msecs);
 
-	bool connection_handler (boost::weak_ptr<ARDOUR::Port>, std::string name1, boost::weak_ptr<ARDOUR::Port>, std::string name2, bool);
+	bool connection_handler (std::weak_ptr<ARDOUR::Port>, std::string name1, std::weak_ptr<ARDOUR::Port>, std::string name2, bool);
 
 	void master_monitor_may_have_changed ();
 
-	XMLNode& get_state ();
+	XMLNode& get_state () const;
 	int set_state (const XMLNode&, int version);
 
 	bool get_qcon_flag() { return is_qcon; }
+
+	void toggle_master_monitor ();
+	bool master_stripable_is_master_monitor ();
 
   private:
 	MackieControlProtocol& _mcp;
@@ -212,7 +226,7 @@ public:
 	PBD::ScopedConnection   master_connection;
 	bool                   _has_master_display;
 	bool                   _has_master_meter;
-	boost::shared_ptr<ARDOUR::Stripable> _master_stripable;
+	std::shared_ptr<ARDOUR::Stripable> _master_stripable;
 	std::string pending_display[2];
 	std::string current_display[2];
 
@@ -242,6 +256,8 @@ public:
 	bool is_qcon;
 
 	MidiByteArray display_line (std::string const& msg, int line_num);
+	MidiByteArray display_colors_on_xtouch (const XTouchColors color_values[]) const;
+	uint8_t convert_color_to_xtouch_value (uint32_t color) const;
 
   public:
 	/* IP MIDI devices need to keep a handle on this and destroy it */

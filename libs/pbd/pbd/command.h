@@ -29,6 +29,8 @@
 #include "pbd/signals.h"
 #include "pbd/statefuldestructible.h"
 
+namespace PBD {
+
 /** Base class for Undo/Redo commands and changesets */
 class LIBPBD_API Command : public PBD::StatefulDestructible, public PBD::ScopedConnectionList
 {
@@ -43,7 +45,7 @@ public:
 	virtual void undo() = 0;
 	virtual void redo() { (*this)(); }
 
-	virtual XMLNode &get_state();
+	virtual XMLNode& get_state() const;
 	virtual int set_state(const XMLNode&, int /*version*/) { /* noop */ return 0; }
 
 	virtual bool empty () const {
@@ -56,5 +58,7 @@ protected:
 
 	std::string _name;
 };
+
+} /* namespace */
 
 #endif // __lib_pbd_command_h_

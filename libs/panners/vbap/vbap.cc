@@ -80,7 +80,7 @@ VBAPanner::Signal::resize_gains (uint32_t n)
 	gains.assign (n, 0.0);
 }
 
-VBAPanner::VBAPanner (boost::shared_ptr<Pannable> p, boost::shared_ptr<Speakers> s)
+VBAPanner::VBAPanner (std::shared_ptr<Pannable> p, std::shared_ptr<Speakers> s)
 	: Panner (p)
 	, _speakers (new VBAPSpeakers (s))
 {
@@ -365,7 +365,7 @@ VBAPanner::distribute_one_automated (AudioBuffer& /*src*/, BufferSet& /*obufs*/,
 }
 
 XMLNode&
-VBAPanner::get_state ()
+VBAPanner::get_state () const
 {
 	XMLNode& node (Panner::get_state ());
 	node.set_property (X_ ("uri"), _descriptor.panner_uri);
@@ -375,7 +375,7 @@ VBAPanner::get_state ()
 }
 
 Panner*
-VBAPanner::factory (boost::shared_ptr<Pannable> p, boost::shared_ptr<Speakers> s)
+VBAPanner::factory (std::shared_ptr<Pannable> p, std::shared_ptr<Speakers> s)
 {
 	return new VBAPanner (p, s);
 }
@@ -393,19 +393,19 @@ VBAPanner::out () const
 }
 
 string
-VBAPanner::value_as_string (boost::shared_ptr<const AutomationControl> ac) const
+VBAPanner::value_as_string (std::shared_ptr<const AutomationControl> ac) const
 {
 	double val = ac->get_value ();
 
 	switch (ac->parameter ().type ()) {
 		case PanAzimuthAutomation: /* direction */
-			return string_compose (_ ("%1\u00B0"), (int(rint (val * 360.0)) + 180) % 360);
+			return string_compose (_ (u8"%1\u00B0"), (int(rint (val * 360.0)) + 180) % 360);
 
 		case PanWidthAutomation: /* diffusion */
 			return string_compose (_ ("%1%%"), (int)floor (100.0 * fabs (val)));
 
 		case PanElevationAutomation: /* elevation */
-			return string_compose (_ ("%1\u00B0"), (int)floor (90.0 * fabs (val)));
+			return string_compose (_ (u8"%1\u00B0"), (int)floor (90.0 * fabs (val)));
 
 		default:
 			return _ ("unused");
@@ -422,7 +422,7 @@ VBAPanner::signal_position (uint32_t n) const
 	return AngularVector ();
 }
 
-boost::shared_ptr<Speakers>
+std::shared_ptr<Speakers>
 VBAPanner::get_speakers () const
 {
 	return _speakers->parent ();

@@ -38,7 +38,7 @@ class IO;
 /** Gain Stage (Fader, Trim).  */
 class LIBARDOUR_API Amp : public Processor {
 public:
-	Amp(Session& s, const std::string& display_name, boost::shared_ptr<GainControl> control, bool control_midi_also);
+	Amp(Session& s, const std::string& display_name, std::shared_ptr<GainControl> control, bool control_midi_also);
 
 	std::string display_name () const { return _display_name; }
 	void set_display_name (const std::string& name) { _display_name = name; }
@@ -54,7 +54,7 @@ public:
 
 	void setup_gain_automation (samplepos_t start_sample, samplepos_t end_sample, samplecnt_t nframes);
 
-	XMLNode& state ();
+	XMLNode& state () const;
 	int set_state (const XMLNode&, int version);
 
 	static gain_t apply_gain (BufferSet& bufs, samplecnt_t sample_rate, samplecnt_t nframes, gain_t initial, gain_t target, bool midi_amp = true);
@@ -63,11 +63,11 @@ public:
 	static gain_t apply_gain (AudioBuffer& buf, samplecnt_t sample_rate, samplecnt_t nframes, gain_t initial, gain_t target, sampleoffset_t offset = 0);
 	static void apply_simple_gain (AudioBuffer& buf, samplecnt_t nframes, gain_t target, sampleoffset_t offset = 0);
 
-	boost::shared_ptr<GainControl> gain_control() {
+	std::shared_ptr<GainControl> gain_control() {
 		return _gain_control;
 	}
 
-	boost::shared_ptr<const GainControl> gain_control() const {
+	std::shared_ptr<const GainControl> gain_control() const {
 		return _gain_control;
 	}
 
@@ -78,7 +78,7 @@ private:
 
 	std::string _display_name;
 
-	boost::shared_ptr<GainControl> _gain_control;
+	std::shared_ptr<GainControl> _gain_control;
 
 	/** Buffer that we should use for gain automation */
 	gain_t* _gain_automation_buffer;

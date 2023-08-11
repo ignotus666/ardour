@@ -20,13 +20,14 @@
 #ifndef playback_buffer_h
 #define playback_buffer_h
 
+#include <atomic>
+#include <cstdint>
 #include <cstring>
-#include <stdint.h>
+
 #include <glibmm.h>
 
 #include "pbd/libpbd_visibility.h"
 #include "pbd/spinlock.h"
-#include "pbd/g_atomic_compat.h"
 
 namespace PBD {
 
@@ -34,13 +35,13 @@ template<class T>
 class /*LIBPBD_API*/ PlaybackBuffer
 {
 public:
-	static guint power_of_two_size (guint sz) {
+	static size_t power_of_two_size (size_t sz) {
 		int32_t power_of_two;
 		for (power_of_two = 1; 1U << power_of_two < sz; ++power_of_two);
 		return 1U << power_of_two;
 	}
 
-	PlaybackBuffer (guint sz, guint res = 8191)
+	PlaybackBuffer (size_t sz, size_t res = 8191)
 	: reservation (res)
 	{
 		sz += reservation;
@@ -48,7 +49,7 @@ public:
 		size_mask = size - 1;
 		buf = new T[size];
 
-		g_atomic_int_set (&read_idx, 0);
+		read_idx.store (0);
 		reset ();
 	}
 
@@ -59,35 +60,35 @@ public:
 	/* init (mlock) */
 	T *buffer () { return buf; }
 	/* init (mlock) */
-	guint bufsize () const { return size; }
+	size_t bufsize () const { return size; }
 
 	/* write-thread */
 	void reset () {
 		/* writer, when seeking, may block */
 		Glib::Threads::Mutex::Lock lm (_reset_lock);
 		SpinLock sl (_reservation_lock);
-		g_atomic_int_set (&read_idx, 0);
-		g_atomic_int_set (&write_idx, 0);
-		g_atomic_int_set (&reserved, 0);
+		read_idx.store (0);
+		write_idx.store (0);
+		reserved.store (0);
 	}
 
 	/* called from rt (reader) thread for new buffers */
 	void align_to (PlaybackBuffer const& other) {
 		Glib::Threads::Mutex::Lock lm (_reset_lock);
-		g_atomic_int_set (&read_idx, g_atomic_int_get (&other.read_idx));
-		g_atomic_int_set (&write_idx, g_atomic_int_get (&other.write_idx));
-		g_atomic_int_set (&reserved, g_atomic_int_get (&other.reserved));
+		read_idx.store (other.read_idx.load());
+		write_idx.store (other.write_idx.load());
+		reserved.store (other.reserved.load());
 		memset (buf, 0, size * sizeof (T));
 	}
 
 	/* write-thread */
-	guint write_space () const {
-		guint w, r;
+	size_t write_space () const {
+		size_t w, r;
 
-		w = g_atomic_int_get (&write_idx);
-		r = g_atomic_int_get (&read_idx);
+		w = write_idx.load ();
+		r = read_idx.load ();
 
-		guint rv;
+		size_t rv;
 
 		if (w > r) {
 			rv = ((r + size) - w) & size_mask;
@@ -110,11 +111,11 @@ public:
 	}
 
 	/* read-thread */
-	guint read_space () const {
-		guint w, r;
+	size_t read_space () const {
+		size_t w, r;
 
-		w = g_atomic_int_get (&write_idx);
-		r = g_atomic_int_get (&read_idx);
+		w = write_idx.load ();
+		r = read_idx.load ();
 
 		if (w > r) {
 			return w - r;
@@ -124,10 +125,10 @@ public:
 	}
 
 	/* write thread */
-	guint overwritable_at (guint r) const {
-		guint w;
+	size_t overwritable_at (size_t r) const {
+		size_t w;
 
-		w = g_atomic_int_get (&write_idx);
+		w = write_idx.load ();
 
 		if (w > r) {
 			return w - r;
@@ -136,46 +137,46 @@ public:
 	}
 
 	/* read-thead */
-	guint read (T *dest, guint cnt, bool commit = true, guint offset = 0);
+	size_t read (T *dest, size_t cnt, bool commit = true, size_t offset = 0);
 
 	/* write-thead */
-	guint write (T const * src, guint cnt);
+	size_t write (T const * src, size_t cnt);
 	/* write-thead */
-	guint write_zero (guint cnt);
+	size_t write_zero (size_t cnt);
 	/* read-thead */
-	guint increment_write_ptr (guint cnt)
+	size_t increment_write_ptr (size_t cnt)
 	{
 		cnt = std::min (cnt, write_space ());
-		g_atomic_int_set (&write_idx, (g_atomic_int_get (&write_idx) + cnt) & size_mask);
+		write_idx.store ((write_idx.load () + cnt) & size_mask);
 		return cnt;
 	}
 
 	/* read-thead */
-	guint decrement_read_ptr (guint cnt)
+	size_t decrement_read_ptr (size_t cnt)
 	{
 		SpinLock sl (_reservation_lock);
-		guint r = g_atomic_int_get (&read_idx);
-		guint res = g_atomic_int_get (&reserved);
+		size_t r = read_idx.load ();
+		size_t res = reserved.load ();
 
 		cnt = std::min (cnt, res);
 
 		r = (r + size - cnt) & size_mask;
 		res -= cnt;
 
-		g_atomic_int_set (&read_idx, r);
-		g_atomic_int_set (&reserved, res);
+		read_idx.store (r);
+		reserved.store (res);
 
 		return cnt;
 	}
 
 	/* read-thead */
-	guint increment_read_ptr (guint cnt)
+	size_t increment_read_ptr (size_t cnt)
 	{
 		cnt = std::min (cnt, read_space ());
 
 		SpinLock sl (_reservation_lock);
-		g_atomic_int_set (&read_idx, (g_atomic_int_get (&read_idx) + cnt) & size_mask);
-		g_atomic_int_set (&reserved, std::min (reservation, g_atomic_int_get (&reserved) + cnt));
+		read_idx.store ((read_idx.load () + cnt) & size_mask);
+		reserved.store (std::min (reservation, reserved.load () + cnt));
 
 		return cnt;
 	}
@@ -183,28 +184,28 @@ public:
 	/* read-thead */
 	bool can_seek (int64_t cnt) {
 		if (cnt > 0) {
-			return read_space() >= cnt;
+			return read_space() >= (size_t) cnt;
 		} else if (cnt < 0) {
-			return g_atomic_int_get (&reserved) >= -cnt;
+			return reserved.load () >= (size_t) -cnt;
 		} else {
 			return true;
 		}
 	}
 
-	guint read_ptr() const { return g_atomic_int_get (&read_idx); }
-	guint write_ptr() const { return g_atomic_int_get (&write_idx); }
-	guint reserved_size() const { return g_atomic_int_get (&reserved); }
-	guint reservation_size() const { return reservation; }
+	size_t read_ptr() const { return read_idx.load (); }
+	size_t write_ptr() const { return write_idx.load (); }
+	size_t reserved_size() const { return reserved.load (); }
+	size_t reservation_size() const { return reservation; }
 
 private:
 	T *buf;
-	const guint reservation;
-	guint size;
-	guint size_mask;
+	const size_t reservation;
+	size_t size;
+	size_t size_mask;
 
-	mutable GATOMIC_QUAL gint write_idx;
-	mutable GATOMIC_QUAL gint read_idx;
-	mutable GATOMIC_QUAL gint reserved;
+	mutable std::atomic<size_t> write_idx;
+	mutable std::atomic<size_t> read_idx;
+	mutable std::atomic<size_t> reserved;
 
 	/* spinlock will be used to update write_idx and reserved in sync */
 	spinlock_t _reservation_lock;
@@ -212,20 +213,20 @@ private:
 	Glib::Threads::Mutex _reset_lock;
 };
 
-template<class T> /*LIBPBD_API*/ guint
-PlaybackBuffer<T>::write (T const *src, guint cnt)
+template<class T> /*LIBPBD_API*/ size_t
+PlaybackBuffer<T>::write (T const *src, size_t cnt)
 {
-	guint w = g_atomic_int_get (&write_idx);
-	const guint free_cnt = write_space ();
+	size_t w = write_idx.load ();
+	const size_t free_cnt = write_space ();
 
 	if (free_cnt == 0) {
 		return 0;
 	}
 
-	const guint to_write = cnt > free_cnt ? free_cnt : cnt;
-	const guint cnt2 = w + to_write;
+	const size_t to_write = cnt > free_cnt ? free_cnt : cnt;
+	const size_t cnt2 = w + to_write;
 
-	guint n1, n2;
+	size_t n1, n2;
 	if (cnt2 > size) {
 		n1 = size - w;
 		n2 = cnt2 & size_mask;
@@ -242,24 +243,24 @@ PlaybackBuffer<T>::write (T const *src, guint cnt)
 		w = n2;
 	}
 
-	g_atomic_int_set (&write_idx, w);
+	write_idx.store (w);
 	return to_write;
 }
 
-template<class T> /*LIBPBD_API*/ guint
-PlaybackBuffer<T>::write_zero (guint cnt)
+template<class T> /*LIBPBD_API*/ size_t
+PlaybackBuffer<T>::write_zero (size_t cnt)
 {
-	guint w = g_atomic_int_get (&write_idx);
-	const guint free_cnt = write_space ();
+	size_t w = write_idx.load ();
+	const size_t free_cnt = write_space ();
 
 	if (free_cnt == 0) {
 		return 0;
 	}
 
-	const guint to_write = cnt > free_cnt ? free_cnt : cnt;
-	const guint cnt2 = w + to_write;
+	const size_t to_write = cnt > free_cnt ? free_cnt : cnt;
+	const size_t cnt2 = w + to_write;
 
-	guint n1, n2;
+	size_t n1, n2;
 	if (cnt2 > size) {
 		n1 = size - w;
 		n2 = cnt2 & size_mask;
@@ -276,12 +277,12 @@ PlaybackBuffer<T>::write_zero (guint cnt)
 		w = n2;
 	}
 
-	g_atomic_int_set (&write_idx, w);
+	write_idx.store (w);
 	return to_write;
 }
 
-template<class T> /*LIBPBD_API*/ guint
-PlaybackBuffer<T>::read (T *dest, guint cnt, bool commit, guint offset)
+template<class T> /*LIBPBD_API*/ size_t
+PlaybackBuffer<T>::read (T *dest, size_t cnt, bool commit, size_t offset)
 {
 	Glib::Threads::Mutex::Lock lm (_reset_lock, Glib::Threads::TRY_LOCK);
 	if (!lm.locked ()) {
@@ -289,10 +290,10 @@ PlaybackBuffer<T>::read (T *dest, guint cnt, bool commit, guint offset)
 		return 0;
 	}
 
-	guint r = g_atomic_int_get (&read_idx);
-	const guint w = g_atomic_int_get (&write_idx);
+	size_t r = read_idx.load ();
+	const size_t w = write_idx.load ();
 
-	guint free_cnt = (w > r) ? (w - r) : ((w - r + size) & size_mask);
+	size_t free_cnt = (w > r) ? (w - r) : ((w - r + size) & size_mask);
 
 	if (!commit && offset > 0) {
 		if (offset > free_cnt) {
@@ -302,11 +303,11 @@ PlaybackBuffer<T>::read (T *dest, guint cnt, bool commit, guint offset)
 		r = (r + offset) & size_mask;
 	}
 
-	const guint to_read = cnt > free_cnt ? free_cnt : cnt;
+	const size_t to_read = cnt > free_cnt ? free_cnt : cnt;
 
-	const guint cnt2 = r + to_read;
+	const size_t cnt2 = r + to_read;
 
-	guint n1, n2;
+	size_t n1, n2;
 	if (cnt2 > size) {
 		n1 = size - r;
 		n2 = cnt2 & size_mask;
@@ -325,8 +326,8 @@ PlaybackBuffer<T>::read (T *dest, guint cnt, bool commit, guint offset)
 
 	if (commit) {
 		SpinLock sl (_reservation_lock);
-		g_atomic_int_set (&read_idx, r);
-		g_atomic_int_set (&reserved, std::min (reservation, g_atomic_int_get (&reserved) + to_read));
+		read_idx.store (r);
+		reserved.store (std::min (reservation, reserved.load () + to_read));
 	}
 	return to_read;
 }

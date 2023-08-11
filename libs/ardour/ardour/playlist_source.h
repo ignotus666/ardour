@@ -19,9 +19,8 @@
 #ifndef __ardour_playlist_source_h__
 #define __ardour_playlist_source_h__
 
+#include <memory>
 #include <string>
-
-#include <boost/shared_ptr.hpp>
 
 #include "ardour/ardour.h"
 #include "ardour/source.h"
@@ -35,24 +34,24 @@ public:
 	virtual ~PlaylistSource ();
 
 	int set_state (const XMLNode&, int version);
-	boost::shared_ptr<const Playlist> playlist() const { return _playlist; }
+	std::shared_ptr<const Playlist> playlist() const { return _playlist; }
 	const PBD::ID& original() const { return _original; }
 	const PBD::ID& owner() const { return _owner; }
 
 	void set_owner (PBD::ID const & id);
 
 protected:
-	boost::shared_ptr<Playlist> _playlist;
+	std::shared_ptr<Playlist> _playlist;
 	PBD::ID                     _original;
 	PBD::ID                     _owner;
 	timepos_t                   _playlist_offset;
 	timepos_t                   _playlist_length;
 
-	PlaylistSource (Session&, const PBD::ID&, const std::string& name, boost::shared_ptr<Playlist>, DataType,
+	PlaylistSource (Session&, const PBD::ID&, const std::string& name, std::shared_ptr<Playlist>, DataType,
 	                timepos_t const & begin, timepos_t const & len, Source::Flag flags);
 	PlaylistSource (Session&, const XMLNode&);
 
-	void add_state (XMLNode&);
+	void add_state (XMLNode&) const;
 };
 
 } /* namespace */

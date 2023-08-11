@@ -61,7 +61,7 @@ bool MonoPanner::have_colors = false;
 Pango::AttrList MonoPanner::panner_font_attributes;
 bool            MonoPanner::have_font = false;
 
-MonoPanner::MonoPanner (boost::shared_ptr<ARDOUR::PannerShell> p)
+MonoPanner::MonoPanner (std::shared_ptr<ARDOUR::PannerShell> p)
 	: PannerInterface (p->panner())
 	, _panner_shell (p)
 	, position_control (_panner->pannable()->pan_azimuth_control)
@@ -113,7 +113,7 @@ MonoPanner::set_tooltip ()
 		 This is expressed as a pair of percentage values that ranges from (100,0)
 		 (hard left) through (50,50) (hard center) to (0,100) (hard right).
 
-		 This is pretty wierd, but its the way audio engineers expect it. Just remember that
+		 This is pretty weird, but its the way audio engineers expect it. Just remember that
 		 the center of the USA isn't Kansas, its (50LA, 50NY) and it will all make sense.
 		 */
 
@@ -207,7 +207,7 @@ MonoPanner::on_expose_event (GdkEventExpose*)
 
 	/* right box */
 	rounded_right_half_rectangle (context,
-			right - half_lr_box - .5,
+			right - half_lr_box + .5,
 			half_lr_box + step_down,
 			lr_box_size, lr_box_size, corner_radius);
 	context->set_source_rgba (UINT_RGBA_R_FLT(f), UINT_RGBA_G_FLT(f), UINT_RGBA_B_FLT(f), UINT_RGBA_A_FLT(f));
@@ -420,7 +420,7 @@ MonoPanner::on_motion_notify_event (GdkEventMotion* ev)
 	double delta = (ev->x - last_drag_x) / (double) w;
 
 	/* create a detent close to the center, at approx 1/180 deg */
-	if (!detented && fabsf (position_control->get_value() - .5f) < 0.006f) {
+	if (!detented && fabs (position_control->get_value() - .5) < 0.006) {
 		detented = true;
 		/* snap to center */
 		position_control->set_value (0.5, Controllable::NoGroup);

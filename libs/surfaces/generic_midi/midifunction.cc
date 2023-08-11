@@ -26,6 +26,8 @@
 #include "pbd/compose.h"
 
 #include "ardour/debug.h"
+#include "ardour/stripable.h"
+#include "ardour/session.h"
 
 using namespace MIDI;
 using namespace PBD;
@@ -73,11 +75,26 @@ MIDIFunction::setup (GenericMidiControlProtocol& ui, const std::string& invokabl
 			return -1;
 		}
 		_function = SetBank;
-	} else if (strcasecmp (_invokable_name.c_str(), "select") == 0) {
+	} else if (strcasecmp (_invokable_name.c_str(), "select") == 0 || strcasecmp (_invokable_name.c_str(), "select-set") == 0) {
 		if (_argument.empty()) {
 			return -1;
 		}
-		_function = Select;
+		_function = SelectSet;
+	} else if (strcasecmp (_invokable_name.c_str(), "select-remove") == 0) {
+		if (_argument.empty()) {
+			return -1;
+		}
+		_function = SelectRemove;
+	} else if (strcasecmp (_invokable_name.c_str(), "select-add") == 0) {
+		if (_argument.empty()) {
+			return -1;
+		}
+		_function = SelectAdd;
+	} else if (strcasecmp (_invokable_name.c_str(), "select-toggle") == 0) {
+		if (_argument.empty()) {
+			return -1;
+		}
+		_function = SelectToggle;
 	} else if (strcasecmp (_invokable_name.c_str(), "track-set-solo") == 0) {
 		if (_argument.empty()) {
 			return -1;
@@ -163,15 +180,39 @@ MIDIFunction::execute ()
 		DEBUG_TRACE (DEBUG::GenericMidi, "Function: set_record_enable = false\n");
 		break;
 
-	case Select:
+	case SelectSet:
 		if (!_argument.empty()) {
 			uint32_t rid;
 			sscanf (_argument.c_str(), "%d", &rid);
-			// XX fix me ... need to get stripable, not RID
-			//_ui->toggle_selection (rid, ARDOUR::PresentationInfo::Flag (ARDOUR::PresentationInfo::Route|ARDOUR::PresentationInfo::VCA));
-			DEBUG_TRACE (DEBUG::GenericMidi, string_compose ("Function: SetRouteSelection = %1\n", rid));
+			_ui->set_rid_selection (rid);
+			DEBUG_TRACE (DEBUG::GenericMidi, string_compose ("Function: SelectSet = %1\n", rid));
 		}
 		break;
+	case SelectAdd:
+		if (!_argument.empty()) {
+			uint32_t rid;
+			sscanf (_argument.c_str(), "%d", &rid);
+			_ui->add_rid_to_selection (rid);
+			DEBUG_TRACE (DEBUG::GenericMidi, string_compose ("Function: SelectAdd = %1\n", rid));
+		}
+		break;
+	case SelectRemove:
+		if (!_argument.empty()) {
+			uint32_t rid;
+			sscanf (_argument.c_str(), "%d", &rid);
+			_ui->remove_rid_from_selection (rid);
+			DEBUG_TRACE (DEBUG::GenericMidi, string_compose ("Function: SelectRemove = %1\n", rid));
+		}
+		break;
+	case SelectToggle:
+		if (!_argument.empty()) {
+			uint32_t rid;
+			sscanf (_argument.c_str(), "%d", &rid);
+			_ui->toggle_rid_selection (rid);
+			DEBUG_TRACE (DEBUG::GenericMidi, string_compose ("Function: SelectToggle = %1\n", rid));
+		}
+		break;
+
 	case TrackSetMute:
 		break;
 	case TrackSetSolo:
@@ -188,7 +229,7 @@ MIDIFunction::execute ()
 }
 
 XMLNode&
-MIDIFunction::get_state ()
+MIDIFunction::get_state () const
 {
 
 	XMLNode* node = new XMLNode ("MIDIFunction");

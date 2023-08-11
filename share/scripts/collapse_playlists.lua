@@ -12,7 +12,6 @@ function factory (params) return function ()
 	-- prepare undo operation
 	-- see http://manual.ardour.org/lua-scripting/class_reference/#ARDOUR:Session
 	Session:begin_reversible_command ("Collapse Playlists")
-	local add_undo = false -- keep track if something has changed
 
 	-- Track/Bus Selection -- iterate over all Editor-GUI selected tracks
 	-- http://manual.ardour.org/lua-scripting/class_reference/#ArdourUI:TrackSelection
@@ -40,25 +39,19 @@ function factory (params) return function ()
 				-- for each region of the playlist
 				for r in p:region_list():iter() do
 					-- add it to the current playlist
-					playlist:add_region (r, r:position(), 1, false, 0, 0, false)
+					playlist:add_region (r, r:position(), 1, false)
 				end
 			end
 		end
 
 		-- collect undo data
-		if not Session:add_stateful_diff_command (playlist:to_statefuldestructible()):empty() then
-			-- is something has changed, we need to save it at the end.
-			add_undo = true
-		end
+		Session:add_stateful_diff_command (playlist:to_statefuldestructible())
 
 		::continue::
 	end
 
 	-- all done, commit the combined Undo Operation
-	if add_undo then
-		-- the 'nil' Command here mean to use the collected diffs added above
+	if not Session:abort_empty_reversible_command () then
 		Session:commit_reversible_command (nil)
-	else
-		Session:abort_reversible_command ()
 	end
 end end

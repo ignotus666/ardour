@@ -18,6 +18,8 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+#include <cmath>
+
 #include "canvas/line_set.h"
 
 using namespace std;
@@ -55,23 +57,29 @@ LineSet::compute_bounding_box () const
 
 		if (_orientation == Horizontal) {
 
-			_bounding_box = Rect (0, /* x0 */
-					      _lines.front().pos - (_lines.front().width/2.0), /* y0 */
-					      _extent, /* x1 */
-					      _lines.back().pos - (_lines.back().width/2.0) /* y1 */
-				);
+			double y0 = _lines.front().pos - (_lines.front().width/2.0);
+			double y1 = _lines.back().pos - (_lines.back().width/2.0);
+
+			if (fmod (_lines.front().width, 2.)) {
+				y0 -= _lines.front().width * 0.5;
+			}
+
+			_bounding_box = Rect (0, y0, _extent, y1);
 
 		} else {
 
-			_bounding_box = Rect (_lines.front().pos - _lines.front().width/2.0, /* x0 */
-					      0, /* y0 */
-					      _lines.back().pos + _lines.back().width/2.0, /* x1 */
-					      _extent /* y1 */
-				);
+			double x0 = _lines.front().pos - _lines.front().width/2.0;
+			double x1 = _lines.back().pos + _lines.back().width/2.0;
+
+			if (fmod (_lines.front().width, 2.)) {
+				x0 -= _lines.front().width * 0.5;
+			}
+
+			_bounding_box = Rect (x0, 0, x1, _extent);
 		}
 	}
 
-	bb_clean ();
+	set_bbox_clean ();
 }
 
 void
@@ -80,7 +88,7 @@ LineSet::set_extent (Distance e)
 	begin_change ();
 
 	_extent = e;
-	_bounding_box_dirty = true;
+	set_bbox_dirty ();
 
 	end_change ();
 }
@@ -90,16 +98,24 @@ LineSet::render (Rect const & area, Cairo::RefPtr<Cairo::Context> context) const
 {
 	/* area is in window coordinates */
 
-	for (vector<Line>::const_iterator i = _lines.begin(); i != _lines.end(); ++i) {
+	for (auto const & l : _lines) {
 
 		Rect self;
+		const double shift = 0.5;
 
 		if (_orientation == Horizontal) {
-			self = item_to_window (Rect (0, i->pos - (i->width/2.0), _extent, i->pos + (i->width/2.0)));
+			self = Rect (0, l.pos - (l.width/2.0), _extent, l.pos + (l.width/2.0));
+			if (fmod (l.width, 2.)) {
+				self.y0 -= shift;
+			}
 		} else {
-			self = item_to_window (Rect (i->pos - (i->width/2.0), 0, i->pos + (i->width/2.0), _extent));
+			self = Rect (l.pos - (l.width/2.0), 0, l.pos + (l.width/2.0), _extent);
+			if (fmod (l.width, 2.)) {
+				self.x0 -= shift;
+			}
 		}
 
+		self = item_to_window (self);
 		Rect isect = self.intersection (area);
 
 		if (!isect) {
@@ -108,22 +124,23 @@ LineSet::render (Rect const & area, Cairo::RefPtr<Cairo::Context> context) const
 
 		Rect intersection (isect);
 
-		Gtkmm2ext::set_source_rgba (context, i->color);
-		context->set_line_width (i->width);
+		Gtkmm2ext::set_source_rgba (context, l.color);
+		context->set_line_width (l.width);
 
 		/* Not 100% sure that the computation of the invariant
 		 * positions (y and x) below work correctly if the line width
 		 * is not 1.0, but visual inspection suggests it is OK.
+		 * See Cairo FAQ on single pixel lines to understand why we add 0.5
 		 */
 
 		if (_orientation == Horizontal) {
-			double y = self.y0 + ((self.y1 - self.y0)/2.0);
-			context->move_to (intersection.x0, y);
-			context->line_to (intersection.x1, y);
+			const double y = item_to_window (Duple (0, l.pos)).y;
+			context->move_to (intersection.x0, y + shift);
+			context->line_to (intersection.x1, y + shift);
 		} else {
-			double x = self.x0 + ((self.x1 - self.x0)/2.0);
-			context->move_to (x, intersection.y0);
-			context->line_to (x, intersection.y1);
+			const double x = item_to_window (Duple (l.pos, 0)).x;
+			context->move_to (x + shift, intersection.y0);
+			context->line_to (x + shift, intersection.y1);
 		}
 
 		context->stroke ();
@@ -131,14 +148,25 @@ LineSet::render (Rect const & area, Cairo::RefPtr<Cairo::Context> context) const
 }
 
 void
-LineSet::add_coord (Coord y, Distance width, Gtkmm2ext::Color color)
+LineSet::add_coord (Coord pos, Distance width, Gtkmm2ext::Color color)
+{
+	_lines.push_back (Line (pos, width, color));
+}
+
+void
+LineSet::begin_add ()
 {
 	begin_change ();
+}
 
-	_lines.push_back (Line (y, width, color));
-	sort (_lines.begin(), _lines.end(), LineSorter());
+void
+LineSet::end_add ()
+{
+	if (!_lines.empty()) {
+		sort (_lines.begin(), _lines.end(), LineSorter());
+	}
 
-	_bounding_box_dirty = true;
+	set_bbox_dirty ();
 	end_change ();
 }
 
@@ -147,7 +175,7 @@ LineSet::clear ()
 {
 	begin_change ();
 	_lines.clear ();
-	_bounding_box_dirty = true;
+	set_bbox_dirty ();
 	end_change ();
 }
 

@@ -68,7 +68,7 @@ public:
 	AutomationLine (const std::string&                                 name,
 	                TimeAxisView&                                      tv,
 	                ArdourCanvas::Item&                                parent,
-	                boost::shared_ptr<ARDOUR::AutomationList>          al,
+	                std::shared_ptr<ARDOUR::AutomationList>          al,
 	                const ARDOUR::ParameterDescriptor&                 desc);
 
 
@@ -92,7 +92,7 @@ public:
 	virtual void start_drag_single (ControlPoint*, double, float);
 	virtual void start_drag_line (uint32_t, uint32_t, float);
 	virtual void start_drag_multiple (std::list<ControlPoint*>, float, XMLNode *);
-	virtual std::pair<float, float> drag_motion (double, float, bool, bool with_push, uint32_t& final_index);
+	virtual std::pair<float, float> drag_motion (Temporal::timecnt_t const &, float, bool, bool with_push, uint32_t& final_index);
 	virtual void end_drag (bool with_push, uint32_t final_index);
 
 	ControlPoint* nth (uint32_t);
@@ -114,6 +114,7 @@ public:
 	void set_height (guint32);
 
 	bool get_uses_gain_mapping () const;
+	void tempo_map_changed ();
 
 	TimeAxisView& trackview;
 
@@ -126,15 +127,17 @@ public:
 	std::string fraction_to_string (double) const;
 	std::string delta_to_string (double) const;
 	double string_to_fraction (std::string const &) const;
+
 	void   view_to_model_coord_y (double &) const;
-	Temporal::timepos_t model_to_view_coord (Evoral::ControlEvent const &, double& y) const;
-	void   model_to_view_coord_y (double &) const;
+
+	double              model_to_view_coord_y (double) const;
+	Temporal::timecnt_t model_to_view_coord_x (Temporal::timepos_t const &) const;
 
 	double compute_delta (double from, double to) const;
 	void   apply_delta (double& val, double delta) const;
 
-	void set_list(boost::shared_ptr<ARDOUR::AutomationList> list);
-	boost::shared_ptr<ARDOUR::AutomationList> the_list() const { return alist; }
+	void set_list(std::shared_ptr<ARDOUR::AutomationList> list);
+	std::shared_ptr<ARDOUR::AutomationList> the_list() const { return alist; }
 
 	void track_entered();
 	void track_exited();
@@ -142,11 +145,11 @@ public:
 	bool is_last_point (ControlPoint &);
 	bool is_first_point (ControlPoint &);
 
-	XMLNode& get_state (void);
+	XMLNode& get_state () const;
 	int set_state (const XMLNode&, int version);
 	void set_colors();
 
-	void modify_point_y (ControlPoint&, double);
+	void modify_points_y (std::vector<ControlPoint*> const&, double);
 
 	virtual MementoCommandBinder<ARDOUR::AutomationList>* memento_command_binder ();
 
@@ -161,22 +164,24 @@ public:
 	Temporal::timepos_t offset () { return _offset; }
 	void set_width (Temporal::timecnt_t const &);
 
-	samplepos_t session_sample_position (ARDOUR::AutomationList::const_iterator) const;
-	Temporal::timepos_t session_position (ARDOUR::AutomationList::const_iterator) const;
+	Temporal::timepos_t session_position (Temporal::timepos_t const &) const;
+	void dump (std::ostream&) const;
+
+	double dt_to_dx (Temporal::timepos_t const &, Temporal::timecnt_t const &);
 
 protected:
 
 	std::string    _name;
 	guint32        _height;
 	uint32_t       _line_color;
-
-	boost::shared_ptr<ARDOUR::AutomationList> alist;
+	uint32_t       _view_index_offset;
+	std::shared_ptr<ARDOUR::AutomationList> alist;
 
 	VisibleAspects _visible;
 
 	bool    terminal_points_can_slide;
 	bool    update_pending;
-	bool    have_timeout;
+	bool    have_reset_timeout;
 	bool    no_draw;
 	bool    _is_boolean;
 	/** true if we did a push at any point during the current drag */
@@ -191,18 +196,18 @@ protected:
 	class ContiguousControlPoints : public std::list<ControlPoint*> {
 public:
 		ContiguousControlPoints (AutomationLine& al);
-		double clamp_dx (double dx);
-		void move (double dx, double dvalue);
+		Temporal::timecnt_t clamp_dt (Temporal::timecnt_t const & dx, Temporal::timepos_t const & region_limit);
+		void move (Temporal::timecnt_t const &, double dvalue);
 		void compute_x_bounds (PublicEditor& e);
 private:
 		AutomationLine& line;
-		double before_x;
-		double after_x;
+		Temporal::timepos_t before_x;
+		Temporal::timepos_t after_x;
 	};
 
 	friend class ContiguousControlPoints;
 
-	typedef boost::shared_ptr<ContiguousControlPoints> CCP;
+	typedef std::shared_ptr<ContiguousControlPoints> CCP;
 	std::vector<CCP> contiguous_points;
 
 	bool sync_model_with_view_point (ControlPoint&);
@@ -218,8 +223,6 @@ private:
 	std::list<ControlPoint*> _drag_points; ///< points we are dragging
 	std::list<ControlPoint*> _push_points; ///< additional points we are dragging if "push" is enabled
 	bool _drag_had_movement; ///< true if the drag has seen movement, otherwise false
-	double _drag_x; ///< last x position of the drag, in units
-	double _drag_distance; ///< total x movement of the drag, in canvas units
 	double _last_drag_fraction; ///< last y position of the drag, as a fraction
 	/** offset from the start of the automation list to the start of the line, so that
 	 *  a +ve offset means that the 0 on the line is at _offset in the list

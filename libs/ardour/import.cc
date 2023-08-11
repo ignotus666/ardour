@@ -81,7 +81,7 @@ using namespace std;
 using namespace ARDOUR;
 using namespace PBD;
 
-static boost::shared_ptr<ImportableSource>
+static std::shared_ptr<ImportableSource>
 open_importable_source (const string& path, samplecnt_t samplerate, ARDOUR::SrcQuality quality)
 {
 	/* try libsndfile first, because it can get BWF info from .wav, which ExtAudioFile cannot.
@@ -90,53 +90,53 @@ open_importable_source (const string& path, samplecnt_t samplerate, ARDOUR::SrcQ
 	 */
 
 	try {
-		boost::shared_ptr<SndFileImportableSource> source(new SndFileImportableSource(path));
+		std::shared_ptr<SndFileImportableSource> source(new SndFileImportableSource(path));
 
 		if (source->samplerate() == samplerate) {
 			return source;
 		}
 
 		/* rewrap as a resampled source */
-		return boost::shared_ptr<ImportableSource>(new ResampledImportableSource(source, samplerate, quality));
+		return std::shared_ptr<ImportableSource>(new ResampledImportableSource(source, samplerate, quality));
 	} catch (...) { }
 
 	/* libsndfile failed, see if we can use CoreAudio to handle the IO */
 #ifdef HAVE_COREAUDIO
 	try {
 		CAImportableSource* src = new CAImportableSource(path);
-		boost::shared_ptr<CAImportableSource> source (src);
+		std::shared_ptr<CAImportableSource> source (src);
 
 		if (source->samplerate() == samplerate) {
 			return source;
 		}
 
 		/* rewrap as a resampled source */
-		return boost::shared_ptr<ImportableSource>(new ResampledImportableSource(source, samplerate, quality));
+		return std::shared_ptr<ImportableSource>(new ResampledImportableSource(source, samplerate, quality));
 	} catch (...) { }
 #endif
 
 	/* libsndfile and CoreAudioFile failed, try minimp3-decoder */
 	try {
-		boost::shared_ptr<Mp3FileImportableSource> source(new Mp3FileImportableSource(path));
+		std::shared_ptr<Mp3FileImportableSource> source(new Mp3FileImportableSource(path));
 
 		if (source->samplerate() == samplerate) {
 			return source;
 		}
 
 		/* rewrap as a resampled source */
-		return boost::shared_ptr<ImportableSource>(new ResampledImportableSource(source, samplerate, quality));
+		return std::shared_ptr<ImportableSource>(new ResampledImportableSource(source, samplerate, quality));
 	} catch (...) { }
 
 	/* finally try FFMPEG */
 	try {
-		boost::shared_ptr<FFMPEGFileImportableSource> source(new FFMPEGFileImportableSource(path));
+		std::shared_ptr<FFMPEGFileImportableSource> source(new FFMPEGFileImportableSource(path));
 
 		if (source->samplerate() == samplerate) {
 			return source;
 		}
 
 		/* rewrap as a resampled source */
-		return boost::shared_ptr<ImportableSource>(new ResampledImportableSource(source, samplerate, quality));		
+		return std::shared_ptr<ImportableSource>(new ResampledImportableSource(source, samplerate, quality));		
 	} catch (...) { }
 
 	throw failed_constructor ();
@@ -183,19 +183,19 @@ Session::get_paths_for_new_sources (bool /*allow_replacing*/, const string& impo
 
 static bool
 map_existing_mono_sources (const vector<string>& new_paths, Session& /*sess*/,
-                           uint32_t /*samplerate*/, vector<boost::shared_ptr<Source> >& newfiles, Session *session)
+                           uint32_t /*samplerate*/, vector<std::shared_ptr<Source> >& newfiles, Session *session)
 {
 	for (vector<string>::const_iterator i = new_paths.begin();
 	     i != new_paths.end(); ++i)
 	{
-		boost::shared_ptr<Source> source = session->audio_source_by_path_and_channel(*i, 0);
+		std::shared_ptr<Source> source = session->audio_source_by_path_and_channel(*i, 0);
 
 		if (source == 0) {
 			error << string_compose(_("Could not find a source for %1 even though we are updating this file!"), (*i)) << endl;
 			return false;
 		}
 
-		newfiles.push_back(boost::dynamic_pointer_cast<Source>(source));
+		newfiles.push_back(std::dynamic_pointer_cast<Source>(source));
 	}
 	return true;
 }
@@ -203,12 +203,12 @@ map_existing_mono_sources (const vector<string>& new_paths, Session& /*sess*/,
 static bool
 create_mono_sources_for_writing (const vector<string>& new_paths,
                                  Session& sess, uint32_t samplerate,
-                                 vector<boost::shared_ptr<Source> >& newfiles,
+                                 vector<std::shared_ptr<Source> >& newfiles,
                                  samplepos_t natural_position)
 {
 	for (vector<string>::const_iterator i = new_paths.begin(); i != new_paths.end(); ++i) {
 
-		boost::shared_ptr<Source> source;
+		std::shared_ptr<Source> source;
 
 		try {
 			const DataType type = SMFSource::safe_midi_file_extension (*i) ? DataType::MIDI : DataType::AUDIO;
@@ -221,14 +221,14 @@ create_mono_sources_for_writing (const vector<string>& new_paths,
 			return false;
 		}
 
-		newfiles.push_back(boost::dynamic_pointer_cast<Source>(source));
+		newfiles.push_back(std::dynamic_pointer_cast<Source>(source));
 
 		/* for audio files, reset the timeline position so that any BWF-ish
 		   information in the original files we are importing from is maintained.
 		*/
 
-		boost::shared_ptr<AudioFileSource> afs;
-		if ((afs = boost::dynamic_pointer_cast<AudioFileSource>(source)) != 0) {
+		std::shared_ptr<AudioFileSource> afs;
+		if ((afs = std::dynamic_pointer_cast<AudioFileSource>(source)) != 0) {
 			afs->set_natural_position (timepos_t (natural_position));
 		}
 	}
@@ -254,10 +254,10 @@ compose_status_message (const string& path,
 
 static void
 write_audio_data_to_new_files (ImportableSource* source, ImportStatus& status,
-                               vector<boost::shared_ptr<Source> >& newfiles)
+                               vector<std::shared_ptr<Source> >& newfiles)
 {
 	const samplecnt_t nframes = ResampledImportableSource::blocksize;
-	boost::shared_ptr<AudioFileSource> afs;
+	std::shared_ptr<AudioFileSource> afs;
 	uint32_t channels = source->channels();
 	if (channels == 0) {
 		return;
@@ -272,7 +272,7 @@ write_audio_data_to_new_files (ImportableSource* source, ImportStatus& status,
 
 	float gain = 1;
 
-	boost::shared_ptr<AudioSource> s = boost::dynamic_pointer_cast<AudioSource> (newfiles[0]);
+	std::shared_ptr<AudioSource> s = std::dynamic_pointer_cast<AudioSource> (newfiles[0]);
 	assert (s);
 
 	status.progress = 0.0f;
@@ -326,7 +326,7 @@ write_audio_data_to_new_files (ImportableSource* source, ImportStatus& status,
 			/* cache the data for very long periods of time (perhaps not writing   */
 			/* it to disk until Ardour closes). So let's force it to flush now.    */
 			for (chn = 0; chn < channels; ++chn)
-				if ((afs = boost::dynamic_pointer_cast<AudioFileSource>(newfiles[chn])) != 0)
+				if ((afs = std::dynamic_pointer_cast<AudioFileSource>(newfiles[chn])) != 0)
 					afs->flush ();
 #endif
 			break;
@@ -352,7 +352,7 @@ write_audio_data_to_new_files (ImportableSource* source, ImportStatus& status,
 		/* flush to disk */
 
 		for (chn = 0; chn < channels; ++chn) {
-			if ((afs = boost::dynamic_pointer_cast<AudioFileSource>(newfiles[chn])) != 0) {
+			if ((afs = std::dynamic_pointer_cast<AudioFileSource>(newfiles[chn])) != 0) {
 				afs->write (channel_data[chn].get(), nfread);
 			}
 		}
@@ -364,7 +364,7 @@ write_audio_data_to_new_files (ImportableSource* source, ImportStatus& status,
 
 static void
 write_midi_data_to_new_files (Evoral::SMF* source, ImportStatus& status,
-                              vector<boost::shared_ptr<Source> >& newfiles,
+                              vector<std::shared_ptr<Source> >& newfiles,
                               bool split_midi_channels)
 {
 	uint32_t buf_size = 4;
@@ -377,7 +377,7 @@ write_midi_data_to_new_files (Evoral::SMF* source, ImportStatus& status,
 	int total_files = newfiles.size();
 
 	try {
-		vector<boost::shared_ptr<Source> >::iterator s = newfiles.begin();
+		vector<std::shared_ptr<Source> >::iterator s = newfiles.begin();
 
 		int cur_chan = 0;
 
@@ -389,12 +389,12 @@ write_midi_data_to_new_files (Evoral::SMF* source, ImportStatus& status,
 				cur_track = 1 + (int) floor((float)i/16.f);  //calculate the Track needed for this sourcefile (offset by 1)
 			}
 
-			boost::shared_ptr<SMFSource> smfs = boost::dynamic_pointer_cast<SMFSource> (*s);
+			std::shared_ptr<SMFSource> smfs = std::dynamic_pointer_cast<SMFSource> (*s);
 			if (!smfs) {
 				continue;  //should never happen.  The calling code should provide exactly the number of tracks&channels we need
 			}
 
-			Glib::Threads::Mutex::Lock source_lock(smfs->mutex());
+			Source::WriterLock source_lock(smfs->mutex());
 
 			smfs->drop_model (source_lock);
 			if (type0) {
@@ -471,10 +471,21 @@ write_midi_data_to_new_files (Evoral::SMF* source, ImportStatus& status,
 
 				/* extend the length of the region to the end of a bar */
 				const Temporal::Beats  length_beats = Temporal::Beats::ticks_at_rate(t, source->ppqn());
-				smfs->update_length (timecnt_t (length_beats.round_up_to_multiple(Temporal::Beats(pulses_per_bar,0)), timepos_t(Temporal::BeatTime)));
+				smfs->update_length (timepos_t (length_beats.round_up_to_multiple(Temporal::Beats(pulses_per_bar,0))));
 
 				smfs->mark_streaming_write_completed (source_lock);
+
+				/* the streaming write that we've just finished
+				 * only wrote data to the SMF object, which is
+				 * ultimately an on-disk data structure. So now
+				 * we pull the data back from disk to build our
+				 * in-memory MidiModel version.
+				 */
+
 				smfs->load_model (source_lock, true);
+
+				/* Now that there is a model, we can set interpolation of parameters. */
+				smfs->mark_streaming_write_completed (source_lock);
 
 				if (status.cancel) {
 					break;
@@ -501,9 +512,9 @@ write_midi_data_to_new_files (Evoral::SMF* source, ImportStatus& status,
 }
 
 static void
-remove_file_source (boost::shared_ptr<Source> source)
+remove_file_source (std::shared_ptr<Source> source)
 {
-	boost::shared_ptr<FileSource> fs = boost::dynamic_pointer_cast<FileSource> (source);
+	std::shared_ptr<FileSource> fs = std::dynamic_pointer_cast<FileSource> (source);
 
 	fs->DropReferences ();
 
@@ -513,14 +524,14 @@ remove_file_source (boost::shared_ptr<Source> source)
 }
 
 void
-Session::deinterlace_midi_region ( boost::shared_ptr<MidiRegion> mr )
+Session::deinterlace_midi_region (std::shared_ptr<MidiRegion> mr)
 {
-	typedef vector<boost::shared_ptr<Source> > Sources;
+	typedef vector<std::shared_ptr<Source> > Sources;
 	Sources newfiles;
 
 	try {
-		boost::shared_ptr<MidiSource> ms = mr->midi_source(0);
-		boost::shared_ptr<SMFSource> smf = boost::dynamic_pointer_cast<SMFSource> (mr->midi_source(0));  //ToDo: handle compound sources?
+		std::shared_ptr<MidiSource> ms = mr->midi_source(0);
+		std::shared_ptr<SMFSource> smf = std::dynamic_pointer_cast<SMFSource> (mr->midi_source(0));  //ToDo: handle compound sources?
 		string source_path = smf->path();
 
 		/* write_midi_data_to_new_files expects to find raw midi on-disk (SMF*).
@@ -557,8 +568,8 @@ Session::deinterlace_midi_region ( boost::shared_ptr<MidiRegion> mr )
 
 	/* not all 16 channels will have midi data;  delete any sources that turned up empty */
 	for (Sources::iterator x = newfiles.begin(); x != newfiles.end(); ) {
-		boost::shared_ptr<SMFSource> smfs;
-		if ((smfs = boost::dynamic_pointer_cast<SMFSource>(*x)) != 0 && smfs->is_empty()) {
+		std::shared_ptr<SMFSource> smfs;
+		if ((smfs = std::dynamic_pointer_cast<SMFSource>(*x)) != 0 && smfs->is_empty()) {
 			x = newfiles.erase(x);
 		} else {
 			++x;
@@ -572,34 +583,55 @@ Session::deinterlace_midi_region ( boost::shared_ptr<MidiRegion> mr )
 		add_source(*x);
 
 		/* create a whole-file region for this new source, so it shows up in the Source List...*/
-		PropertyList plist;
+		PropertyList plist (mr->properties ());
 		plist.add (Properties::whole_file, true);
-		plist.add (Properties::start, mr->start());
-		plist.add (Properties::position, mr->position());
-		plist.add (Properties::length, mr->length());
+		plist.add (Properties::opaque, true);
 		plist.add (Properties::name, (*x)->name());
-		plist.add (Properties::tags, "(split-chans)");
-		boost::shared_ptr<Region> whole = RegionFactory::create (*x, plist);
+		plist.add (Properties::tags, string_compose ("%1%2%3", _("(split-chans)"), mr->tags ().empty() ? "" : " ", mr->tags ()));
+		std::shared_ptr<Region> whole = RegionFactory::create (*x, plist);
 
 		/* ... and insert a discrete copy into the playlist*/
 		PropertyList plist2;
 		plist2.add (ARDOUR::Properties::whole_file, false);
-		boost::shared_ptr<Region> copy (RegionFactory::create (whole, plist2));
+		std::shared_ptr<Region> copy (RegionFactory::create (whole, plist2));
 		mr->playlist()->add_region (copy, mr->position());
 	}
 }
 
+static vector<string>
+unique_track_names (const vector<string>& n)
+{
+	set<string>    uniq;
+	vector<string> rv;
+
+	for (auto tn : n) {
+		while (uniq.find (tn) != uniq.end()) {
+			if (tn.empty ()) {
+				tn = "MIDI";
+			}
+			/* not not use '-' as separator because that is used by
+			 * new_midi_source_path, new_audio_source_path
+			 * when checking for existing files.
+			 */
+			tn = bump_name_once (tn, '.');
+		}
+		uniq.insert (tn);
+		rv.push_back (tn);
+	}
+	return rv;
+}
+
 // This function is still unable to cleanly update an existing source, even though
-// it is possible to set the ImportStatus flag accordingly. The functinality
+// it is possible to set the ImportStatus flag accordingly. The functionality
 // is disabled at the GUI until the Source implementations are able to provide
 // the necessary API.
 void
 Session::import_files (ImportStatus& status)
 {
-	typedef vector<boost::shared_ptr<Source> > Sources;
+	typedef vector<std::shared_ptr<Source> > Sources;
 	Sources all_new_sources;
-	boost::shared_ptr<AudioFileSource> afs;
-	boost::shared_ptr<SMFSource> smfs;
+	std::shared_ptr<AudioFileSource> afs;
+	std::shared_ptr<SMFSource> smfs;
 	uint32_t num_channels = 0;
 	vector<string> smf_names;
 
@@ -607,7 +639,7 @@ Session::import_files (ImportStatus& status)
 
 	for (vector<string>::const_iterator p = status.paths.begin(); p != status.paths.end() && !status.cancel; ++p) {
 
-		boost::shared_ptr<ImportableSource> source;
+		std::shared_ptr<ImportableSource> source;
 
 		const DataType type = SMFSource::safe_midi_file_extension (*p) ? DataType::MIDI : DataType::AUDIO;
 		boost::scoped_ptr<Evoral::SMF> smf_reader;
@@ -660,11 +692,14 @@ Session::import_files (ImportStatus& status)
 						if (status.split_midi_channels) {
 							vector<string> temp;
 							smf_reader->track_names (temp);
+							temp = unique_track_names (temp);
 							for (uint32_t i = 0; i<num_channels;i++) {
 								smf_names.push_back( string_compose ("%1.ch%2", temp[i/16], 1+i%16 ) );  //trackname.chanX
 							}
 						} else {
-							smf_reader->track_names (smf_names);
+							vector<string> temp;
+							smf_reader->track_names (temp);
+							smf_names = unique_track_names (temp);
 						}
 						break;
 					case SMFInstrumentName:
@@ -712,7 +747,7 @@ Session::import_files (ImportStatus& status)
 		}
 
 		for (Sources::iterator i = newfiles.begin(); i != newfiles.end(); ++i) {
-			if ((afs = boost::dynamic_pointer_cast<AudioFileSource>(*i)) != 0) {
+			if ((afs = std::dynamic_pointer_cast<AudioFileSource>(*i)) != 0) {
 				afs->prepare_for_peakfile_writes ();
 			}
 		}
@@ -724,6 +759,15 @@ Session::import_files (ImportStatus& status)
 		} else if (smf_reader) { // midi
 			status.doing_what = string_compose(_("Loading MIDI file %1"), *p);
 			write_midi_data_to_new_files (smf_reader.get(), status, newfiles, status.split_midi_channels);
+
+			if (status.import_markers) {
+				smf_reader->load_markers ();
+				for (auto const& m : smf_reader->markers ()) {
+					Temporal::Beats beats = Temporal::Beats::from_double (m.time_pulses / (double) smf_reader->ppqn ());
+					// XXX import to all sources (in case split_midi_channels is set)?
+					newfiles.front()->add_cue_marker (CueMarker (m.text, timepos_t (beats)));
+				}
+			}
 		}
 
 		++status.current;
@@ -741,27 +785,27 @@ Session::import_files (ImportStatus& status)
 
 		for (Sources::iterator x = all_new_sources.begin(); x != all_new_sources.end(); ) {
 
-			if ((afs = boost::dynamic_pointer_cast<AudioFileSource>(*x)) != 0) {
+			if ((afs = std::dynamic_pointer_cast<AudioFileSource>(*x)) != 0) {
 				afs->update_header((*x)->natural_position().samples(), *now, xnow);
 				afs->done_with_peakfile_writes ();
 
 				/* now that there is data there, requeue the file for analysis */
 
 				if (Config->get_auto_analyse_audio()) {
-					Analyser::queue_source_for_analysis (boost::static_pointer_cast<Source>(*x), false);
+					Analyser::queue_source_for_analysis (std::static_pointer_cast<Source>(*x), false);
 				}
 			}
 
 			/* imported, copied files cannot be written or removed
 			 */
 
-			boost::shared_ptr<FileSource> fs = boost::dynamic_pointer_cast<FileSource>(*x);
+			std::shared_ptr<FileSource> fs = std::dynamic_pointer_cast<FileSource>(*x);
 			if (fs) {
 				/* Only audio files should be marked as
 				   immutable - we may need to rewrite MIDI
 				   files at any time.
 				*/
-				if (boost::dynamic_pointer_cast<AudioFileSource> (fs)) {
+				if (std::dynamic_pointer_cast<AudioFileSource> (fs)) {
 					fs->mark_immutable ();
 				} else {
 					fs->mark_immutable_except_write ();
@@ -771,7 +815,7 @@ Session::import_files (ImportStatus& status)
 
 			/* don't create tracks for empty MIDI sources (channels) */
 
-			if ((smfs = boost::dynamic_pointer_cast<SMFSource>(*x)) != 0 && smfs->is_empty()) {
+			if ((smfs = std::dynamic_pointer_cast<SMFSource>(*x)) != 0 && smfs->is_empty()) {
 				x = all_new_sources.erase(x);
 			} else {
 				++x;

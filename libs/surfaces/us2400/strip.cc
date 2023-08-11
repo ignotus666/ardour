@@ -112,7 +112,7 @@ Strip::Strip (Surface& s, const std::string& name, int index, const map<Button::
 	}
 
 	for (map<Button::ID,StripButtonInfo>::const_iterator b = strip_buttons.begin(); b != strip_buttons.end(); ++b) {
-		Button* bb = dynamic_cast<Button*> (Button::factory (*_surface, b->first, b->second.base_id + index, b->second.name, *this));
+		DEBUG_RESULT_CAST (Button*, bb, dynamic_cast<Button*>, (Button::factory (*_surface, b->first, b->second.base_id + index, b->second.name, *this)));
 		DEBUG_TRACE (DEBUG::US2400, string_compose ("surface %1 strip %2 new button BID %3 id %4 from base %5\n",
 								   _surface->number(), index, Button::id_to_name (bb->bid()),
 								   bb->id(), b->second.base_id));
@@ -156,7 +156,7 @@ Strip::add (Control & control)
 }
 
 void
-Strip::set_stripable (boost::shared_ptr<Stripable> r, bool /*with_messages*/)
+Strip::set_stripable (std::shared_ptr<Stripable> r, bool /*with_messages*/)
 {
 	if (_controls_locked) {
 		return;
@@ -164,12 +164,12 @@ Strip::set_stripable (boost::shared_ptr<Stripable> r, bool /*with_messages*/)
 
 	stripable_connections.drop_connections ();
 
-	_solo->set_control (boost::shared_ptr<AutomationControl>());
-	_mute->set_control (boost::shared_ptr<AutomationControl>());
-	_select->set_control (boost::shared_ptr<AutomationControl>());
+	_solo->set_control (std::shared_ptr<AutomationControl>());
+	_mute->set_control (std::shared_ptr<AutomationControl>());
+	_select->set_control (std::shared_ptr<AutomationControl>());
 
-	_fader->set_control (boost::shared_ptr<AutomationControl>());
-	_vpot->set_control (boost::shared_ptr<AutomationControl>());
+	_fader->set_control (std::shared_ptr<AutomationControl>());
+	_vpot->set_control (std::shared_ptr<AutomationControl>());
 
 	_stripable = r;
 
@@ -190,7 +190,7 @@ Strip::set_stripable (boost::shared_ptr<Stripable> r, bool /*with_messages*/)
 	_stripable->solo_control()->Changed.connect (stripable_connections, MISSING_INVALIDATOR, boost::bind (&Strip::notify_solo_changed, this), ui_context());
 	_stripable->mute_control()->Changed.connect(stripable_connections, MISSING_INVALIDATOR, boost::bind (&Strip::notify_mute_changed, this), ui_context());
 
-	boost::shared_ptr<AutomationControl> pan_control = _stripable->pan_azimuth_control();
+	std::shared_ptr<AutomationControl> pan_control = _stripable->pan_azimuth_control();
 	if (pan_control) {
 		pan_control->Changed.connect(stripable_connections, MISSING_INVALIDATOR, boost::bind (&Strip::notify_panner_azi_changed, this, false), ui_context());
 	}
@@ -245,9 +245,9 @@ Strip::reset_stripable ()
 {
 	stripable_connections.drop_connections ();
 
-	_solo->set_control (boost::shared_ptr<AutomationControl>());
-	_mute->set_control (boost::shared_ptr<AutomationControl>());
-	_select->set_control (boost::shared_ptr<AutomationControl>());
+	_solo->set_control (std::shared_ptr<AutomationControl>());
+	_mute->set_control (std::shared_ptr<AutomationControl>());
+	_select->set_control (std::shared_ptr<AutomationControl>());
 
 	_fader->reset_control ();
 	_vpot->reset_control ();
@@ -426,7 +426,7 @@ Strip::fader_touch_event (Button&, ButtonState bs)
 
 	if (bs == press) {
 
-		boost::shared_ptr<AutomationControl> ac = _fader->control ();
+		std::shared_ptr<AutomationControl> ac = _fader->control ();
 
 		_fader->set_in_use (true);
 		_fader->start_touch (timepos_t (_surface->mcp().transport_sample()));
@@ -443,7 +443,7 @@ Strip::fader_touch_event (Button&, ButtonState bs)
 void
 Strip::handle_button (Button& button, ButtonState bs)
 {
-	boost::shared_ptr<AutomationControl> control;
+	std::shared_ptr<AutomationControl> control;
 
 	if (bs == press) {
 		button.set_in_use (true);
@@ -520,7 +520,7 @@ void
 Strip::handle_fader (Fader& fader, float position)
 {
 	DEBUG_TRACE (DEBUG::US2400, string_compose ("fader to %1\n", position));
-	boost::shared_ptr<AutomationControl> ac = fader.control();
+	std::shared_ptr<AutomationControl> ac = fader.control();
 	if (!ac) {
 		return;
 	}
@@ -553,7 +553,7 @@ Strip::handle_pot (Pot& pot, float delta)
 	   stop moving. So to get a stop event, we need to use a timeout.
 	*/
 
-	boost::shared_ptr<AutomationControl> ac = pot.control();
+	std::shared_ptr<AutomationControl> ac = pot.control();
 	if (!ac) {
 		return;
 	}
@@ -699,7 +699,7 @@ Strip::next_pot_mode ()
 {
 	vector<AutomationType>::iterator i;
 
-	boost::shared_ptr<AutomationControl> ac = _vpot->control();
+	std::shared_ptr<AutomationControl> ac = _vpot->control();
 
 	if (!ac) {
 		return;
@@ -753,7 +753,7 @@ Strip::subview_mode_changed ()
 		break;
 
 	case US2400Protocol::TrackView:
-		boost::shared_ptr<Stripable> r = _surface->mcp().subview_stripable();
+		std::shared_ptr<Stripable> r = _surface->mcp().subview_stripable();
 		if (r) {
 			DEBUG_TRACE (DEBUG::US2400, string_compose("subview_mode_changed strip %1:%2- assigning trackview pot\n",  _surface->number(), _index));
 			setup_trackview_vpot (r);
@@ -768,23 +768,23 @@ Strip::subview_mode_changed ()
 }
 
 void
-Strip::setup_dyn_vpot (boost::shared_ptr<Stripable> r)
+Strip::setup_dyn_vpot (std::shared_ptr<Stripable> r)
 {
 }
 
 void
-Strip::setup_eq_vpot (boost::shared_ptr<Stripable> r)
+Strip::setup_eq_vpot (std::shared_ptr<Stripable> r)
 {
 }
 
 void
-Strip::setup_sends_vpot (boost::shared_ptr<Stripable> r)
+Strip::setup_sends_vpot (std::shared_ptr<Stripable> r)
 {
 
 }
 
 void
-Strip::setup_trackview_vpot (boost::shared_ptr<Stripable> r)
+Strip::setup_trackview_vpot (std::shared_ptr<Stripable> r)
 {
 	subview_connections.drop_connections ();
 
@@ -793,14 +793,15 @@ Strip::setup_trackview_vpot (boost::shared_ptr<Stripable> r)
 	}
 
 
-	boost::shared_ptr<AutomationControl> pc;
-	boost::shared_ptr<Track> track = boost::dynamic_pointer_cast<Track> (r);
+	std::shared_ptr<AutomationControl> pc;
+	std::shared_ptr<Track> track = std::dynamic_pointer_cast<Track> (r);
 	string label;
 
 	_vpot->set_mode(Pot::wrap);
 
-#ifdef MIXBUS
 	const uint32_t global_pos = _surface->mcp().global_index (*this);
+
+#ifdef MIXBUS
 
 	//Trim & dynamics
 	switch (global_pos) {
@@ -919,11 +920,53 @@ Strip::setup_trackview_vpot (boost::shared_ptr<Stripable> r)
 		case 21:
 		case 22:
 		case 23:
-			pc = r->send_level_controllable ( global_pos - 16 );
+			pc = r->send_level_controllable ( global_pos - 16 + (_surface->mcp().get_sends_bank() * 8));
 			break;
 		}  //global_pos switch
 
 	} //if input_strip
+
+#else
+
+	switch (global_pos) {
+		// Track view equivalent
+		case 0:
+			pc = r->trim_control ();
+			_vpot->set_mode(Pot::boost_cut);
+			break;
+		case 1:
+			pc = r->monitoring_control ();
+			break;
+		case 2:
+			pc = r->solo_isolate_control ();
+			break;
+		case 3:
+			pc = r->solo_safe_control ();
+			break;
+		case 4:
+			pc = r->phase_control ();
+			break;
+		
+		// Sends
+		case 8:
+		case 9:
+		case 10:
+		case 11:
+		case 12:
+		case 13:
+		case 14:
+		case 15:
+		case 16:
+		case 17:
+		case 18:
+		case 19:
+		case 20:
+		case 21:
+		case 22:
+		case 23:
+			pc = r->send_level_controllable (global_pos - 8 + (_surface->mcp().get_sends_bank() * 16));
+			break;
+	}
 #endif //ifdef MIXBUS
 
 	if (pc) {  //control found; set our knob to watch for changes in it
@@ -940,11 +983,11 @@ void
 Strip::set_vpot_parameter (AutomationType p)
 {
 	if (!_stripable || (p == NullAutomation)) {
-		_vpot->set_control (boost::shared_ptr<AutomationControl>());
+		_vpot->set_control (std::shared_ptr<AutomationControl>());
 		return;
 	}
 
-	boost::shared_ptr<AutomationControl> pan_control;
+	std::shared_ptr<AutomationControl> pan_control;
 
 	DEBUG_TRACE (DEBUG::US2400, string_compose ("switch to vpot mode %1\n", p));
 
@@ -979,7 +1022,7 @@ Strip::set_vpot_parameter (AutomationType p)
 bool
 Strip::is_midi_track () const
 {
-	return boost::dynamic_pointer_cast<MidiTrack>(_stripable) != 0;
+	return std::dynamic_pointer_cast<MidiTrack>(_stripable) != 0;
 }
 
 void

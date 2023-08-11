@@ -87,6 +87,7 @@ public:
 	void cleanup () { }
 
 	int set_block_size (pframes_t /*nframes*/) { return 0; }
+	bool requires_fixed_sized_buffers () const { return _requires_fixed_sized_buffers; }
 	bool connect_all_audio_outputs () const { return _connect_all_audio_outputs; }
 
 	int connect_and_run (BufferSet& bufs,
@@ -95,7 +96,7 @@ public:
 			pframes_t nframes, samplecnt_t offset);
 
 	std::string describe_parameter (Evoral::Parameter);
-	boost::shared_ptr<ScalePoints> get_scale_points(uint32_t port_index) const;
+	std::shared_ptr<ScalePoints> get_scale_points(uint32_t port_index) const;
 
 	bool parameter_is_audio (uint32_t) const { return false; }
 	bool parameter_is_control (uint32_t) const { return true; }
@@ -129,6 +130,13 @@ public:
 	DSP::DspShm* instance_shm () { return &lshm; }
 	LuaTableRef* instance_ref () { return &lref; }
 
+	struct FactoryPreset {
+		std::string               name;
+		std::map<uint32_t, float> param;
+	};
+
+	std::map<std::string, FactoryPreset> _factory_presets;
+
 private:
 	samplecnt_t plugin_latency() const { return _signal_latency; }
 	void find_presets ();
@@ -156,24 +164,29 @@ private:
 	std::string _docs;
 	bool _lua_does_channelmapping;
 	bool _lua_has_inline_display;
+	bool _requires_fixed_sized_buffers;
 	bool _connect_all_audio_outputs;
+	bool _set_time_info;
 
 	void queue_draw () { QueueDraw(); /* EMIT SIGNAL */ }
 	DSP::DspShm lshm;
 
 	LuaTableRef lref;
 
-	boost::weak_ptr<Route> route () const;
+	std::weak_ptr<Route> route () const;
 
 	void init ();
 	bool load_script ();
 	void lua_print (std::string s);
 
+	bool load_user_preset (PresetRecord const&);
+	bool load_factory_preset (PresetRecord const&);
+
 	std::string preset_name_to_uri (const std::string&) const;
 	std::string presets_file () const;
 	XMLTree* presets_tree () const;
 
-	boost::shared_ptr<ScalePoints> parse_scale_points (luabridge::LuaRef*);
+	std::shared_ptr<ScalePoints> parse_scale_points (luabridge::LuaRef*);
 
 	std::vector<std::pair<bool, int> > _ctrl_params;
 	std::map<int, ARDOUR::ParameterDescriptor> _param_desc;
@@ -216,15 +229,21 @@ class LIBARDOUR_API LuaPluginInfo : public PluginInfo
 	std::vector<Plugin::PresetRecord> get_presets (bool user_only) const;
 
 	bool reconfigurable_io() const { return true; }
-	uint32_t max_configurable_ouputs () const {
+	uint32_t max_configurable_outputs () const {
 		return _max_outputs;
+	}
+
+	void set_factory_presets (std::vector<Plugin::PresetRecord> const& p) {
+		_factory_presets = p;
 	}
 
 	private:
 	uint32_t _max_outputs;
+
+	std::vector<Plugin::PresetRecord> _factory_presets;
 };
 
-typedef boost::shared_ptr<LuaPluginInfo> LuaPluginInfoPtr;
+typedef std::shared_ptr<LuaPluginInfo> LuaPluginInfoPtr;
 
 } // namespace ARDOUR
 

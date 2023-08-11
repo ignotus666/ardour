@@ -25,8 +25,9 @@
 #ifndef __ardour_gtk_selection_h__
 #define __ardour_gtk_selection_h__
 
+#include <memory>
 #include <vector>
-#include <boost/shared_ptr.hpp>
+
 #include <boost/noncopyable.hpp>
 
 #include <sigc++/signal.h>
@@ -148,9 +149,9 @@ public:
 	void set (std::vector<RegionView*>&);
 	long set (Temporal::timepos_t const &, Temporal::timepos_t const &);
 	void set_preserving_all_ranges (Temporal::timepos_t const &, Temporal::timepos_t const &);
-	void set (boost::shared_ptr<Evoral::ControlList>);
-	void set (boost::shared_ptr<ARDOUR::Playlist>);
-	void set (const std::list<boost::shared_ptr<ARDOUR::Playlist> >&);
+	void set (std::shared_ptr<Evoral::ControlList>);
+	void set (std::shared_ptr<ARDOUR::Playlist>);
+	void set (const std::list<std::shared_ptr<ARDOUR::Playlist> >&);
 	void set (ControlPoint *);
 	void set (ArdourMarker*);
 	void set (const RegionSelection&);
@@ -164,8 +165,8 @@ public:
 	void toggle (std::vector<RegionView*>&);
 	long toggle (Temporal::timepos_t const &, Temporal::timepos_t const &);
 	void toggle (ARDOUR::AutomationList*);
-	void toggle (boost::shared_ptr<ARDOUR::Playlist>);
-	void toggle (const std::list<boost::shared_ptr<ARDOUR::Playlist> >&);
+	void toggle (std::shared_ptr<ARDOUR::Playlist>);
+	void toggle (const std::list<std::shared_ptr<ARDOUR::Playlist> >&);
 	void toggle (ControlPoint *);
 	void toggle (std::vector<ControlPoint*> const &);
 	void toggle (ArdourMarker*);
@@ -178,9 +179,9 @@ public:
 	void add (MidiCutBuffer*);
 	void add (std::vector<RegionView*>&);
 	long add (Temporal::timepos_t const &, Temporal::timepos_t const &);
-	void add (boost::shared_ptr<Evoral::ControlList>);
-	void add (boost::shared_ptr<ARDOUR::Playlist>);
-	void add (const std::list<boost::shared_ptr<ARDOUR::Playlist> >&);
+	void add (std::shared_ptr<Evoral::ControlList>);
+	void add (std::shared_ptr<ARDOUR::Playlist>);
+	void add (const std::list<std::shared_ptr<ARDOUR::Playlist> >&);
 	void add (ControlPoint *);
 	void add (std::vector<ControlPoint*> const &);
 	void add (ArdourMarker*);
@@ -197,9 +198,9 @@ public:
 	void remove (MidiCutBuffer*);
 	void remove (uint32_t selection_id);
 	void remove (samplepos_t, samplepos_t);
-	void remove (boost::shared_ptr<ARDOUR::AutomationList>);
-	void remove (boost::shared_ptr<ARDOUR::Playlist>);
-	void remove (const std::list<boost::shared_ptr<ARDOUR::Playlist> >&);
+	void remove (std::shared_ptr<ARDOUR::AutomationList>);
+	void remove (std::shared_ptr<ARDOUR::Playlist>);
+	void remove (const std::list<std::shared_ptr<ARDOUR::Playlist> >&);
 	void remove (const std::list<Selectable*>&);
 	void remove (ArdourMarker*);
 	void remove (ControlPoint *);

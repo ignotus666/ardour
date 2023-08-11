@@ -38,6 +38,8 @@
 #include "pbd/stateful.h"
 #include "pbd/statefuldestructible.h"
 
+#include "temporal/types.h"
+
 #include "ardour/ardour.h"
 #include "ardour/scene_change.h"
 #include "ardour/session_handle.h"
@@ -119,10 +121,13 @@ public:
 	bool is_xrun() const { return _flags & IsXrun; }
 	bool matches (Flags f) const { return _flags & f; }
 
+	/* any range with start < end  -- not a marker */
+	bool is_range() const { return _flags & (IsSessionRange | IsRangeMarker | IsAutoLoop | IsAutoPunch | IsCDMarker); }
+
 	Flags flags () const { return _flags; }
 
-	boost::shared_ptr<SceneChange> scene_change() const { return _scene_change; }
-	void set_scene_change (boost::shared_ptr<SceneChange>);
+	std::shared_ptr<SceneChange> scene_change() const { return _scene_change; }
+	void set_scene_change (std::shared_ptr<SceneChange>);
 
 	int32_t cue_id() const { assert (is_cue_marker()); return _cue; }
 	void set_cue_id (int32_t);
@@ -137,6 +142,8 @@ public:
 	static PBD::Signal1<void,Location*> flags_changed;
 	static PBD::Signal1<void,Location*> lock_changed;
 	static PBD::Signal1<void,Location*> cue_change;
+	static PBD::Signal1<void,Location*> scene_changed;
+	static PBD::Signal1<void,Location*> time_domain_changed; /* unused */
 
 	/* this is sent only when both start and end change at the same time */
 	static PBD::Signal1<void,Location*> changed;
@@ -152,34 +159,77 @@ public:
 	PBD::Signal0<void> StartChanged;
 	PBD::Signal0<void> FlagsChanged;
 	PBD::Signal0<void> LockChanged;
+	PBD::Signal0<void> CueChanged;
+	PBD::Signal0<void> SceneChanged; /* unused */
 	PBD::Signal0<void> TimeDomainChanged;
 
 	/* CD Track / CD-Text info */
 
 	std::map<std::string, std::string> cd_info;
-	XMLNode& cd_info_node (const std::string &, const std::string &);
+	static XMLNode& cd_info_node (const std::string &, const std::string &);
 
-	XMLNode& get_state (void);
+	XMLNode& get_state () const;
 	int set_state (const XMLNode&, int version);
 
 	Temporal::TimeDomain position_time_domain() const { return _start.time_domain(); }
-	void set_position_time_domain (Temporal::TimeDomain ps);
 
-	static PBD::Signal0<void> scene_changed; /* for use by backend scene change management, class level */
-	PBD::Signal0<void> SceneChangeChanged;   /* for use by objects interested in this object */
+	void globally_change_time_domain (Temporal::TimeDomain from, Temporal::TimeDomain to);
+	void change_time_domain (Temporal::TimeDomain from, Temporal::TimeDomain to);
+
+	class ChangeSuspender {
+		public:
+			ChangeSuspender (Location* l) : _l (l) {
+				_l->suspend_signals ();
+			}
+			ChangeSuspender (ChangeSuspender const& other) : _l (other._l) {
+				_l->suspend_signals ();
+			}
+			~ChangeSuspender () {
+				_l->resume_signals ();
+			}
+		private:
+			Location* _l;
+	};
+
+protected:
+	friend class ChangeSuspender;
+	void suspend_signals ();
+	void resume_signals ();
 
 private:
-	std::string        _name;
-	timepos_t          _start;
-	timepos_t          _end;
-	Flags              _flags;
-	bool               _locked;
-	boost::shared_ptr<SceneChange> _scene_change;
-	int64_t            _timestamp;
-	int32_t            _cue;
-
 	void set_mark (bool yn);
 	bool set_flag_internal (bool yn, Flags flag);
+
+	enum Signal {
+		Name,
+		StartEnd,
+		End,
+		Start,
+		Flag,
+		Lock,
+		Cue,
+		Scene,
+		Domain
+	};
+
+	void emit_signal (Signal);
+	void actually_emit_signal (Signal);
+
+
+	std::string _name;
+	timepos_t   _start;
+	timepos_t   _end;
+	Flags       _flags;
+	bool        _locked;
+	int64_t     _timestamp;
+	int32_t     _cue;
+
+	uint32_t         _signals_suspended;
+	std::set<Signal> _postponed_signals;
+
+	std::shared_ptr<SceneChange> _scene_change;
+
+	void set_position_time_domain (Temporal::TimeDomain);
 };
 
 /** A collection of session locations including unique dedicated locations (loop, punch, etc) */
@@ -211,9 +261,13 @@ public:
 	bool clear_xrun_markers ();
 	bool clear_ranges ();
 
+	bool clear_cue_markers (samplepos_t start, samplepos_t end);
+
+	void cut_copy_section (timepos_t const& start, timepos_t const& end, timepos_t const& to, SectionOperation const op);
+
 	void ripple (timepos_t const & at, timecnt_t const & distance, bool include_locked, bool notify);
 
-	XMLNode& get_state (void);
+	XMLNode& get_state () const;
 	int set_state (const XMLNode&, int version);
 	Location *get_location_by_id(PBD::ID);
 
@@ -248,6 +302,9 @@ public:
 	Location* range_starts_at (timepos_t const &, timecnt_t const & slop = timecnt_t (Temporal::AudioTime), bool incl = false) const;
 
 	void find_all_between (timepos_t const & start, timepos_t const & end, LocationList&, Location::Flags);
+
+	void globally_change_time_domain (Temporal::TimeDomain from, Temporal::TimeDomain to);
+	void change_time_domain (Temporal::TimeDomain from, Temporal::TimeDomain to);
 
 	PBD::Signal1<void,Location*> current_changed;
 

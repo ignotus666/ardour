@@ -185,7 +185,7 @@ US2400ProtocolGUI::connection_handler ()
 
 	for (ic = input_combos.begin(), oc = output_combos.begin(); ic != input_combos.end() && oc != output_combos.end(); ++ic, ++oc) {
 
-		boost::shared_ptr<Surface> surface = _cp.get_surface_by_raw_pointer ((*ic)->get_data ("surface"));
+		std::shared_ptr<Surface> surface = _cp.get_surface_by_raw_pointer ((*ic)->get_data ("surface"));
 
 		if (surface) {
 			update_port_combos (midi_inputs, midi_outputs, *ic, *oc, surface);
@@ -197,7 +197,7 @@ void
 US2400ProtocolGUI::update_port_combos (vector<string> const& midi_inputs, vector<string> const& midi_outputs,
                                        Gtk::ComboBox* input_combo,
                                        Gtk::ComboBox* output_combo,
-                                       boost::shared_ptr<Surface> surface)
+                                       std::shared_ptr<Surface> surface)
 {
 	Glib::RefPtr<Gtk::ListStore> input = build_midi_port_list (midi_inputs, true);
 	Glib::RefPtr<Gtk::ListStore> output = build_midi_port_list (midi_outputs, false);
@@ -272,7 +272,7 @@ US2400ProtocolGUI::device_dependent_widget ()
 
 	for (int32_t n = 0; n < portcount; ++n) {
 
-		boost::shared_ptr<Surface> surface = _cp.nth_surface (n);
+		std::shared_ptr<Surface> surface = _cp.nth_surface (n);
 
 		if (!surface) {
 			PBD::fatal << string_compose (_("programming error: %1\n"), string_compose ("n=%1 surface not found!", n)) << endmsg;
@@ -291,7 +291,7 @@ US2400ProtocolGUI::device_dependent_widget ()
 		output_combo->set_data ("surface", surface.get());
 		output_combos.push_back (output_combo);
 
-		boost::weak_ptr<Surface> ws (surface);
+		std::weak_ptr<Surface> ws (surface);
 		input_combo->signal_changed().connect (sigc::bind (sigc::mem_fun (*this, &US2400ProtocolGUI::active_port_changed), input_combo, ws, true));
 		output_combo->signal_changed().connect (sigc::bind (sigc::mem_fun (*this, &US2400ProtocolGUI::active_port_changed), output_combo, ws, false));
 
@@ -407,7 +407,7 @@ US2400ProtocolGUI::refresh_function_key_editor ()
 
 		Glib::RefPtr<Gtk::Action> act;
 		string action;
-		const string defstring = "\u2022";
+		const string defstring = u8"\u2022";
 
 		/* We only allow plain bindings for Fn keys. All others are
 		 * reserved for hard-coded actions. */
@@ -470,7 +470,7 @@ US2400ProtocolGUI::action_changed (const Glib::ustring &sPath, const TreeModel::
 			 * within the model.
 			 */
 			if (remove) {
-				Glib::ustring dot = "\u2022";
+				Glib::ustring dot = u8"\u2022";
 				(*row).set_value (col.index(), dot);
 			} else {
 				(*row).set_value (col.index(), act->get_label());
@@ -568,13 +568,13 @@ US2400ProtocolGUI::build_midi_port_list (vector<string> const & ports, bool for_
 }
 
 void
-US2400ProtocolGUI::active_port_changed (Gtk::ComboBox* combo, boost::weak_ptr<Surface> ws, bool for_input)
+US2400ProtocolGUI::active_port_changed (Gtk::ComboBox* combo, std::weak_ptr<Surface> ws, bool for_input)
 {
 	if (ignore_active_change) {
 		return;
 	}
 
-	boost::shared_ptr<Surface> surface = ws.lock();
+	std::shared_ptr<Surface> surface = ws.lock();
 
 	if (!surface) {
 		return;

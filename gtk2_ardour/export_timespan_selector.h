@@ -24,16 +24,16 @@
 #ifndef __export_timespan_selector_h__
 #define __export_timespan_selector_h__
 
-#include "audio_clock.h"
-
 #include <ctime>
 #include <list>
+#include <memory>
+
+#include "audio_clock.h"
 
 #ifdef interface
 #undef interface
 #endif
 
-#include <boost/shared_ptr.hpp>
 
 #include <gtkmm/box.h>
 #include <gtkmm/checkbutton.h>
@@ -63,11 +63,11 @@ class ExportTimespanSelector : public Gtk::VBox, public ARDOUR::SessionHandlePtr
 {
 protected:
 	typedef std::list<ARDOUR::Location*>                    LocationList;
-	typedef boost::shared_ptr<ARDOUR::ExportHandler>        HandlerPtr;
-	typedef boost::shared_ptr<ARDOUR::ExportProfileManager> ProfileManagerPtr;
+	typedef std::shared_ptr<ARDOUR::ExportHandler>        HandlerPtr;
+	typedef std::shared_ptr<ARDOUR::ExportProfileManager> ProfileManagerPtr;
 
 	typedef std::list<ARDOUR::ExportTimespanPtr>           TimespanList;
-	typedef boost::shared_ptr<TimespanList>                TimespanListPtr;
+	typedef std::shared_ptr<TimespanList>                TimespanListPtr;
 	typedef ARDOUR::ExportProfileManager::TimespanStatePtr TimespanStatePtr;
 
 public:

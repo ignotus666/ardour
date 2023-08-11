@@ -327,7 +327,7 @@ MidiMultipleChannelSelector::invert_selection(void)
 
 /*-----------------------------------------*/
 
-MidiChannelSelectorWindow::MidiChannelSelectorWindow (boost::shared_ptr<MidiTrack> mt)
+MidiChannelSelectorWindow::MidiChannelSelectorWindow (std::shared_ptr<MidiTrack> mt)
 	: ArdourWindow (_("MIDI Channel Control"))
 	, track (mt)
 	, playback_all_button (playback_button_group, _("Playback all channels"))
@@ -749,7 +749,7 @@ MidiChannelSelectorWindow::capture_mode_changed ()
 		}
 	}
 
-	capture_mask_changed (); // udpate buttons
+	capture_mask_changed (); // update buttons
 
 	last_drawn_capture_mode = mode;
 }

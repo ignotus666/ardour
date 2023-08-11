@@ -74,6 +74,19 @@ downcase (const char* str)
 	return copy;
 }
 
+vector<string>
+upcase (char const *array[])
+{
+	vector<string> ret;
+	for (int n = 0; array[n]; ++n) {
+		string s (array[n]);
+		std::transform (s.begin(), s.end(), s.begin(), ::toupper);
+		ret.push_back (s);
+	}
+
+	return ret;
+}
+
 string
 short_version (string orig, string::size_type target_length)
 {

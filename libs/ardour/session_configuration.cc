@@ -28,6 +28,9 @@
 #include "pbd/file_utils.h"
 #include "pbd/pathexpand.h"
 
+#include "temporal/types.h"
+#include "temporal/types_convert.h"
+
 #include "ardour/types.h"
 #include "ardour/types_convert.h"
 #include "ardour/filesystem_paths.h"
@@ -48,29 +51,43 @@ SessionConfiguration::SessionConfiguration ()
 #include "ardour/session_configuration_vars.h"
 #undef  CONFIG_VARIABLE
 #undef  CONFIG_VARIABLE_SPECIAL
-	foo (0)
+	foo (0) // needed because above macros end in a comma
 {
+/* Uncomment the following to get a list of all config variables */
 
+#if 0
+#undef  CONFIG_VARIABLE
+#undef  CONFIG_VARIABLE_SPECIAL
+#define CONFIG_VARIABLE(Type,var,name,value) _my_variables.insert (std::make_pair ((name), &(var)));
+#define CONFIG_VARIABLE_SPECIAL(Type,var,name,value,mutator) _my_variables.insert (std::make_pair ((name), &(var)));
+#include "ardour/session_configuration_vars.h"
+#undef  CONFIG_VARIABLE
+#undef  CONFIG_VARIABLE_SPECIAL
+
+	for (auto const & s : _my_variables) {
+		std::cerr << s.first << std::endl;
+	}
+#endif
 }
 
 XMLNode&
-SessionConfiguration::get_state ()
+SessionConfiguration::get_state () const
 {
 	XMLNode* root;
 
 	root = new XMLNode ("Ardour");
-	root->add_child_nocopy (get_variables ());
+	root->add_child_nocopy (get_variables (X_("Config")));
 
 	return *root;
 }
 
 
 XMLNode&
-SessionConfiguration::get_variables ()
+SessionConfiguration::get_variables (std::string const & node_name) const
 {
 	XMLNode* node;
 
-	node = new XMLNode ("Config");
+	node = new XMLNode (node_name);
 
 #undef  CONFIG_VARIABLE
 #undef  CONFIG_VARIABLE_SPECIAL
@@ -186,7 +203,7 @@ SessionConfiguration::save_state ()
 
 	XMLTree tree;
 	XMLNode* root = new XMLNode(X_("SessionDefaults"));
-	root->add_child_nocopy (get_variables ());
+	root->add_child_nocopy (get_variables (X_("Config")));
 	tree.set_root (root);
 
 	if (!tree.write (rcfile.c_str())) {

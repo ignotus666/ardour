@@ -54,10 +54,10 @@ namespace MIDI {
 };
 
 class SysEx;
-class NoteBase;
 class Note;
 class Hit;
 class MidiTimeAxisView;
+class NoteBase;
 class GhostRegion;
 class AutomationTimeAxisView;
 class AutomationRegionView;
@@ -67,6 +67,7 @@ class EditNoteDialog;
 class PatchChange;
 class ItemCounts;
 class CursorContext;
+class VelocityGhostRegion;
 
 class MidiRegionView : public RegionView
 {
@@ -76,13 +77,13 @@ public:
 
 	MidiRegionView (ArdourCanvas::Container*              parent,
 	                RouteTimeAxisView&                    tv,
-	                boost::shared_ptr<ARDOUR::MidiRegion> r,
+	                std::shared_ptr<ARDOUR::MidiRegion> r,
 	                double                                samples_per_pixel,
 	                uint32_t                              basic_color);
 
 	MidiRegionView (ArdourCanvas::Container*              parent,
 	                RouteTimeAxisView&                    tv,
-	                boost::shared_ptr<ARDOUR::MidiRegion> r,
+	                std::shared_ptr<ARDOUR::MidiRegion> r,
 	                double                                samples_per_pixel,
 	                uint32_t                              basic_color,
 	                bool                                  recording,
@@ -90,13 +91,15 @@ public:
 
 
 	MidiRegionView (const MidiRegionView& other);
-	MidiRegionView (const MidiRegionView& other, boost::shared_ptr<ARDOUR::MidiRegion>);
+	MidiRegionView (const MidiRegionView& other, std::shared_ptr<ARDOUR::MidiRegion>);
 
 	~MidiRegionView ();
 
 	void init (bool wfd);
 
-	const boost::shared_ptr<ARDOUR::MidiRegion> midi_region() const;
+	void set_selected (bool yn);
+
+	const std::shared_ptr<ARDOUR::MidiRegion> midi_region() const;
 
 	inline MidiTimeAxisView* midi_view() const
 	{ return dynamic_cast<MidiTimeAxisView*>(&trackview); }
@@ -120,12 +123,9 @@ public:
 	void hide_step_edit_cursor ();
 	void set_step_edit_cursor_width (Temporal::Beats beats);
 
-	void redisplay_model();
-
 	GhostRegion* add_ghost (TimeAxisView&);
 
-	NoteBase* add_note(const boost::shared_ptr<NoteType> note, bool visible);
-	void resolve_note(uint8_t note_num, Temporal::Beats end_time);
+	NoteBase* add_note(const std::shared_ptr<NoteType> note, bool visible);
 
 	void cut_copy_clear (Editing::CutCopyOp);
 	bool paste (Temporal::timepos_t const & pos, const ::Selection& selection, PasteContext& ctx);
@@ -180,16 +180,23 @@ public:
 	void end_write();
 	void extend_active_notes();
 
-	void display_model(boost::shared_ptr<ARDOUR::MidiModel> model);
+	void begin_drag_edit (std::string const & why);
+	void mid_drag_edit ();
+	void end_drag_edit (bool apply);
 
+	void display_model(std::shared_ptr<ARDOUR::MidiModel> model);
+
+	/* note_diff commands should start here; this initiates an undo record */
 	void start_note_diff_command (std::string name = "midi edit");
+
 	void note_diff_add_change (NoteBase* ev, ARDOUR::MidiModel::NoteDiffCommand::Property, uint8_t val);
 	void note_diff_add_change (NoteBase* ev, ARDOUR::MidiModel::NoteDiffCommand::Property, Temporal::Beats val);
-	void note_diff_add_note (const boost::shared_ptr<NoteType> note, bool selected, bool show_velocity = false);
+	void note_diff_add_note (const std::shared_ptr<NoteType> note, bool selected, bool show_velocity = false);
 	void note_diff_remove_note (NoteBase* ev);
 
-	void apply_diff (bool as_subcommand = false, bool was_copy = false);
-	void abort_command();
+	/* note_diff commands should be completed with one of these calls; they may (or may not) commit the undo record */
+	void apply_note_diff (bool as_subcommand = false, bool was_copy = false);
+	void abort_note_diff();
 
 	void   note_entered(NoteBase* ev);
 	void   note_left(NoteBase* ev);
@@ -202,12 +209,13 @@ public:
 	void   note_selected(NoteBase* ev, bool add, bool extend=false);
 	void   note_deselected(NoteBase* ev);
 	void   delete_selection();
-	void   delete_note (boost::shared_ptr<NoteType>);
+	void   delete_note (std::shared_ptr<NoteType>);
 	size_t selection_size() { return _selection.size(); }
 	void   select_all_notes ();
 	void   select_range(Temporal::timepos_t const & start, Temporal::timepos_t const & end);
 	void   invert_selection ();
 	void   extend_selection ();
+	void   duplicate_selection ();
 
 	Temporal::Beats earliest_in_selection ();
 	void move_selection(Temporal::timecnt_t const & dx, double dy, double cumulative_dy);
@@ -225,7 +233,7 @@ public:
 	 * @param visible will be set to true if the note is within the visible note range, false otherwise.
 	 * @return true iff the note is within the (time) extent of the region.
 	 */
-	bool note_in_region_range(const boost::shared_ptr<NoteType> note, bool& visible) const;
+	bool note_in_region_range(const std::shared_ptr<NoteType> note, bool& visible) const;
 
 	/** Get the region position in pixels relative to session. */
 	double get_position_pixels();
@@ -240,7 +248,7 @@ public:
 	void begin_resizing(bool at_front);
 
 	void update_resizing (NoteBase* primary, bool at_front, double delta_x, bool relative, double snap_delta, bool with_snap);
-	void commit_resizing (NoteBase* primary, bool at_front, double delat_x, bool relative, double snap_delta, bool with_snap);
+	void finish_resizing (NoteBase* primary, bool at_front, double delat_x, bool relative, double snap_delta, bool with_snap);
 	void abort_resizing ();
 
 	/** Change the channel of the selection.
@@ -275,14 +283,16 @@ public:
 	 * @param x a pixel coordinate relative to region start
 	 * @param ensure_snap ignore SnapOff and magnetic snap.
 	 * Required for inverting snap logic with modifier keys and snap delta calculation.
-	 * @return the snapped timepos_t coordinate relative to region start
+	 * @return the snapped timecnt_t coordinate relative to region start
 	 */
-	Temporal::timepos_t snap_pixel_to_time (double x, bool ensure_snap = false);
+	Temporal::timecnt_t snap_pixel_to_time (double x, bool ensure_snap = false);
 
 	void goto_previous_note (bool add_to_selection);
 	void goto_next_note (bool add_to_selection);
 	void change_note_lengths (bool, bool, Temporal::Beats beats, bool start, bool end);
 	void change_velocities (bool up, bool fine, bool allow_smush, bool all_together);
+	void set_velocity (NoteBase* primary, int velocity);
+	bool set_velocity_for_notes (std::vector<NoteBase*> notes, int velocity);
 	void transpose (bool up, bool fine, bool allow_smush);
 	void nudge_notes (bool forward, bool fine);
 	void channel_edit ();
@@ -291,13 +301,11 @@ public:
 	void show_list_editor ();
 
 	typedef std::set<NoteBase*> Selection;
-	Selection selection () const {
+	Selection const & selection () const {
 		return _selection;
 	}
 
 	void selection_as_notelist (Notes& selected, bool allow_all_if_none_selected = false);
-
-	void enable_display (bool);
 
 	void set_channel_selector_scoped_note(NoteBase* note){ _channel_selection_scoped_note = note; }
 	NoteBase* channel_selector_scoped_note(){  return _channel_selection_scoped_note; }
@@ -323,7 +331,7 @@ public:
 
 	void note_deleted (NoteBase*);
 
-	void show_verbose_cursor_for_new_note_value(boost::shared_ptr<NoteType> current_note, uint8_t new_note) const;
+	void show_verbose_cursor_for_new_note_value(std::shared_ptr<NoteType> current_note, uint8_t new_note) const;
 
   protected:
 	void region_resized (const PBD::PropertyChange&);
@@ -334,6 +342,7 @@ public:
 	void reset_width_dependent_items (double pixel_width);
 
 	void parameter_changed (std::string const & p);
+	void _redisplay (bool view_only);
 
   protected:
 	friend class Editor;
@@ -389,6 +398,8 @@ public:
 	void nudge_notes_earlier () { nudge_notes (false, false); }
 	void nudge_notes_earlier_fine () { nudge_notes (false, true); }
 
+	void quantize_selected_notes ();
+
   private:
 
 	friend class MidiRubberbandSelectDrag;
@@ -403,9 +414,9 @@ public:
 	/** Play the NoteOn event of the given note immediately
 	 * and schedule the playback of the corresponding NoteOff event.
 	 */
-	void play_midi_note (boost::shared_ptr<NoteType> note);
-	void start_playing_midi_note (boost::shared_ptr<NoteType> note);
-	void start_playing_midi_chord (std::vector<boost::shared_ptr<NoteType> > notes);
+	void play_midi_note (std::shared_ptr<NoteType> note);
+	void start_playing_midi_note (std::shared_ptr<NoteType> note);
+	void start_playing_midi_chord (std::vector<std::shared_ptr<NoteType> > notes);
 
 	/** Clear the note selection of just this midi region
 	 */
@@ -423,7 +434,7 @@ public:
 
 	void change_note_channel (NoteBase *, int8_t, bool relative=false);
 	void change_note_velocity(NoteBase* ev, int8_t vel, bool relative=false);
-	void change_note_note(NoteBase* ev, int8_t note, bool relative=false);
+	uint8_t change_note_note(NoteBase* ev, int8_t note, bool relative=false);
 	void change_note_time(NoteBase* ev, ARDOUR::MidiModel::TimeType, bool relative=false);
 	void change_note_length (NoteBase *, ARDOUR::MidiModel::TimeType);
 	void trim_note(NoteBase* ev, ARDOUR::MidiModel::TimeType start_delta,
@@ -435,10 +446,10 @@ public:
 	void add_to_selection (NoteBase*);
 	void remove_from_selection (NoteBase*);
 
-	std::string get_note_name (boost::shared_ptr<NoteType> note, uint8_t note_value) const;
+	std::string get_note_name (std::shared_ptr<NoteType> note, uint8_t note_value) const;
 
 	void show_verbose_cursor (std::string const &, double, double) const;
-	void show_verbose_cursor (boost::shared_ptr<NoteType>) const;
+	void show_verbose_cursor (std::shared_ptr<NoteType>) const;
 
 	uint8_t get_velocity_for_add (ARDOUR::MidiModel::TimeType time) const;
 	uint8_t get_channel_for_add (ARDOUR::MidiModel::TimeType time) const;
@@ -446,12 +457,12 @@ public:
 	uint8_t  _current_range_min;
 	uint8_t  _current_range_max;
 
-	typedef boost::unordered_map<boost::shared_ptr<NoteType>, NoteBase*>                             Events;
-	typedef boost::unordered_map<ARDOUR::MidiModel::PatchChangePtr, boost::shared_ptr<PatchChange> > PatchChanges;
-	typedef boost::unordered_map<ARDOUR::MidiModel::constSysExPtr, boost::shared_ptr<SysEx> >        SysExes;
+	typedef boost::unordered_map<std::shared_ptr<NoteType>, NoteBase*>                             Events;
+	typedef boost::unordered_map<ARDOUR::MidiModel::PatchChangePtr, std::shared_ptr<PatchChange> > PatchChanges;
+	typedef boost::unordered_map<ARDOUR::MidiModel::constSysExPtr, std::shared_ptr<SysEx> >        SysExes;
 	typedef std::vector<NoteBase*> CopyDragEvents;
 
-	boost::shared_ptr<ARDOUR::MidiModel> _model;
+	std::shared_ptr<ARDOUR::MidiModel> _model;
 	Events                               _events;
 	CopyDragEvents                       _copy_drag_events;
 	PatchChanges                         _patch_changes;
@@ -477,26 +488,29 @@ public:
 
 	/** New notes (created in the current command) which should be selected
 	 * when they appear after the command is applied. */
-	std::set< boost::shared_ptr<NoteType> > _marked_for_selection;
+	std::set< std::shared_ptr<NoteType> > _marked_for_selection;
 
 	/** Notes that should be selected when the model is redisplayed. */
 	std::set<Evoral::event_id_t> _pending_note_selection;
 
 	/** New notes (created in the current command) which should have visible velocity
 	 * when they appear after the command is applied. */
-	std::set< boost::shared_ptr<NoteType> > _marked_for_velocity;
+	std::set< std::shared_ptr<NoteType> > _marked_for_velocity;
 
 	std::vector<NoteResizeData *> _resize_data;
 
 	/** connection used to connect to model's ContentChanged signal */
 	PBD::ScopedConnection content_connection;
 
-	NoteBase* find_canvas_note (boost::shared_ptr<NoteType>);
+	NoteBase* find_canvas_note (std::shared_ptr<NoteType>);
 	NoteBase* find_canvas_note (Evoral::event_id_t id);
 	Events::iterator _optimization_iterator;
 
-	boost::shared_ptr<PatchChange> find_canvas_patch_change (ARDOUR::MidiModel::PatchChangePtr p);
-	boost::shared_ptr<SysEx> find_canvas_sys_ex (ARDOUR::MidiModel::SysExPtr s);
+	std::shared_ptr<PatchChange> find_canvas_patch_change (ARDOUR::MidiModel::PatchChangePtr p);
+	std::shared_ptr<SysEx> find_canvas_sys_ex (ARDOUR::MidiModel::SysExPtr s);
+
+	friend class VelocityGhostRegion;
+	void sync_velocity_drag (double factor);
 
 	void update_note (NoteBase*, bool update_ghost_regions = true);
 	void update_sustained (Note *, bool update_ghost_regions = true);
@@ -527,7 +541,7 @@ public:
 	void display_patch_changes_on_channel (uint8_t, bool);
 
 	void connect_to_diskstream ();
-	void data_recorded (boost::weak_ptr<ARDOUR::MidiSource>);
+	void data_recorded (std::weak_ptr<ARDOUR::MidiSource>);
 
 	/** Get grid type as beats, or default to 1 if not snapped to beats. */
 	Temporal::Beats get_grid_beats(Temporal::timepos_t const & pos) const;
@@ -546,6 +560,7 @@ public:
 	double    _last_event_y;
 	bool      _entered;
 	NoteBase* _entered_note;
+	bool      _select_all_notes_after_add;
 
 	bool _mouse_changed_selection;
 
@@ -554,7 +569,7 @@ public:
 
 	PBD::ScopedConnection _mouse_mode_connection;
 
-	boost::shared_ptr<CursorContext> _press_cursor_ctx;
+	std::shared_ptr<CursorContext> _press_cursor_ctx;
 
 	ARDOUR::ChannelMode get_channel_mode() const;
 	uint16_t get_selected_channels () const;
@@ -565,6 +580,14 @@ public:
 
 	double note_to_y (uint8_t note) const;
 	uint8_t y_to_note (double y) const;
+
+	void update_patch_changes ();
+	void update_sysexes ();
+	void view_changed ();
+	void model_changed ();
+
+	void sync_ghost_selection (NoteBase*);
+	void drag_apply ();
 };
 
 

@@ -21,18 +21,13 @@
  */
 
 #include <iostream>
-#include <sstream>
-#include <unistd.h>
 #include <cerrno>
 #include <cstdlib>
 #include <cstdio> /* for snprintf, grrr */
 #include <cstring>
 
 #include <glib.h>
-#include "pbd/gstdio_compat.h"
 #include <glibmm/miscutils.h>
-
-#include <cairo/cairo.h>
 
 #include <pango/pangoft2.h> // for fontmap resolution control for GnomeCanvas
 #include <pango/pangocairo.h> // for fontmap resolution control for GnomeCanvas
@@ -54,11 +49,11 @@
 #include "ardour/utils.h"
 #include "ardour/types_convert.h"
 
-#include "gtkmm2ext/rgb_macros.h"
 #include "gtkmm2ext/gtk_ui.h"
 
 #include "canvas/text.h"
 
+#include "editing_convert.h"
 #include "ui_config.h"
 
 #include "pbd/i18n.h"
@@ -67,6 +62,8 @@ using namespace std;
 using namespace PBD;
 using namespace ARDOUR;
 using namespace Gtkmm2ext;
+
+extern int query_darwin_version (); // cocoacarbon.mm
 
 static const char* ui_config_file_name = "ui_config";
 static const char* default_ui_config_file_name = "default_ui_config";
@@ -98,7 +95,35 @@ UIConfiguration::UIConfiguration ()
 	modifiers_modified (false),
 	block_save (0)
 {
+
+/* Uncomment the following to get a list of all config variables */
+#if 0
+#undef  UI_CONFIG_VARIABLE
+#define UI_CONFIG_VARIABLE(Type,var,name,value) _my_variables.insert (std::make_pair ((name), &(var)));
+#define CANVAS_FONT_VARIABLE(var,name) /* no need for metadata for these */
+#include "ui_config_vars.h"
+#undef  UI_CONFIG_VARIABLE
+#undef  CANVAS_FONT_VARIABLE
+
+	for (auto const & s : _my_variables) {
+		std::cerr << s.first << std::endl;
+	}
+#endif
+
+	/* This is global across all Configuration objects */
+
+	build_metadata ();
+
 	load_state();
+
+	/* Setup defaults */
+	if (get_freesound_dir ().empty ()) {
+		std::string const& d (Glib::build_filename (ARDOUR::user_cache_directory (), "freesound"));
+		set_freesound_dir (d);
+		if (!Glib::file_test (d, Glib::FILE_TEST_EXISTS)) {
+			g_mkdir_with_parents (d.c_str (), 0755);
+		}
+	}
 
 	ColorsChanged.connect (boost::bind (&UIConfiguration::colors_changed, this));
 
@@ -212,6 +237,11 @@ UIConfiguration::pre_gui_init ()
 #ifndef USE_CAIRO_IMAGE_SURFACE
 	if (get_cairo_image_surface()) {
 		g_setenv ("ARDOUR_IMAGE_SURFACE", "1", 1);
+	}
+#endif
+#ifdef __APPLE__
+	if (NSGLDisable == get_nsgl_view_mode()) {
+		g_setenv ("ARDOUR_NSGL", "0", 0);
 	}
 #endif
 	return 0;
@@ -512,7 +542,7 @@ UIConfiguration::save_state()
 }
 
 XMLNode&
-UIConfiguration::get_state ()
+UIConfiguration::get_state () const
 {
 	XMLNode* root;
 
@@ -529,11 +559,11 @@ UIConfiguration::get_state ()
 }
 
 XMLNode&
-UIConfiguration::get_variables (std::string which_node)
+UIConfiguration::get_variables (std::string const & node_name) const
 {
 	XMLNode* node;
 
-	node = new XMLNode (which_node);
+	node = new XMLNode (node_name);
 
 #undef  UI_CONFIG_VARIABLE
 #undef  CANVAS_FONT_VARIABLE
@@ -833,3 +863,5 @@ UIConfiguration::color_to_hex_string_no_alpha (Gtkmm2ext::Color c)
 	}
 	return buf;
 }
+
+#include "configuration_metadata.h"

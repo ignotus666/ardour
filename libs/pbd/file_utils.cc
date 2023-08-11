@@ -31,6 +31,7 @@
 #include <windows.h>
 #endif
 
+#include <glibmm/convert.h>
 #include <glibmm/fileutils.h>
 #include <glibmm/miscutils.h>
 #include <glibmm/pattern.h>
@@ -130,9 +131,11 @@ run_functor_for_paths (vector<string>& result,
 				}
 			}
 		}
-		catch (Glib::FileError const& err)
-		{
-			warning << err.what() << endmsg;
+		catch (Glib::FileError const& err) {
+			warning << string_compose (_("Cannot access file: %1"), err.what()) << endmsg;
+		}
+		catch (Glib::ConvertError const& err) {
+			warning << string_compose (_("Could not convert filename: %1"), err.what()) << endmsg;
 		}
 	}
 }
@@ -521,7 +524,7 @@ remove_directory_internal (const string& dir, size_t* size, vector<string>* path
 	for (vector<string>::const_iterator i = tmp_paths.begin();
 			i != tmp_paths.end(); ++i) {
 
-		if (g_stat (i->c_str(), &statbuf)) {
+		if (g_stat (i->c_str(), &statbuf) && g_lstat (i->c_str(), &statbuf)) {
 			continue;
 		}
 

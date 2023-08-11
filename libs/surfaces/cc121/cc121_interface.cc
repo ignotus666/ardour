@@ -26,7 +26,7 @@ using namespace ARDOUR;
 using namespace ArdourSurface;
 
 static ControlProtocol*
-new_cc121_midi_protocol (ControlProtocolDescriptor* /*descriptor*/, Session* s)
+new_cc121_midi_protocol (Session* s)
 {
 	CC121* fp;
 
@@ -45,34 +45,21 @@ new_cc121_midi_protocol (ControlProtocolDescriptor* /*descriptor*/, Session* s)
 }
 
 static void
-delete_cc121_midi_protocol (ControlProtocolDescriptor* /*descriptor*/, ControlProtocol* cp)
+delete_cc121_midi_protocol (ControlProtocol* cp)
 {
 	delete cp;
 }
 
-static bool
-probe_cc121_midi_protocol (ControlProtocolDescriptor* /*descriptor*/)
-{
-	return CC121::probe ();
-}
-
-static void*
-cc121_request_buffer_factory (uint32_t num_requests)
-{
-	return CC121::request_factory (num_requests);
-}
 
 static ControlProtocolDescriptor cc121_midi_descriptor = {
-	/*name :              */   "Steinberg CC121",
-	/*id :                */   "uri://ardour.org/surfaces/cc121:0",
-	/*ptr :               */   0,
-	/*module :            */   0,
-	/*mandatory :         */   0,
-	/*supports_feedback : */   true,
-	/*probe :             */   probe_cc121_midi_protocol,
-	/*initialize :        */   new_cc121_midi_protocol,
-	/*destroy :           */   delete_cc121_midi_protocol,
-	/*request_buffer_factory */ cc121_request_buffer_factory
+	/* name       */ "Steinberg CC121",
+	/* id         */ "uri://ardour.org/surfaces/cc121:0",
+	/* module     */ 0,
+	/* probe port */ 0,
+	/* match usb  */ 0,
+	/* available  */ 0,
+	/* initialize */ new_cc121_midi_protocol,
+	/* destroy    */ delete_cc121_midi_protocol,
 };
 
 extern "C" ARDOURSURFACE_API ControlProtocolDescriptor* protocol_descriptor () { return &cc121_midi_descriptor; }

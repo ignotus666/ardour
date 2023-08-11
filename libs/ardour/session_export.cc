@@ -45,7 +45,7 @@ using namespace PBD;
 #define TFSM_ROLL() { _transport_fsm->enqueue (new TransportFSM::Event (TransportFSM::StartTransport)); }
 #define TFSM_SPEED(speed) { _transport_fsm->enqueue (new TransportFSM::Event (speed)); }
 
-boost::shared_ptr<ExportHandler>
+std::shared_ptr<ExportHandler>
 Session::get_export_handler ()
 {
 	if (!export_handler) {
@@ -55,7 +55,7 @@ Session::get_export_handler ()
 	return export_handler;
 }
 
-boost::shared_ptr<ExportStatus>
+std::shared_ptr<ExportStatus>
 Session::get_export_status ()
 {
 	if (!export_status) {
@@ -74,10 +74,10 @@ Session::pre_export ()
 	/* take everyone out of awrite to avoid disasters */
 
 	{
-		boost::shared_ptr<RouteList> r = routes.reader ();
+		std::shared_ptr<RouteList const> r = routes.reader ();
 
-		for (RouteList::iterator i = r->begin(); i != r->end(); ++i) {
-			(*i)->protect_automation ();
+		for (auto const& i : *r) {
+			i->protect_automation ();
 		}
 	}
 
@@ -152,8 +152,7 @@ Session::start_audio_export (samplepos_t position, bool realtime, bool region_ex
 	} while (_transport_fsm->waiting_for_butler() && --timeout > 0);
 
 	if (timeout == 0) {
-		error << _("Cannot prepare transport for export") << endmsg;
-		return -1;
+		_transport_fsm->hard_stop ();
 	}
 
 	/* We're about to call Track::seek, so the butler must have finished everything
@@ -165,15 +164,20 @@ Session::start_audio_export (samplepos_t position, bool realtime, bool region_ex
 		Glib::Threads::Mutex::Lock lm (AudioEngine::instance()->process_lock ());
 		_butler->wait_until_finished ();
 
-	/* get everyone to the right position */
+		/* This method may be called from a thread start_timespan_bg(),
+		 * or from the GUI thread. We need to set/update the tempo-map
+		 * thread-local variable before calling Track::seek
+		 */
+		Temporal::TempoMap::update_thread_tempo_map ();
 
-		boost::shared_ptr<RouteList> rl = routes.reader();
+		/* get everyone to the right position */
 
-		for (RouteList::iterator i = rl->begin(); i != rl->end(); ++i) {
-			boost::shared_ptr<Track> tr = boost::dynamic_pointer_cast<Track> (*i);
+		std::shared_ptr<RouteList const> rl = routes.reader();
+
+		for (auto const& i : *rl) {
+			std::shared_ptr<Track> tr = std::dynamic_pointer_cast<Track> (i);
 			if (tr && tr->seek (position, true)) {
-				error << string_compose (_("%1: cannot seek to %2 for export"),
-						  (*i)->name(), position)
+				error << string_compose (_("%1: cannot seek to %2 for export"), i->name(), position)
 				      << endmsg;
 				return -1;
 			}
@@ -267,6 +271,9 @@ Session::process_export (pframes_t nframes)
 		if (ProcessExport (nframes).value_or (0) > 0) {
 			/* last cycle completed */
 			assert (_export_rolling);
+			if (!_realtime_export) {
+				_transport_fsm->hard_stop ();
+			}
 			stop_audio_export ();
 		}
 
@@ -280,6 +287,9 @@ void
 Session::process_export_fw (pframes_t nframes)
 {
 	if (!_export_rolling) {
+		if (_realtime_export) {
+			fail_roll (nframes);
+		}
 		try {
 			ProcessExport (0);
 		} catch (std::exception & e) {
@@ -333,6 +343,16 @@ Session::process_export_fw (pframes_t nframes)
 			return;
 		}
 		butler_completed_transport_work ();
+	}
+
+	{
+		SessionEvent* ev;
+		while (pending_events.read (&ev, 1) == 1) {
+			merge_event (ev);
+		}
+		/* remove TransportStateChange events (which otherwise accumulate with each exported range) */
+		ev = new SessionEvent (SessionEvent::TransportStateChange, SessionEvent::Clear, SessionEvent::Immediate, 0, 0);
+		merge_event (ev);
 	}
 
 	if (_remaining_latency_preroll > 0) {
@@ -396,8 +416,10 @@ Session::stop_audio_export ()
 	   stuff that stop_transport() implements.
 	*/
 
-	realtime_stop (true, true);
-	flush_all_inserts ();
+	if (!_realtime_export) {
+		realtime_stop (true, true);
+		flush_all_inserts ();
+	}
 	_export_rolling = false;
 	_butler->schedule_transport_work ();
 	reset_xrun_count ();
@@ -441,6 +463,6 @@ Session::finalize_audio_export (TransportRequestSource trs)
 	if (post_export_sync) {
 		config.set_external_sync (true);
 	} else {
-		request_locate (post_export_position, MustStop, trs);
+		request_locate (post_export_position, false, MustStop, trs);
 	}
 }

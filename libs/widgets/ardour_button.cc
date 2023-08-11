@@ -55,8 +55,7 @@ ArdourButton::Element ArdourButton::led_default_elements = ArdourButton::Element
 ArdourButton::Element ArdourButton::just_led_default_elements = ArdourButton::Element (ArdourButton::Edge|ArdourButton::Body|ArdourButton::Indicator);
 
 ArdourButton::ArdourButton (Element e, bool toggle)
-	: _sizing_text("")
-	, _markup (false)
+	: _markup (false)
 	, _elements (e)
 	, _icon (ArdourIcon::NoIcon)
 	, _icon_render_cb (0)
@@ -65,6 +64,7 @@ ArdourButton::ArdourButton (Element e, bool toggle)
 	, _char_pixel_width (0)
 	, _char_pixel_height (0)
 	, _char_avg_pixel_width (0)
+	, _width_padding (1.75)
 	, _custom_font_set (false)
 	, _text_width (0)
 	, _text_height (0)
@@ -105,14 +105,14 @@ ArdourButton::ArdourButton (Element e, bool toggle)
 }
 
 ArdourButton::ArdourButton (const std::string& str, Element e, bool toggle)
-	: _sizing_text("")
-	, _markup (false)
+	: _markup (false)
 	, _elements (e)
 	, _icon (ArdourIcon::NoIcon)
 	, _tweaks (Tweaks (0))
 	, _char_pixel_width (0)
 	, _char_pixel_height (0)
 	, _char_avg_pixel_width (0)
+	, _width_padding (1.75)
 	, _custom_font_set (false)
 	, _text_width (0)
 	, _text_height (0)
@@ -206,7 +206,7 @@ ArdourButton::set_text (const std::string& str, bool markup)
 
 	_text = str;
 	_markup = markup;
-	if (!is_realized()) {
+	if (!get_realized()) {
 		return;
 	}
 	ensure_layout ();
@@ -214,7 +214,7 @@ ArdourButton::set_text (const std::string& str, bool markup)
 		set_text_internal ();
 		/* on_size_request() will fill in _text_width/height
 		 * so queue it even if _sizing_text != "" */
-		if (_sizing_text.empty ()) {
+		if (_sizing_texts.empty ()) {
 			queue_resize ();
 		} else {
 			_layout->get_pixel_size (_text_width, _text_height);
@@ -224,12 +224,20 @@ ArdourButton::set_text (const std::string& str, bool markup)
 }
 
 void
-ArdourButton::set_sizing_text (const std::string& str)
+ArdourButton::set_sizing_text (std::string const& str)
 {
-	if (_sizing_text == str) {
+	if (_sizing_texts.size () == 1 && _sizing_texts.front() == str) {
 		return;
 	}
-	_sizing_text = str;
+	_sizing_texts.clear ();
+	_sizing_texts.push_back (str);
+	queue_resize ();
+}
+
+void
+ArdourButton::set_sizing_texts (std::vector<std::string> const& s)
+{
+	_sizing_texts = s;
 	queue_resize ();
 }
 
@@ -677,28 +685,32 @@ ArdourButton::on_size_request (Gtk::Requisition* req)
 			 * of text.
 			 */
 
-		} else if (_layout_ellipsize_width > 0 && _sizing_text.empty()) {
+		} else if (_layout_ellipsize_width > 0 && _sizing_texts.empty()) {
 
 			req->height = std::max(req->height, (int) ceil(char_pixel_height() * BASELINESTRETCH + 1.0));
 			req->width += _layout_ellipsize_width / PANGO_SCALE;
 
-		} else /*if (!_text.empty() || !_sizing_text.empty()) */ {
+		} else /*if (!_text.empty() || !_sizing_texts.empty()) */ {
 
 			req->height = std::max(req->height, (int) ceil(char_pixel_height() * BASELINESTRETCH + 1.0));
-			req->width += rint(1.75 * char_pixel_width()); // padding
-
-			if (!_sizing_text.empty()) {
-				_layout->set_text (_sizing_text); /* use sizing text */
-			}
+			req->width += rint(_width_padding * char_pixel_width()); // padding
 
 			int sizing_text_width = 0, sizing_text_height = 0;
-			_layout->get_pixel_size (sizing_text_width, sizing_text_height);
 
-			req->width += sizing_text_width;
-
-			if (!_sizing_text.empty()) {
-				set_text_internal (); /* restore display text */
+			for (auto const& txt : _sizing_texts) {
+				_layout->set_text (txt); /* use sizing text */
+				int w, h;
+				_layout->get_pixel_size (w, h);
+				sizing_text_width = max(sizing_text_width, w);
+				sizing_text_width = max(sizing_text_width, h);
 			}
+
+			if (!_sizing_texts.empty()) {
+				set_text_internal (); /* restore display text */
+			} else {
+				_layout->get_pixel_size (sizing_text_width, sizing_text_height);
+			}
+			req->width += sizing_text_width;
 		}
 
 		/* XXX hack (surprise). Deal with two common rotation angles */
@@ -750,7 +762,7 @@ ArdourButton::on_size_request (Gtk::Requisition* req)
 			req->width = req->height;
 		if (req->height < req->width)
 			req->height = req->width;
-	} else if (_sizing_text.empty() && _text_width > 0 && !(_elements & Menu)) {
+	} else if (_sizing_texts.empty() && _text_width > 0 && !(_elements & Menu)) {
 		// properly centered text for those elements that are centered
 		// (no sub-pixel offset)
 		if ((req->width - _text_width) & 1) { ++req->width; }
@@ -1017,7 +1029,7 @@ ArdourButton::on_size_allocate (Allocation& alloc)
 }
 
 void
-ArdourButton::set_controllable (boost::shared_ptr<Controllable> c)
+ArdourButton::set_controllable (std::shared_ptr<Controllable> c)
 {
 	watch_connection.disconnect ();
 	binding_proxy.set_controllable (c);
@@ -1026,7 +1038,7 @@ ArdourButton::set_controllable (boost::shared_ptr<Controllable> c)
 void
 ArdourButton::watch ()
 {
-	boost::shared_ptr<Controllable> c (binding_proxy.get_controllable ());
+	std::shared_ptr<Controllable> c (binding_proxy.get_controllable ());
 
 	if (!c) {
 		warning << _("button cannot watch state of non-existing Controllable\n") << endmsg;
@@ -1098,7 +1110,7 @@ ArdourButton::on_style_changed (const RefPtr<Gtk::Style>& style)
 	if (!_custom_font_set && _layout && _layout->get_font_description () != new_style->get_font ()) {
 		_layout->set_font_description (new_style->get_font ());
 		queue_resize ();
-	} else if (is_realized()) {
+	} else if (get_realized()) {
 		queue_resize ();
 	}
 }
@@ -1110,7 +1122,7 @@ ArdourButton::on_name_changed ()
 	_char_pixel_height = 0;
 	_diameter = 0;
 	_update_colors = true;
-	if (is_realized()) {
+	if (get_realized()) {
 		queue_resize ();
 	}
 }
@@ -1149,7 +1161,7 @@ ArdourButton::set_image (const RefPtr<Gdk::Pixbuf>& img)
 {
 	 _elements = (ArdourButton::Element) (_elements & ~ArdourButton::Text);
 	_pixbuf = img;
-	if (is_realized()) {
+	if (get_realized()) {
 		queue_resize ();
 	}
 }
@@ -1235,9 +1247,9 @@ ArdourButton::on_enter_notify_event (GdkEventCrossing* ev)
 		CairoWidget::set_dirty ();
 	}
 
-	boost::shared_ptr<PBD::Controllable> c (binding_proxy.get_controllable ());
+	std::shared_ptr<PBD::Controllable> c (binding_proxy.get_controllable ());
 	if (c) {
-		PBD::Controllable::GUIFocusChanged (boost::weak_ptr<PBD::Controllable> (c));
+		PBD::Controllable::GUIFocusChanged (std::weak_ptr<PBD::Controllable> (c));
 	}
 
 	return CairoWidget::on_enter_notify_event (ev);
@@ -1253,7 +1265,7 @@ ArdourButton::on_leave_notify_event (GdkEventCrossing* ev)
 	}
 
 	if (binding_proxy.get_controllable()) {
-		PBD::Controllable::GUIFocusChanged (boost::weak_ptr<PBD::Controllable> ());
+		PBD::Controllable::GUIFocusChanged (std::weak_ptr<PBD::Controllable> ());
 	}
 
 	return CairoWidget::on_leave_notify_event (ev);
@@ -1274,7 +1286,7 @@ ArdourButton::set_tweaks (Tweaks t)
 {
 	if (_tweaks != t) {
 		_tweaks = t;
-		if (is_realized()) {
+		if (get_realized()) {
 			queue_resize ();
 		}
 	}
@@ -1303,7 +1315,7 @@ ArdourButton::set_layout_ellipsize_width (int w)
 	if (_layout_ellipsize_width > 3 * PANGO_SCALE) {
 		_layout->set_width (_layout_ellipsize_width - 3 * PANGO_SCALE);
 	}
-	if (is_realized ()) {
+	if (get_realized ()) {
 		queue_resize ();
 	}
 }
@@ -1322,7 +1334,19 @@ ArdourButton::set_text_ellipsize (Pango::EllipsizeMode e)
 	if (_layout_ellipsize_width > 3 * PANGO_SCALE) {
 		_layout->set_width (_layout_ellipsize_width - 3 * PANGO_SCALE);
 	}
-	if (is_realized ()) {
+	if (get_realized ()) {
+		queue_resize ();
+	}
+}
+
+void
+ArdourButton::set_width_padding (float p)
+{
+	if (_width_padding == p) {
+		return;
+	}
+	_width_padding = p;
+	if (get_realized ()) {
 		queue_resize ();
 	}
 }

@@ -3,14 +3,18 @@
 
 #include <string>
 
+#include <glib.h>
 #include <boost/format.hpp>
 
 #include "audiographer/flag_debuggable.h"
 #include "audiographer/sink.h"
 #include "audiographer/types.h"
 
+#include "pbd/gstdio_compat.h"
 #include "pbd/signals.h"
-#include "pbd/system_exec.h"
+
+#include "ardour/system_exec.h"
+#include "ardour/export_failed.h"
 
 namespace AudioGrapher
 {
@@ -25,16 +29,32 @@ class CmdPipeWriter
   , public FlagDebuggable<>
 {
 public:
-	CmdPipeWriter (PBD::SystemExec* proc, std::string const& path)
+	CmdPipeWriter (ARDOUR::SystemExec* proc, std::string const& path, int tmp_fd = -1, gchar* tmp_file = 0)
 		: samples_written (0)
 		, _proc (proc)
 		, _path (path)
+		, _tmp_fd (tmp_fd)
+		, _tmp_file (tmp_file)
 	{
 		add_supported_flag (ProcessContext<T>::EndOfInput);
+
+		if (tmp_fd >= 0) {
+			;
+		} else if (proc->start (ARDOUR::SystemExec::ShareWithParent)) {
+			throw ARDOUR::ExportFailed ("External encoder (ffmpeg) cannot be started.");
+		}
+		proc->Terminated.connect_same_thread (exec_connections, boost::bind (&CmdPipeWriter::encode_complete, this));
 	}
 
 	virtual ~CmdPipeWriter () {
 		delete _proc;
+		if (_tmp_fd >= 0) {
+			::close (_tmp_fd);
+		}
+		if (_tmp_file) {
+			g_unlink (_tmp_file);
+			g_free (_tmp_file);
+		}
 	}
 
 	samplecnt_t get_samples_written() const { return samples_written; }
@@ -49,13 +69,19 @@ public:
 	{
 		check_flags (*this, c);
 
-		if (!_proc || !_proc->is_running()) {
+		if (_tmp_fd < 0 && (!_proc || !_proc->is_running())) {
 			throw Exception (*this, boost::str (boost::format
 						("Target encoder process is not running")));
 		}
 
 		const size_t bytes_per_sample = sizeof (T);
-		samplecnt_t const written = _proc->write_to_stdin ((const void*) c.data(), c.samples() * bytes_per_sample) / bytes_per_sample;
+		samplecnt_t written;
+		if (_tmp_fd >= 0) {
+			written = write (_tmp_fd, (const void*) c.data(), c.samples() * bytes_per_sample) / bytes_per_sample;
+		} else {
+			written = _proc->write_to_stdin ((const void*) c.data(), c.samples() * bytes_per_sample) / bytes_per_sample;
+		}
+
 		samples_written += written;
 
 		if (throw_level (ThrowProcess) && written != c.samples()) {
@@ -64,8 +90,16 @@ public:
 		}
 
 		if (c.has_flag(ProcessContext<T>::EndOfInput)) {
-			_proc->close_stdin ();
-			FileWritten (_path);
+			if (_tmp_fd >= 0) {
+				::close (_tmp_fd);
+				_tmp_fd = -1;
+				if (_proc->start (ARDOUR::SystemExec::ShareWithParent)) {
+					throw ARDOUR::ExportFailed ("External encoder (ffmpeg) cannot be started.");
+				}
+			} else {
+				_proc->close_stdin ();
+			}
+			_proc->wait ();
 		}
 	}
 
@@ -77,8 +111,22 @@ private:
 	CmdPipeWriter (CmdPipeWriter const & other) {}
 
 	samplecnt_t samples_written;
-	PBD::SystemExec* _proc;
+	ARDOUR::SystemExec* _proc;
 	std::string _path;
+	std::vector<char> _tmpfile_path_buf;
+	int _tmp_fd;
+	gchar* _tmp_file;
+
+	void encode_complete () {
+		if (_tmp_file) {
+			g_unlink (_tmp_file);
+			g_free (_tmp_file);
+			_tmp_file = NULL;
+		}
+		FileWritten (_path);
+	}
+
+	PBD::ScopedConnectionList exec_connections;
 };
 
 } // namespace

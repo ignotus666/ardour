@@ -103,6 +103,16 @@ class TestLayout : public Maschine2Layout
 static TestLayout* tl = NULL;
 #endif
 
+bool
+Maschine2::available ()
+{
+	if (hid_init()) {
+		return false;
+	}
+	hid_exit ();
+	return true;
+}
+
 Maschine2::Maschine2 (ARDOUR::Session& s)
 	: ControlProtocol (s, string (X_("NI Maschine2")))
 	, AbstractUI<Maschine2Request> (name())
@@ -123,12 +133,6 @@ Maschine2::~Maschine2 ()
 {
 	stop ();
 	hid_exit ();
-}
-
-void*
-Maschine2::request_factory (uint32_t num_requests)
-{
-	return request_buffer_factory (num_requests);
 }
 
 void
@@ -163,7 +167,7 @@ Maschine2::set_active (bool yn)
 }
 
 XMLNode&
-Maschine2::get_state()
+Maschine2::get_state() const
 {
 	XMLNode& node (ControlProtocol::get_state());
 	return node;
@@ -217,19 +221,19 @@ Maschine2::start ()
 		return -1;
 	}
 
-	boost::dynamic_pointer_cast<AsyncMIDIPort>(_midi_out)->set_flush_at_cycle_start (true);
-	_output_port = boost::dynamic_pointer_cast<AsyncMIDIPort>(_midi_out).get();
+	std::dynamic_pointer_cast<AsyncMIDIPort>(_midi_out)->set_flush_at_cycle_start (true);
+	_output_port = std::dynamic_pointer_cast<AsyncMIDIPort>(_midi_out).get();
 
 	switch (_maschine_type) {
 		case Mikro:
 			_hw = new Maschine2Mikro ();
 			_ctrl = new M2MapMikro ();
-			info << _("Maschine2 Mikro control surface intialized");
+			info << _("Maschine2 Mikro control surface initialized");
 			break;
 		case Maschine:
 			_hw = new Maschine2Mk2 ();
 			_ctrl = new M2MapMk2 ();
-			info << _("Maschine2 control surface intialized");
+			info << _("Maschine2 control surface initialized");
 			break;
 		case Studio:
 			error << _("Maschine2 Studio is not yet supported");

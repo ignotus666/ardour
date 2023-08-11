@@ -4,7 +4,7 @@
  * Copyright (C) 2009-2011 Carl Hetherington <carl@carlh.net>
  * Copyright (C) 2009-2012 David Robillard <d@drobilla.net>
  * Copyright (C) 2013-2015 Colin Fletcher <colin.m.fletcher@googlemail.com>
- * Copyright (C) 2013-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2013-2022 Robin Gareus <robin@gareus.org>
  * Copyright (C) 2015 Ben Loftis <ben@harrisonconsoles.com>
  * Copyright (C) 2015 Nick Mainsbridge <mainsbridge@gmail.com>
  *
@@ -29,11 +29,13 @@
 #include <gtkmm/menu.h>
 
 #include "pbd/convert.h"
+#include "pbd/unwind.h"
 
 #include "ardour/audio_track.h"
 #include "ardour/audioregion.h"
 #include "ardour/export_channel_configuration.h"
 #include "ardour/io.h"
+#include "ardour/midi_track.h"
 #include "ardour/route.h"
 #include "ardour/session.h"
 #include "ardour/selection.h"
@@ -52,7 +54,7 @@ using namespace PBD;
 
 PortExportChannelSelector::PortExportChannelSelector (ARDOUR::Session * session, ProfileManagerPtr manager) :
   ExportChannelSelector (session, manager),
-  channels_label (_("Channels:"), Gtk::ALIGN_LEFT),
+  channels_label (_("Channels:"), Gtk::ALIGN_START),
   split_checkbox (_("Split to mono files")),
   max_channels (MAX_EXPORT_CHANNELS),
   channel_view (max_channels)
@@ -88,9 +90,7 @@ PortExportChannelSelector::PortExportChannelSelector (ARDOUR::Session * session,
 
 	/* Finalize */
 
-	sync_with_manager();
 	show_all_children ();
-
 }
 
 PortExportChannelSelector::~PortExportChannelSelector ()
@@ -139,7 +139,9 @@ PortExportChannelSelector::fill_route_list ()
 		if ((*it)->is_master () || (*it)->is_monitor ()) {
 			continue;
 		}
-		channel_view.add_route ((*it)->output().get());
+		if ((*it)->output()->n_ports ().n_audio () > 0) {
+			channel_view.add_route ((*it)->output().get());
+		}
 	}
 
 	update_channel_count ();
@@ -233,29 +235,32 @@ PortExportChannelSelector::ChannelTreeView::set_config (ChannelConfigPtr c)
 	ExportChannelConfiguration::ChannelList chan_list = config->get_channels();
 	for (ExportChannelConfiguration::ChannelList::iterator c_it = chan_list.begin(); c_it != chan_list.end(); ++c_it) {
 
+		PortExportChannel* pec;
+		if (!(pec = dynamic_cast<PortExportChannel *> (c_it->get()))) {
+			continue;
+		}
+
 		for (Gtk::ListStore::Children::iterator r_it = route_list->children().begin(); r_it != route_list->children().end(); ++r_it) {
 
-			ARDOUR::PortExportChannel * pec;
-			if (!(pec = dynamic_cast<ARDOUR::PortExportChannel *> (c_it->get()))) {
-				continue;
-			}
-
 			Glib::RefPtr<Gtk::ListStore> port_list = r_it->get_value (route_cols.port_list_col);
-			std::set<boost::weak_ptr<AudioPort> > route_ports;
-			std::set<boost::weak_ptr<AudioPort> > intersection;
-			std::map<boost::weak_ptr<AudioPort>, string> port_labels;
+			PortExportChannel::PortSet route_ports;
+			PortExportChannel::PortSet intersection;
+			std::map<std::weak_ptr<AudioPort>, string, std::owner_less<std::weak_ptr<AudioPort> > > port_labels;
 
 			for (Gtk::ListStore::Children::const_iterator p_it = port_list->children().begin(); p_it != port_list->children().end(); ++p_it) {
 				route_ports.insert ((*p_it)->get_value (route_cols.port_cols.port));
 				port_labels.insert (make_pair ((*p_it)->get_value (route_cols.port_cols.port),
-			                                       (*p_it)->get_value (route_cols.port_cols.label)));
+				                               (*p_it)->get_value (route_cols.port_cols.label)));
 			}
+
+			std::owner_less<std::weak_ptr<AudioPort> > cmp;
 
 			std::set_intersection (pec->get_ports().begin(), pec->get_ports().end(),
 			                       route_ports.begin(), route_ports.end(),
-			                       std::insert_iterator<std::set<boost::weak_ptr<AudioPort> > > (intersection, intersection.begin()));
+			                       std::insert_iterator<PortExportChannel::PortSet> (intersection, intersection.begin()),
+			                       cmp);
 
-			intersection.erase (boost::weak_ptr<AudioPort> ()); // Remove "none" selection
+			intersection.erase (std::weak_ptr<AudioPort> ()); // Remove "none" selection
 
 			if (intersection.empty()) {
 				continue;
@@ -267,13 +272,13 @@ PortExportChannelSelector::ChannelTreeView::set_config (ChannelConfigPtr c)
 				/* Set previous channels (if any) to none */
 
 				for (uint32_t chn = 1; chn < i; ++chn) {
-					r_it->set_value (route_cols.get_channel (chn).port, boost::weak_ptr<AudioPort> ());
+					r_it->set_value (route_cols.get_channel (chn).port, std::weak_ptr<AudioPort> ());
 					r_it->set_value (route_cols.get_channel (chn).label, string ("(none)"));
 				}
 			}
 
-			boost::weak_ptr<AudioPort> port = *intersection.begin();
-			std::map<boost::weak_ptr<AudioPort>, string>::iterator label_it = port_labels.find (port);
+			std::weak_ptr<AudioPort> port = *intersection.begin();
+			std::map<std::weak_ptr<AudioPort>, string>::iterator label_it = port_labels.find (port);
 			string label = label_it != port_labels.end() ? label_it->second : "error";
 
 			r_it->set_value (route_cols.get_channel (i).port, port);
@@ -319,7 +324,7 @@ PortExportChannelSelector::ChannelTreeView::add_route (ARDOUR::IO * io)
 	row = *iter;
 
 	row[route_cols.port_cols.selected] = false;
-	row[route_cols.port_cols.port] = boost::weak_ptr<AudioPort> ();
+	row[route_cols.port_cols.port] = std::weak_ptr<AudioPort> ();
 	row[route_cols.port_cols.label] = "(none)";
 
 }
@@ -357,7 +362,7 @@ PortExportChannelSelector::ChannelTreeView::set_channel_count (uint32_t channels
 		for (Gtk::ListStore::Children::iterator it = route_list->children().begin(); it != route_list->children().end(); ++it) {
 			std::string label = it->get_value(route_cols.selected) ? "(none)" : "";
 			it->set_value (route_cols.get_channel (n_channels).label, label);
-			it->set_value (route_cols.get_channel (n_channels).port, boost::weak_ptr<AudioPort> ());
+			it->set_value (route_cols.get_channel (n_channels).port, std::weak_ptr<AudioPort> ());
 		}
 
 		/* set column width */
@@ -397,8 +402,8 @@ PortExportChannelSelector::ChannelTreeView::update_config ()
 				continue;
 			}
 
-			boost::weak_ptr<AudioPort> weak_port = row[route_cols.get_channel (i).port];
-			boost::shared_ptr<AudioPort> port = weak_port.lock ();
+			std::weak_ptr<AudioPort> weak_port = row[route_cols.get_channel (i).port];
+			std::shared_ptr<AudioPort> port = weak_port.lock ();
 			if (port) {
 				pec->add_port (port);
 			}
@@ -424,7 +429,7 @@ PortExportChannelSelector::ChannelTreeView::update_toggle_selection (std::string
 		}
 
 		iter->set_value (route_cols.get_channel (i).label, std::string("(none)"));
-		iter->set_value (route_cols.get_channel (i).port, boost::weak_ptr<AudioPort> ());
+		iter->set_value (route_cols.get_channel (i).port, std::weak_ptr<AudioPort> ());
 
 		Glib::RefPtr<Gtk::ListStore> port_list = iter->get_value (route_cols.port_list_col);
 		Gtk::ListStore::Children::iterator port_it;
@@ -455,7 +460,7 @@ PortExportChannelSelector::ChannelTreeView::update_selection_text (std::string c
 	for (port_it = port_list->children().begin(); port_it != port_list->children().end(); ++port_it) {
 		std::string label = port_it->get_value (route_cols.port_cols.label);
 		if (label == new_text) {
-			boost::weak_ptr<AudioPort> w = (*port_it)[route_cols.port_cols.port];
+			std::weak_ptr<AudioPort> w = (*port_it)[route_cols.port_cols.port];
 			iter->set_value (route_cols.get_channel (channel).port, w);
 		}
 	}
@@ -505,7 +510,6 @@ RegionExportChannelSelector::RegionExportChannelSelector (ARDOUR::Session * _ses
 	fades_button.signal_toggled ().connect (sigc::mem_fun (*this, &RegionExportChannelSelector::handle_selection));
 	vbox.pack_start (fades_button, false, false);
 
-	sync_with_manager();
 	vbox.show_all_children ();
 	show_all_children ();
 }
@@ -566,6 +570,7 @@ RegionExportChannelSelector::handle_selection ()
 TrackExportChannelSelector::TrackExportChannelSelector (ARDOUR::Session * session, ProfileManagerPtr manager)
   : ExportChannelSelector(session, manager)
   , track_output_button(_("Apply track/bus processing"))
+	, _syncing_with_manager (false)
 {
 	pack_start(main_layout);
 
@@ -576,7 +581,9 @@ TrackExportChannelSelector::TrackExportChannelSelector (ARDOUR::Session * sessio
 		select_menu.set_text (_("Selection Actions"));
 		select_menu.disable_scrolling ();
 
-		select_menu.AddMenuElem (MenuElem (_("Select tracks"), sigc::mem_fun (*this, &TrackExportChannelSelector::select_tracks)));
+		select_menu.AddMenuElem (MenuElem (_("Select all tracks"), sigc::bind (sigc::mem_fun (*this, &TrackExportChannelSelector::select_tracks), 3)));
+		select_menu.AddMenuElem (MenuElem (_("Select audio tracks"), sigc::bind (sigc::mem_fun (*this, &TrackExportChannelSelector::select_tracks), 1)));
+		select_menu.AddMenuElem (MenuElem (_("Select MIDI tracks"), sigc::bind (sigc::mem_fun (*this, &TrackExportChannelSelector::select_tracks), 2)));
 		select_menu.AddMenuElem (MenuElem (_("Select busses"), sigc::mem_fun (*this, &TrackExportChannelSelector::select_busses)));
 		select_menu.AddMenuElem (MenuElem (_("Deselect all"), sigc::mem_fun (*this, &TrackExportChannelSelector::select_none)));
 		select_menu.AddMenuElem (SeparatorElem ());
@@ -629,7 +636,7 @@ TrackExportChannelSelector::TrackExportChannelSelector (ARDOUR::Session * sessio
 
 	track_output_button.signal_clicked().connect (sigc::mem_fun (*this, &TrackExportChannelSelector::track_outputs_selected));
 
-	fill_list();
+	fill_list ();
 
 	show_all_children ();
 }
@@ -643,28 +650,139 @@ TrackExportChannelSelector::~TrackExportChannelSelector ()
 void
 TrackExportChannelSelector::sync_with_manager ()
 {
-	// TODO implement properly
+	sync_with_manager_state ();
 	update_config();
 }
 
+bool
+TrackExportChannelSelector::sync_with_manager_state ()
+{
+	auto const& statelist = manager->get_channel_configs ();
+	if (!statelist.front()) {
+		return true;
+	}
+
+	size_t selected = 0;
+	for (auto const& i : track_list->children()) {
+		Gtk::TreeModel::Row row = *i;
+		if (row[track_cols.selected]) {
+			++selected;
+		}
+	}
+
+	PBD::Unwinder<bool> uw (_syncing_with_manager, true);
+
+	auto channel_list = statelist.front()->config->get_channels();
+	if (!channel_list.empty ()) {
+		if (std::dynamic_pointer_cast <RouteExportChannel> (channel_list.front ())) {
+			track_output_button.set_active (false);
+		} else {
+			track_output_button.set_active (true);
+		}
+	}
+
+	if (selected > 0) {
+		/* Use Editor Selection */
+		return true;
+	}
+
+	for (auto const& state : statelist) {
+		ExportChannelConfiguration::ChannelList const& chan_list = state->config->get_channels ();
+
+		for (auto const& c : chan_list) {
+			std::shared_ptr<PortExportMIDI>     pem;
+			std::shared_ptr<PortExportChannel>  pec;
+			std::shared_ptr<RouteExportChannel> rec;
+
+			if ((rec = std::dynamic_pointer_cast <RouteExportChannel> (c))) {
+				for (auto const& i : track_list->children ()) {
+					Gtk::TreeModel::Row      row = *i;
+					std::shared_ptr<Route> route = row[track_cols.route];
+					if (route == rec->route ()) {
+						row[track_cols.selected] = true;
+						break;
+					}
+				}
+			} else if ((pem = std::dynamic_pointer_cast<PortExportMIDI> (c))) {
+				bool breakout = false;
+				for (auto const& i : track_list->children ()) {
+					Gtk::TreeModel::Row      row = *i;
+					std::shared_ptr<Route> route = row[track_cols.route];
+					uint32_t n_audio = route->n_outputs().n_audio();
+					uint32_t n_midi = route->n_outputs().n_midi();
+					if (n_audio > 0 || n_midi == 0) {
+						continue;
+					}
+					for (uint32_t i = 0; i < n_midi; ++i) {
+						std::shared_ptr<MidiPort> port = route->output()->midi (i);
+						assert (pem->port ());
+						if (port && port == pem->port ()) {
+							row[track_cols.selected] = true;
+							breakout = true;
+						}
+					}
+					if (breakout) {
+						continue;
+					}
+				}
+			} else if ((pec = std::dynamic_pointer_cast<PortExportChannel> (c))) {
+				for (auto const& i : track_list->children ()) {
+					Gtk::TreeModel::Row row = *i;
+					std::shared_ptr<Route> route = row[track_cols.route];
+
+					PortExportChannel::PortSet route_ports;
+					PortExportChannel::PortSet intersection;
+
+					PortSet& ps (route->output()->ports ());
+					for (PortSet::audio_iterator p = ps.audio_begin (); p != ps.audio_end (); ++p) {
+						route_ports.insert (*p);
+					}
+
+					std::owner_less<std::weak_ptr<AudioPort> > cmp;
+
+					std::set_intersection (pec->get_ports().begin(), pec->get_ports().end(),
+					                       route_ports.begin(), route_ports.end(),
+					                       std::insert_iterator<PortExportChannel::PortSet> (intersection, intersection.begin ()),
+					                       cmp);
+
+					if (!intersection.empty()) {
+						row[track_cols.selected] = true;
+						break;
+					}
+				}
+			} else {
+				assert (0);
+			}
+		}
+	}
+	return false;
+}
+
 void
-TrackExportChannelSelector::select_tracks ()
+TrackExportChannelSelector::select_tracks (int what)
 {
 	bool excl_hidden = exclude_hidden->get_active ();
 	bool excl_muted  = exclude_muted->get_active ();
 
 	for (Gtk::ListStore::Children::iterator it = track_list->children().begin(); it != track_list->children().end(); ++it) {
 		Gtk::TreeModel::Row row = *it;
-		boost::shared_ptr<Route> route = row[track_cols.route];
-		if (boost::dynamic_pointer_cast<Track> (route)) {
-			if (excl_muted && route->muted ()) {
-				continue;
-			}
-			if (excl_hidden && route->is_hidden ()) {
-				continue;
-			}
-			row[track_cols.selected] = true;
+		std::shared_ptr<Route> route = row[track_cols.route];
+		if (!std::dynamic_pointer_cast<Track> (route)) {
+			continue;
 		}
+		if (0 == (what & 1) && std::dynamic_pointer_cast<AudioTrack> (route)) {
+			continue;
+		}
+		if (0 == (what & 2) && std::dynamic_pointer_cast<MidiTrack> (route)) {
+			continue;
+		}
+		if (excl_muted && route->muted ()) {
+			continue;
+		}
+		if (excl_hidden && route->is_hidden ()) {
+			continue;
+		}
+		row[track_cols.selected] = true;
 	}
 	update_config();
 }
@@ -677,8 +795,8 @@ TrackExportChannelSelector::select_busses ()
 
 	for (Gtk::ListStore::Children::iterator it = track_list->children().begin(); it != track_list->children().end(); ++it) {
 		Gtk::TreeModel::Row row = *it;
-		boost::shared_ptr<Route> route = row[track_cols.route];
-		if (!boost::dynamic_pointer_cast<Track> (route)) {
+		std::shared_ptr<Route> route = row[track_cols.route];
+		if (!std::dynamic_pointer_cast<Track> (route)) {
 			if (excl_muted && route->muted ()) {
 				continue;
 			}
@@ -704,7 +822,9 @@ TrackExportChannelSelector::select_none ()
 void
 TrackExportChannelSelector::track_outputs_selected ()
 {
-	update_config();
+	if (!_syncing_with_manager) {
+		update_config();
+	}
 }
 
 void
@@ -716,7 +836,7 @@ TrackExportChannelSelector::fill_list()
 	CoreSelection const& cs (_session->selection());
 
 	for (RouteList::iterator it = routes.begin(); it != routes.end(); ++it) {
-		if (!boost::dynamic_pointer_cast<Track>(*it)) {
+		if (!std::dynamic_pointer_cast<Track>(*it)) {
 			// not a track, must be a bus
 			if ((*it)->is_master () || (*it)->is_monitor ()) {
 				continue;
@@ -731,7 +851,7 @@ TrackExportChannelSelector::fill_list()
 		}
 	}
 	for (RouteList::iterator it = routes.begin(); it != routes.end(); ++it) {
-		if (boost::dynamic_pointer_cast<AudioTrack>(*it)) {
+		if (std::dynamic_pointer_cast<AudioTrack>(*it) || std::dynamic_pointer_cast<MidiTrack>(*it)) {
 			if (!(*it)->active ()) {
 				// don't include inactive tracks
 				continue;
@@ -742,7 +862,7 @@ TrackExportChannelSelector::fill_list()
 }
 
 void
-TrackExportChannelSelector::add_track (boost::shared_ptr<Route> route, bool selected)
+TrackExportChannelSelector::add_track (std::shared_ptr<Route> route, bool selected)
 {
 	Gtk::TreeModel::iterator iter = track_list->append();
 	Gtk::TreeModel::Row row = *iter;
@@ -767,12 +887,13 @@ TrackExportChannelSelector::update_config()
 
 		ExportProfileManager::ChannelConfigStatePtr state;
 
-		boost::shared_ptr<Route> route = row[track_cols.route];
+		std::shared_ptr<Route> route = row[track_cols.route];
 
 		if (track_output_button.get_active()) {
-			uint32_t outs = route->n_outputs().n_audio();
-			for (uint32_t i = 0; i < outs; ++i) {
-				boost::shared_ptr<AudioPort> port = route->output()->audio (i);
+			uint32_t n_audio = route->n_outputs().n_audio();
+			uint32_t n_midi = route->n_outputs().n_midi();
+			for (uint32_t i = 0; i < n_audio; ++i) {
+				std::shared_ptr<AudioPort> port = route->output()->audio (i);
 				if (port) {
 					ExportChannelPtr channel (new PortExportChannel ());
 					PortExportChannel * pec = static_cast<PortExportChannel *> (channel.get());
@@ -781,6 +902,22 @@ TrackExportChannelSelector::update_config()
 						state = manager->add_channel_config();
 					}
 					state->config->register_channel(channel);
+				}
+			}
+			/* ignore MIDI bypass */
+			if (n_audio > 0) {
+				n_midi = 0;
+			}
+			for (uint32_t i = 0; i < n_midi; ++i) {
+				std::shared_ptr<MidiPort> port = route->output()->midi (i);
+				if (port) {
+					ExportChannelPtr channel (new PortExportMIDI ());
+					PortExportMIDI* pem = static_cast<PortExportMIDI*> (channel.get());
+					pem->set_port (port);
+					if (!state) {
+						state = manager->add_channel_config ();
+					}
+					state->config->register_channel (channel);
 				}
 			}
 		} else {

@@ -44,6 +44,18 @@
 
 #include "fluidsynth.h"
 
+#ifdef HAVE_LV2_1_18_6
+#include <lv2/atom/atom.h>
+#include <lv2/atom/forge.h>
+#include <lv2/atom/util.h>
+#include <lv2/core/lv2.h>
+#include <lv2/log/logger.h>
+#include <lv2/midi/midi.h>
+#include <lv2/patch/patch.h>
+#include <lv2/state/state.h>
+#include <lv2/urid/urid.h>
+#include <lv2/worker/worker.h>
+#else
 #include <lv2/lv2plug.in/ns/ext/atom/atom.h>
 #include <lv2/lv2plug.in/ns/ext/atom/forge.h>
 #include <lv2/lv2plug.in/ns/ext/atom/util.h>
@@ -54,6 +66,7 @@
 #include <lv2/lv2plug.in/ns/ext/urid/urid.h>
 #include <lv2/lv2plug.in/ns/ext/worker/worker.h>
 #include <lv2/lv2plug.in/ns/lv2core/lv2.h>
+#endif
 
 enum {
 	FS_PORT_CONTROL = 0,
@@ -759,7 +772,7 @@ work (LV2_Handle                  instance,
 		fluid_synth_all_notes_off (self->synth, -1);
 		fluid_synth_all_sounds_off (self->synth, -1);
 		self->panic = false;
-		// boostrap synth engine.
+		// bootstrap synth engine.
 		float l[1024];
 		float r[1024];
 		fluid_synth_write_float (self->synth, 1024, l, 0, 1, r, 0, 1);
@@ -858,6 +871,11 @@ save (LV2_Handle                instance,
 		if (!strcmp (features[i]->URI, LV2_STATE__mapPath)) {
 			map_path = (LV2_State_Map_Path*)features[i]->data;
 		}
+#ifdef LV2_STATE__freePath
+		else if (!strcmp (features[i]->URI, LV2_STATE__freePath)) {
+			free_path = (LV2_State_Free_Path*)features[i]->data;
+		}
+#endif
 	}
 
 	if (!map_path) {

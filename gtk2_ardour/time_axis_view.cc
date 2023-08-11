@@ -81,6 +81,7 @@ using namespace ArdourWidgets;
 using Gtkmm2ext::Keyboard;
 
 #define TOP_LEVEL_WIDGET controls_ebox
+#define PX_SCALE(px) std::max((float)px, rintf((float)px * UIConfiguration::instance().get_ui_scale()))
 
 const double trim_handle_size = 6.0; /* pixels */
 uint32_t TimeAxisView::button_height = 0;
@@ -207,7 +208,7 @@ TimeAxisView::TimeAxisView (ARDOUR::Session* sess, PublicEditor& ed, TimeAxisVie
 				  Gdk::ENTER_NOTIFY_MASK|
 				  Gdk::LEAVE_NOTIFY_MASK|
 				  Gdk::SCROLL_MASK);
-	controls_ebox.set_flags (CAN_FOCUS);
+	controls_ebox.set_can_focus ();
 
 	/* note that this handler connects *before* the default handler */
 	controls_ebox.signal_scroll_event().connect (sigc::mem_fun (*this, &TimeAxisView::controls_ebox_scroll), true);
@@ -445,9 +446,8 @@ TimeAxisView::controls_ebox_button_press (GdkEventButton* event)
 void
 TimeAxisView::idle_resize (int32_t h)
 {
-	set_height (std::max(0, h));
+	set_height (std::max(0, h), OnlySelf, true);
 }
-
 
 bool
 TimeAxisView::controls_ebox_motion (GdkEventMotion* ev)
@@ -544,7 +544,7 @@ TimeAxisView::controls_ebox_button_release (GdkEventButton* ev)
 		break;
 
 	case 3:
-		popup_display_menu (ev->time);
+		popup_display_menu (1, ev->time);
 		break;
 	}
 
@@ -599,7 +599,7 @@ TimeAxisView::set_height_enum (Height h, bool apply_to_selection)
 }
 
 void
-TimeAxisView::set_height (uint32_t h, TrackHeightMode m)
+TimeAxisView::set_height (uint32_t h, TrackHeightMode m, bool from_idle)
 {
 	uint32_t lanes = 0;
 	if (m == TotalHeight) {
@@ -636,6 +636,10 @@ TimeAxisView::set_height (uint32_t h, TrackHeightMode m)
 	}
 
 	_editor.override_visible_track_count ();
+
+	if (!from_idle) {
+		_editor.queue_redisplay_track_views ();
+	}
 }
 
 void
@@ -763,14 +767,14 @@ TimeAxisView::conditionally_add_to_selection ()
 }
 
 void
-TimeAxisView::popup_display_menu (guint32 when)
+TimeAxisView::popup_display_menu (int button, guint32 when)
 {
 	conditionally_add_to_selection ();
 
 	build_display_menu ();
 
 	if (!display_menu->items().empty()) {
-		display_menu->popup (1, when);
+		display_menu->popup (button, when);
 	}
 }
 
@@ -977,7 +981,7 @@ TimeAxisView::order_selection_trims (ArdourCanvas::Item *item, bool put_start_on
 	}
 }
 
-// retuned rect is pushed back into the used_selection_rects list
+// returned rect is pushed back into the used_selection_rects list
 // in TimeAxisView::show_selection() which is the only caller.
 SelectionRect *
 TimeAxisView::get_selection_rect (uint32_t id)
@@ -1045,17 +1049,17 @@ struct null_deleter { void operator()(void const *) const {} };
 bool
 TimeAxisView::is_child (TimeAxisView* tav)
 {
-	return find (children.begin(), children.end(), boost::shared_ptr<TimeAxisView>(tav, null_deleter())) != children.end();
+	return find (children.begin(), children.end(), std::shared_ptr<TimeAxisView>(tav, null_deleter())) != children.end();
 }
 
 void
-TimeAxisView::add_child (boost::shared_ptr<TimeAxisView> child)
+TimeAxisView::add_child (std::shared_ptr<TimeAxisView> child)
 {
 	children.push_back (child);
 }
 
 void
-TimeAxisView::remove_child (boost::shared_ptr<TimeAxisView> child)
+TimeAxisView::remove_child (std::shared_ptr<TimeAxisView> child)
 {
 	Children::iterator i;
 
@@ -1236,8 +1240,8 @@ TimeAxisView::parameter_changed (string const & what_changed)
 }
 
 /** @return Pair: TimeAxisView, layer index.
- * TimeAxisView is non-0 if this object covers @param y, or one of its children
- * does. @param y is an offset from the top of the trackview area.
+ * TimeAxisView is non-0 if this object covers @p y, or one of its children
+ * does. @p y is an offset from the top of the trackview area.
  *
  * If the covering object is a child axis, then the child is returned.
  * TimeAxisView is 0 otherwise.
@@ -1325,11 +1329,11 @@ TimeAxisView::preset_height (Height h)
 {
 	switch (h) {
 	case HeightLargest:
-		return (button_height * 2) + extra_height + 260;
+		return (button_height * 2) + extra_height + PX_SCALE (260);
 	case HeightLarger:
-		return (button_height * 2) + extra_height + 160;
+		return (button_height * 2) + extra_height + PX_SCALE (160);
 	case HeightLarge:
-		return (button_height * 2) + extra_height + 60;
+		return (button_height * 2) + extra_height + PX_SCALE (60);
 	case HeightNormal:
 		return (button_height * 2) + extra_height + 10;
 	case HeightSmall:
@@ -1391,7 +1395,7 @@ TimeAxisView::reset_visual_state ()
 TrackViewList
 TrackViewList::filter_to_unique_playlists ()
 {
-	std::set<boost::shared_ptr<ARDOUR::Playlist> > playlists;
+	PlaylistSet playlists;
 	TrackViewList ts;
 
 	for (iterator i = begin(); i != end(); ++i) {
@@ -1400,7 +1404,7 @@ TrackViewList::filter_to_unique_playlists ()
 			/* not a route: include it anyway */
 			ts.push_back (*i);
 		} else {
-			boost::shared_ptr<ARDOUR::Track> t = rtav->track();
+			std::shared_ptr<ARDOUR::Track> t = rtav->track();
 			if (t) {
 				if (playlists.insert (t->playlist()).second) {
 					/* playlist not seen yet */

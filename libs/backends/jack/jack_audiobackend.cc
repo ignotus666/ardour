@@ -49,7 +49,7 @@ using std::vector;
 #define GET_PRIVATE_JACK_POINTER(localvar)  jack_client_t* localvar = _jack_connection->jack(); if (!(localvar)) { return; }
 #define GET_PRIVATE_JACK_POINTER_RET(localvar,r) jack_client_t* localvar = _jack_connection->jack(); if (!(localvar)) { return r; }
 
-JACKAudioBackend::JACKAudioBackend (AudioEngine& e, AudioBackendInfo& info, boost::shared_ptr<JackConnection> jc)
+JACKAudioBackend::JACKAudioBackend (AudioEngine& e, AudioBackendInfo& info, std::shared_ptr<JackConnection> jc)
 	: AudioBackend (e, info)
 	, _jack_connection (jc)
 	, _running (false)
@@ -75,7 +75,7 @@ JACKAudioBackend::~JACKAudioBackend()
 {
 	{
 		RCUWriter<JackPorts> writer (_jack_ports);
-		boost::shared_ptr<JackPorts> jp = writer.get_copy ();
+		std::shared_ptr<JackPorts> jp = writer.get_copy ();
 		jp->clear ();
 	}
 
@@ -737,7 +737,9 @@ JACKAudioBackend::set_jack_callbacks ()
 {
 	GET_PRIVATE_JACK_POINTER (_priv_jack);
 
-        jack_set_thread_init_callback (_priv_jack, AudioEngine::thread_init_callback, 0);
+	/* no need to set the thread_init_callback because we use the
+	 * non-callback API, and run the thread init callback in our own code.
+	 */
 
         jack_set_process_thread (_priv_jack, _process_thread, this);
         jack_set_sample_rate_callback (_priv_jack, _sample_rate_callback, this);
@@ -876,6 +878,8 @@ JACKAudioBackend::create_process_thread (boost::function<void()> f)
 int
 JACKAudioBackend::join_process_threads ()
 {
+	GET_PRIVATE_JACK_POINTER_RET (_priv_jack, -1);
+
 	int ret = 0;
 
 	for (std::vector<jack_native_thread_t>::const_iterator i = _jack_threads.begin ();
@@ -884,7 +888,7 @@ JACKAudioBackend::join_process_threads ()
 #if defined(USING_JACK2_EXPANSION_OF_JACK_API) || defined __jack_systemdeps_h__
 		// jack_client is not used by JACK2's implementation
 		// also jack_client_close() leaves threads active
-		if (jack_client_stop_thread (NULL, *i) != 0)
+		if (jack_client_stop_thread (_priv_jack, *i) != 0)
 #else
 		void* status;
 		if (pthread_join (*i, &status) != 0)
@@ -1097,7 +1101,7 @@ JACKAudioBackend::n_physical (unsigned long flags) const
 	if (ports) {
 		for (uint32_t i = 0; ports[i]; ++i) {
 			if (!strstr (ports[i], "Midi-Through")) {
-				boost::shared_ptr<JackPort> jp (new JackPort (jack_port_by_name (_priv_jack, ports[i])));
+				std::shared_ptr<JackPort> jp (new JackPort (jack_port_by_name (_priv_jack, ports[i])));
 				DataType t = port_data_type (jp);
 				if (t != DataType::NIL) {
 					c.set (t, c.get (t) + 1);

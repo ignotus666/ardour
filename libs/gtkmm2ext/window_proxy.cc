@@ -128,7 +128,7 @@ WindowProxy::toggle()
 		/* we'd like to just call this and nothing else */
 		_window->present ();
 	} else {
-		if (_window->is_mapped()) {
+		if (_window->get_mapped()) {
 			save_pos_and_size();
 		}
 
@@ -138,7 +138,7 @@ WindowProxy::toggle()
 			_window->present ();
 		}
 
-		if (_window->is_mapped()) {
+		if (_window->get_mapped()) {
 			if (_width != -1 && _height != -1) {
 				_window->set_default_size (_width, _height);
 			}
@@ -156,7 +156,7 @@ WindowProxy::xml_node_name()
 }
 
 XMLNode&
-WindowProxy::get_state ()
+WindowProxy::get_state () const
 {
 	XMLNode* node = new XMLNode (xml_node_name());
 
@@ -202,15 +202,16 @@ void
 WindowProxy::drop_window ()
 {
 	if (_window) {
+		unmap_connection.disconnect ();
 		_window->hide ();
 		delete_connection.disconnect ();
 		configure_connection.disconnect ();
 		map_connection.disconnect ();
-		unmap_connection.disconnect ();
 		delete _window;
 		_window = 0;
 		delete vistracker;
 		vistracker = 0;
+		_visible = false;
 	}
 }
 
@@ -227,7 +228,10 @@ WindowProxy::setup ()
 {
 	assert (_window);
 
-	assert (_window);
+	delete_connection.disconnect ();
+	configure_connection.disconnect ();
+	map_connection.disconnect ();
+	unmap_connection.disconnect ();
 
 	delete_connection = _window->signal_delete_event().connect (sigc::mem_fun (*this, &WindowProxy::delete_event_handler));
 	configure_connection = _window->signal_configure_event().connect (sigc::mem_fun (*this, &WindowProxy::configure_handler), false);
@@ -261,7 +265,7 @@ WindowProxy::configure_handler (GdkEventConfigure* ev)
 
 	   the difference is generally down to window manager framing.
 	*/
-	if (!visible() || !_window->is_mapped()) {
+	if (!visible() || !_window->get_mapped()) {
 		return false;
 	}
 	save_pos_and_size ();
@@ -402,4 +406,27 @@ void
 WindowProxy::set_state_mask (StateMask sm)
 {
 	_state_mask = sm;
+}
+
+void
+WindowProxy::set_transient_for (Gtk::Window& win)
+{
+	/* on macOS set_transient() calls _gdk_quartz_window_attach_to_parent()
+	 * which attaches the windows as child window to the parent. As side-effect
+	 * the child becomes the same window-level as the parent.
+	 *
+	 * This makes it hard to re-order siblings of the parent without explicit call to
+	 * re-order those (gdk_window_restack gdk_window_quartz_restack_toplevel).
+	 *
+	 * macOS has a rich concept of z-axis stacking per application, explict transient parents
+	 * are not required.
+	 *
+	 * https://developer.apple.com/documentation/appkit/nswindow/1419152-addchildwindow?language=objc
+	 * https://developer.apple.com/documentation/appkit/nswindowlevel?language=objc
+	 */
+#ifndef __APPLE__
+	if (_window) {
+		_window->set_transient_for (win);
+	}
+#endif
 }

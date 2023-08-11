@@ -95,20 +95,21 @@ Editor::embed_audio_from_video (std::string path, samplepos_t n, bool lock_posit
 	ImportProgressWindow ipw (&import_status, _("Import"), _("Cancel Import"));
 	ipw.show ();
 
-	boost::shared_ptr<ARDOUR::Track> track;
+	std::shared_ptr<ARDOUR::Track> track;
 	std::string const& gid = ARDOUR::Playlist::generate_pgroup_id ();
 	Temporal::timepos_t pos (n);
 
-	bool ok = (import_sndfiles (paths, Editing::ImportDistinctFiles, Editing::ImportAsTrack, ARDOUR::SrcBest, pos, 1, 1, track, gid, false) == 0);
+	bool ok = import_sndfiles (paths, Editing::ImportDistinctFiles, Editing::ImportAsTrack, ARDOUR::SrcBest, pos, 1, 1, track, gid, false, false) == 0;
+	import_status.clear();
 
 	if (ok && track) {
 		if (lock_position_to_video) {
-			boost::shared_ptr<ARDOUR::Playlist> pl = track->playlist();
+			std::shared_ptr<ARDOUR::Playlist> pl = track->playlist();
 			pl->find_next_region (pos, ARDOUR::End, 0)->set_video_locked (true);
 		}
 		_session->save_state ("", true);
 	}
 
 	import_status.all_done = true;
-	::g_unlink(path.c_str());
+	::g_unlink (path.c_str());
 }

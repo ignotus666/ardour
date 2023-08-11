@@ -43,6 +43,7 @@
 
 namespace PBD {
 	class Controllable;
+	class Controllable;
 	class ScopedConnectionList;
 }
 
@@ -54,6 +55,11 @@ namespace Gtk {
 
 namespace ArdourCanvas {
 	class Item;
+}
+
+namespace ARDOUR {
+	class Auditioner;
+	class Trigger;
 }
 
 namespace ARDOUR_UI_UTILS {
@@ -69,16 +75,10 @@ unsigned char* xpm2rgba (const char** xpm, uint32_t& w, uint32_t& h);
 ArdourCanvas::Points* get_canvas_points (std::string who, uint32_t npoints);
 
 Pango::FontDescription sanitized_font (std::string const&);
+Pango::FontDescription ardour_font (std::string const&);
 Pango::FontDescription get_font_for_style (std::string widgetname);
 
 void decorate (Gtk::Window& w, Gdk::WMDecoration d);
-
-Gdk::Color gdk_color_from_rgb (uint32_t);
-Gdk::Color gdk_color_from_rgba (uint32_t);
-uint32_t gdk_color_to_rgba (Gdk::Color const&);
-
-void set_color_from_rgb (Gdk::Color&, uint32_t);
-void set_color_from_rgba (Gdk::Color&, uint32_t);
 
 bool relay_key_press (GdkEventKey* ev, Gtk::Window* win);
 bool key_press_focus_accelerator_handler (Gtk::Window& window, GdkEventKey* ev);
@@ -98,10 +98,13 @@ void resize_window_to_proportion_of_monitor (Gtk::Window*, int, int);
 
 std::string escape_underscores (std::string const &);
 
+Gdk::Color round_robin_palette_color ();
 Gdk::Color unique_random_color (std::list<Gdk::Color> &);
 
 std::string rate_as_string (float r);
 std::string samples_as_time_string (ARDOUR::samplecnt_t s, float r, bool show_samples = false);
+
+std::string midi_channels_as_string (std::bitset<16>);
 
 bool windows_overlap (Gtk::Window *a, Gtk::Window *b);
 
@@ -109,6 +112,8 @@ bool overwrite_file_dialog (Gtk::Window& parent, std::string title, std::string 
 bool running_from_source_tree ();
 
 void inhibit_screensaver (bool);
+
+void copy_patch_changes (std::shared_ptr<ARDOUR::Auditioner>, std::shared_ptr<ARDOUR::Trigger>);
 
 bool convert_drop_to_paths (std::vector<std::string>&, const Gtk::SelectionData&);
 

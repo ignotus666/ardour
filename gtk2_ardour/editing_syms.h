@@ -22,6 +22,7 @@
 
 /* Changing this order will break the menu */
 GRIDTYPE(GridTypeNone)
+GRIDTYPE(GridTypePlayhead)
 GRIDTYPE(GridTypeBar)
 GRIDTYPE(GridTypeBeat)
 GRIDTYPE(GridTypeBeatDiv2)
@@ -107,3 +108,6 @@ EDITPOINT(EditAtMouse)
 INSERTTIMEOPT(LeaveIntersected)
 INSERTTIMEOPT(MoveIntersected)
 INSERTTIMEOPT(SplitIntersected)
+
+TEMPOEDITBEHAVIOR(TempoMapping)
+TEMPOEDITBEHAVIOR(TempoChanging)

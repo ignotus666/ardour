@@ -24,6 +24,7 @@
 #include "pbd/error.h"
 #include "pbd/pthread_utils.h"
 #include "pbd/stacktrace.h"
+#include "pbd/unwind.h"
 
 #include "ardour/debug.h"
 #include "ardour/disk_reader.h"
@@ -99,9 +100,21 @@ TransportFSM::init ()
 }
 
 void
+TransportFSM::hard_stop ()
+{
+	_motion_state = Stopped;
+	_last_locate.target = max_samplepos;
+	current_roll_after_locate_status = boost::none;
+	_direction_state = Forwards;
+	_transport_speed = 0;
+	_reverse_after_declick = 0;
+	_butler_state = NotWaitingForButler;
+}
+
+void
 TransportFSM::process_events ()
 {
-	processing++;
+	ExceptionSafeIncDec<int> esid (processing);
 
 	while (!queued_events.empty()) {
 
@@ -160,8 +173,6 @@ TransportFSM::process_events ()
 			delete ev;
 		}
 	}
-
-	processing--;
 }
 
 /* This is the transition table from the original boost::msm
@@ -337,7 +348,7 @@ TransportFSM::process_event (Event& ev, bool already_deferred, bool& deferred)
 				 * This happens because we only need to do a
 				 * realtime locate and continue rolling. No
 				 * disk I/O is required - the loop is
-				 * automically present in buffers already.
+				 * automatically present in buffers already.
 				 *
 				 * Note that ev.ltd is ignored and
 				 * assumed to be true because we're looping.
@@ -713,7 +724,7 @@ TransportFSM::defer (Event& ev)
 void
 TransportFSM::transition (MotionState ms)
 {
-	const MotionState old = _motion_state;
+	DEBUG_RESULT (const MotionState, old, _motion_state);
 	_motion_state = ms;
 	_transport_speed = compute_transport_speed ();
 	DEBUG_TRACE (DEBUG::TFSMState, string_compose ("Leave %1, enter %2\n", enum_2_string (old), current_state()));
@@ -722,7 +733,7 @@ TransportFSM::transition (MotionState ms)
 void
 TransportFSM::transition (ButlerState bs)
 {
-	const ButlerState old = _butler_state;
+	DEBUG_RESULT (const ButlerState, old, _butler_state);
 	_butler_state = bs;
 	_transport_speed = compute_transport_speed ();
 	DEBUG_TRACE (DEBUG::TFSMState, string_compose ("Leave %1, enter %2\n", enum_2_string (old), current_state()));
@@ -731,7 +742,7 @@ TransportFSM::transition (ButlerState bs)
 void
 TransportFSM::transition (DirectionState ds)
 {
-	const DirectionState old = _direction_state;
+	DEBUG_RESULT (const DirectionState, old, _direction_state);
 	_direction_state = ds;
 	_transport_speed = compute_transport_speed ();
 	DEBUG_TRACE (DEBUG::TFSMState, string_compose ("Leave %1, enter %2\n", enum_2_string (old), current_state()));
@@ -830,7 +841,7 @@ TransportFSM::set_speed (Event const & ev)
 }
 
 bool
-TransportFSM::will_roll_fowards () const
+TransportFSM::will_roll_forwards () const
 {
 	if (reversing() || _reverse_after_declick) {
 		return most_recently_requested_speed >= 0; /* note: future speed of zero is equivalent to Forwards */

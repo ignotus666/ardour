@@ -24,15 +24,17 @@
 #include "ardour/dB.h"
 #include "ardour/rc_configuration.h"
 
+#include "gtkmm2ext/colors.h"
 #include "gtkmm2ext/utils.h"
 
 #include "widgets/ardour_dropdown.h"
 #include "widgets/slider_controller.h"
 
 #include "stripable_colorpicker.h"
-#include "ardour_dialog.h"
 #include "luadialog.h"
+#include "public_editor.h"
 #include "splash.h"
+#include "ui_config.h"
 #include "utils.h"
 
 using namespace LuaDialog;
@@ -52,7 +54,7 @@ Message::run ()
 
 	bool splash_pushed = false;
 	Splash* spl = Splash::exists () ? Splash::instance() : NULL;
-	if (spl && spl->is_visible()) {
+	if (spl && spl->get_visible()) {
 		spl->pop_back_for (_message_dialog);
 		splash_pushed = true;
 	}
@@ -183,7 +185,7 @@ public:
 		return &_cs;
 	}
 	void assign (luabridge::LuaRef* rv) const {
-		uint32_t rgba = ARDOUR_UI_UTILS::gdk_color_to_rgba(_cs.get_color());
+		uint32_t rgba = Gtkmm2ext::gdk_color_to_rgba(_cs.get_color());
 		(*rv)[_key] = rgba;
 	}
 protected:
@@ -246,7 +248,7 @@ public:
 		: LuaDialogWidget (key, title)
 		, _db_adjustment (ARDOUR::gain_to_slider_position_with_max (1.0, ARDOUR::Config->get_max_gain ()), 0, 1, 0.01, 0.1)
 	{
-		_db_slider = Gtk::manage (new ArdourWidgets::HSliderController (&_db_adjustment, boost::shared_ptr<PBD::Controllable> (), 220, 18));
+		_db_slider = Gtk::manage (new ArdourWidgets::HSliderController (&_db_adjustment, std::shared_ptr<PBD::Controllable> (), 220, 18));
 
 		_fader_centering_box.pack_start (*_db_slider, true, false);
 
@@ -621,9 +623,9 @@ Dialog::Dialog (std::string const& title, luabridge::LuaRef lr)
 			if (i.value ()["align"].isString ()) {
 				std::string align = i.value ()["align"].cast <std::string> ();
 				if (align == "left") {
-					xalign = Gtk::ALIGN_LEFT;
+					xalign = Gtk::ALIGN_START;
 				} else if (align == "right") {
-					xalign = Gtk::ALIGN_RIGHT;
+					xalign = Gtk::ALIGN_END;
 				}
 			}
 			w = new LuaDialogHeading (title, xalign);
@@ -632,9 +634,9 @@ Dialog::Dialog (std::string const& title, luabridge::LuaRef lr)
 			if (i.value ()["align"].isString ()) {
 				std::string align = i.value ()["align"].cast <std::string> ();
 				if (align == "left") {
-					xalign = Gtk::ALIGN_LEFT;
+					xalign = Gtk::ALIGN_START;
 				} else if (align == "right") {
-					xalign = Gtk::ALIGN_RIGHT;
+					xalign = Gtk::ALIGN_END;
 				}
 			}
 			w = new LuaDialogLabel (title, xalign);
@@ -763,7 +765,7 @@ Dialog::Dialog (std::string const& title, luabridge::LuaRef lr)
 	Gtk::Table* table = Gtk::manage (new Gtk::Table ());
 	table->set_col_spacings (20);
 	table->set_row_spacings (8);
-	table->signal_size_allocate ().connect (sigc::mem_fun (this, &Dialog::table_size_alloc));
+	table->signal_size_request ().connect (sigc::mem_fun (this, &Dialog::table_size_request));
 
 	_scroller.set_shadow_type(Gtk::SHADOW_NONE);
 	_scroller.set_border_width(0);
@@ -833,12 +835,23 @@ Dialog::run (lua_State *L)
 }
 
 void
-Dialog::table_size_alloc (Gtk::Allocation& allocation)
+Dialog::table_size_request (Gtk::Requisition* req)
 {
-	/* XXX: consider using 0.75 * screen-height instead of 512 */
-	if (allocation.get_height () > 512) {
+	int h = Gtkmm2ext::physical_screen_height (PublicEditor::instance ().current_toplevel()->get_window());
+
+	int max_height = std::max (400., std::min (768.0 * UIConfiguration::instance().get_ui_scale(), h * .7));
+
+	if (req->height > max_height) {
 		_scroller.set_policy (Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
-		_ad.set_size_request (-1, 512);
+		_ad.set_size_request (-1, max_height);
+	} else {
+		/* remove shadow from scrollWindow's viewport
+		 * see http://www.mail-archive.com/gtkmm-list@gnome.org/msg03509.html
+		 * and gtk2_ardour/meterbridge.cc
+		 */
+		Gtk::Viewport* viewport = (Gtk::Viewport*) _scroller.get_child();
+		viewport->set_shadow_type(Gtk::SHADOW_NONE);
+		viewport->set_border_width(0);
 	}
 }
 

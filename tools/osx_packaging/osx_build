@@ -130,6 +130,7 @@ PluginMetadata=$Shared/plugin_metadata
 MixerSettings=$Shared/mixer_settings
 ExportFormats=$Shared/export
 Templates=$Shared/templates
+LRDFPresets=$Shared/rdf
 PatchFiles=$Shared/patchfiles
 LuaScripts=$Shared/scripts
 MediaClips=$Shared/media
@@ -315,7 +316,7 @@ cp $BUILD_ROOT/libs/clearlooks-newer/libclearlooks.dylib $GTK_ENGINE_DIR/libclea
 
 # Control Surface shared libraries
 cp $BUILD_ROOT/libs/surfaces/*/libardour_*.dylib $Surfaces
-cp $BUILD_ROOT/libs/surfaces/control_protocol/libardourcp*.dylib $Frameworks
+cp $BUILD_ROOT/libs/ctrl-interface/*/libardour_*.dylib $Frameworks
 
 # Panners
 cp $BUILD_ROOT/libs/panners/*/lib*.dylib $Panners
@@ -330,6 +331,9 @@ done
 
 #Session templates
 cp -R $BUILD_ROOT/../share/templates $Templates
+
+#LADSPA Presets
+cp -av $BUILD_ROOT/../share/rdf $LRDFPresets
 
 # PluginMetadata
 cp -R $BUILD_ROOT/../share/plugin_metadata $PluginMetadata
@@ -356,11 +360,11 @@ for x in $BUILD_ROOT/../share/scripts/*.lua ; do
 	cp "$x" $LuaScripts
 done
 
-# recusively copy web-surface html/js
+# recursively copy web-surface html/js
 cp -R $BUILD_ROOT/../share/web_surfaces $WebSurfaces
 rm $WebSurfaces/wscript
 
-# recusively copy clips/media
+# recursively copy clips/media
 cp -R $BUILD_ROOT/../share/media $MediaClips
 rm $MediaClips/wscript
 
@@ -646,31 +650,38 @@ fi
 # from here on $PRODUCT_PKG_DIR/ prefix is needed
 ################################################################################
 
-DMG_ARCH=""
 if file ${PRODUCT_PKG_DIR}/$APPROOT/MacOS/$MAIN_EXECUTABLE | grep -q x86_64; then
 	OSX_ARCH=x86_64
 	OSX_X42URI=x42-plugins.com/x42/osx
 	OSX_X42ID=osx
 	OSX_BENSID=osx64
+	TXZ_ARCH="osx"   # harvid
+	DMG_ARCH=""      # Jadeo
 elif file ${PRODUCT_PKG_DIR}/$APPROOT/MacOS/$MAIN_EXECUTABLE | grep -q ppc; then
 	OSX_ARCH=ppc
 	OSX_X42URI=x42-plugins.com/x42/osx
 	OSX_X42ID=osx
 	OSX_BENSID=osxppc
+	TXZ_ARCH="osx"
+	DMG_ARCH=""
 elif file ${PRODUCT_PKG_DIR}/$APPROOT/MacOS/$MAIN_EXECUTABLE | grep -q arm64; then
 	OSX_ARCH=arm64
 	OSX_X42URI=x42-plugins.com/x42/mac
-	OSX_X42ID="macOS-arm64"
-	DMG_ARCH="-arm64"
+	OSX_X42ID="macOS"
 	OSX_BENSID=macarm64
+	TXZ_ARCH="macOS-arm64"
+	DMG_ARCH="-arm64"
 else
 	OSX_ARCH=i386
 	OSX_X42URI=x42-plugins.com/x42/osx
 	OSX_X42ID=osx
 	OSX_BENSID=osx32
+	TXZ_ARCH="osx"
+	DMG_ARCH=""
 fi
 
 if test x$WITH_HARRISON_LV2 != x ; then
+	echo "Bundling Harrison XT plugins"
 	curl -s -S --fail -#  \
 		-z "${CACHEDIR}/${HARRISONLV2}.${OSX_BENSID}.zip" \
 		-o "${CACHEDIR}/${HARRISONLV2}.${OSX_BENSID}.zip" \
@@ -694,8 +705,8 @@ if test x$WITH_HARVID != x ; then
 	echo "copying harvid and xjadeo ..."
 
 	rsync -Pa \
-		rsync://ardour.org/video-tools/harvid-${OSX_X42ID}-${HARVID_VERSION}.tgz \
-		"$CACHEDIR/harvid-${OSX_X42ID}-${HARVID_VERSION}.tgz"
+		rsync://ardour.org/video-tools/harvid-${TXZ_ARCH}-${HARVID_VERSION}.tgz \
+		"$CACHEDIR/harvid-${TXZ_ARCH}-${HARVID_VERSION}.tgz"
 
 	rsync -Pa \
 		rsync://ardour.org/video-tools/jadeo${DMG_ARCH}-${XJADEO_VERSION:1}.dmg \
@@ -703,7 +714,7 @@ if test x$WITH_HARVID != x ; then
 
 	tar -x -z \
 		-C $PRODUCT_PKG_DIR/$APPROOT \
-		-f "$CACHEDIR/harvid-${OSX_X42ID}-${HARVID_VERSION}.tgz" || exit 1
+		-f "$CACHEDIR/harvid-${TXZ_ARCH}-${HARVID_VERSION}.tgz" || exit 1
 
 	JADEO=$(hdiutil attach "$CACHEDIR/jadeo${DMG_ARCH}-${XJADEO_VERSION:1}.dmg" | grep Apple_HFS | grep dev/ | cut -f 3)
 	cp -r "${JADEO}/Jadeo.app" "$PRODUCT_PKG_DIR/"
@@ -758,7 +769,7 @@ if test x$WITH_GRATIS_X42_LV2 != x ; then
 	echo "Adding gratis x42 plugins"
 	mkdir -p "${PRODUCT_PKG_DIR}/${APPROOT}/lib/LV2"
 
-	for proj in x42-midifilter x42-stereoroute setBfree x42-avldrums x42-limiter x42-tuner; do
+	for proj in x42-autotune x42-midifilter x42-stereoroute setBfree x42-avldrums x42-limiter x42-tuner; do
 		X42_VERSION=$(curl -s -S http://${OSX_X42URI}/${proj}.latest.txt)
 		rsync -a -q --partial \
 			rsync://${OSX_X42URI}/${proj}-lv2-${OSX_X42ID}-${X42_VERSION}.zip \
@@ -769,7 +780,7 @@ if test x$WITH_GRATIS_X42_LV2 != x ; then
 fi
 
 if test -d ${PRODUCT_PKG_DIR}/${APPROOT}/lib/LV2/; then
-	echo "Removing unused achitectures from LV plugins"
+	echo "Removing unused architectures from LV2 plugins"
 	for file in ${PRODUCT_PKG_DIR}/${APPROOT}/lib/LV2/*/*.dylib ; do
 		lipo -extract_family ${OSX_ARCH} ${file} -output ${file}.thin 2>/dev/null && \
 		mv ${file}.thin ${file}
@@ -803,7 +814,7 @@ if test -n "$MIXBUS"; then
 	curl -s -S --fail -#  \
 		-z "${CACHEDIR}/MixbusBundledMedia.zip" \
 		-o "${CACHEDIR}/MixbusBundledMedia.zip" \
-		"http://rsrc.harrisonconsoles.com/mixbus/mb8/content/MixbusBundledMedia.zip"
+		"http://builder.harrisonconsoles.com/pub/share/MixbusBundledMedia.zip"
 
 	if test -f "${CACHEDIR}/MixbusBundledMedia.zip"; then
 		echo "Adding Mixbus Bundled Content"
@@ -811,8 +822,41 @@ if test -n "$MIXBUS"; then
 		bsdtar -C "${PRODUCT_PKG_DIR}/${MediaClips}" -xf \
 			"${CACHEDIR}/MixbusBundledMedia.zip"
 	fi
+else
+	echo "Fetching Ardour bundled content"
+	curl -s -S --fail -#  \
+		-z "${CACHEDIR}/ArdourBundledMedia.zip" \
+		-o "${CACHEDIR}/ArdourBundledMedia.zip" \
+		"http://stuff.ardour.org/loops/ArdourBundledMedia.zip"
+
+	if test -f "${CACHEDIR}/ArdourBundledMedia.zip"; then
+		echo "Adding Ardour Bundled Content"
+		rm -f "${PRODUCT_PKG_DIR}/${MediaClips}/"*.*
+		bsdtar -C "${PRODUCT_PKG_DIR}/${MediaClips}" -xf \
+			"${CACHEDIR}/ArdourBundledMedia.zip"
+	fi
 fi
 
+echo "Setting Bundled Media dir/file permissions"
+find "${MediaClips}" -type d -exec chmod 755 "{}" \;
+find "${MediaClips}" -type f -exec chmod 644 "{}" \;
+
+################################################################################
+if test -n "$MIXBUS"; then
+
+	for file in `find ${PRODUCT_PKG_DIR}/${APPROOT}/lib/LV2 ${PRODUCT_PKG_DIR}/${APPROOT}/lib/ladspa -name "*.so"`; do
+		echo "Checking Plugin Binary: $file"
+		changes=""
+		for lib in `otool -L $file | egrep "(gtk/inst/|/opt/|/local/|libs/$STDCPP)" | awk '{print $1}'` ; do
+			base=`basename $lib`
+			changes="$changes -change $lib @executable_path/../lib/$base"
+		done
+		if test "x$changes" != "x" ; then
+			install_name_tool $changes $file
+		fi
+	done
+
+fi
 ################################################################################
 
 if test x$DEMO_SESSION_URL != x ; then
@@ -853,10 +897,10 @@ if test -n "${APPLE_DEVELOPER_ID_FOR_APPLICATION}"; then
 	echo "signing the main app"
 
 	# Sign everything from inside level working out.
-	find ${PRODUCT_PKG_DIR}/${APPROOT}/Resources -type f -exec codesign --verbose --timestamp ${HARDENED_OPTIONS} --force --sign "${APPLE_DEVELOPER_ID_FOR_APPLICATION}" "{}" \;
-	find ${PRODUCT_PKG_DIR}/${APPROOT}/lib -type f -exec codesign --verbose --timestamp ${HARDENED_OPTIONS} --force --sign "${APPLE_DEVELOPER_ID_FOR_APPLICATION}" "{}" \;
+	find ${PRODUCT_PKG_DIR}/${APPROOT}/Resources -type f -print0 | xargs -0 -I {} -P 7 codesign --verbose --timestamp ${HARDENED_OPTIONS} --force --sign "${APPLE_DEVELOPER_ID_FOR_APPLICATION}" "{}"
+	find ${PRODUCT_PKG_DIR}/${APPROOT}/lib -type f -print0 | xargs -0 -I {} -P 7 codesign --verbose --timestamp ${HARDENED_OPTIONS} --force --sign "${APPLE_DEVELOPER_ID_FOR_APPLICATION}" "{}"
 
-	find ${PRODUCT_PKG_DIR}/${APPROOT}/MacOS -name "${lower_case_appname}${major_version}-*" -exec codesign --verbose --timestamp ${HARDENED_OPTIONS} --force --sign "${APPLE_DEVELOPER_ID_FOR_APPLICATION}" "{}" \;
+	find ${PRODUCT_PKG_DIR}/${APPROOT}/MacOS -name "${lower_case_appname}${major_version}-*" -print0 | xargs -0 -I {} -P 7 codesign --verbose --timestamp ${HARDENED_OPTIONS} --force --sign "${APPLE_DEVELOPER_ID_FOR_APPLICATION}" "{}"
 	codesign --verbose --timestamp ${HARDENED_OPTIONS} --force --sign "${APPLE_DEVELOPER_ID_FOR_APPLICATION}" ${PRODUCT_PKG_DIR}/${APPROOT}/MacOS/ffmpeg_harvid
 	codesign --verbose --timestamp ${HARDENED_OPTIONS} --force --sign "${APPLE_DEVELOPER_ID_FOR_APPLICATION}" ${PRODUCT_PKG_DIR}/${APPROOT}/MacOS/ffprobe_harvid
 	codesign --verbose --timestamp ${HARDENED_OPTIONS} --force --sign "${APPLE_DEVELOPER_ID_FOR_APPLICATION}" ${PRODUCT_PKG_DIR}/${APPROOT}/MacOS/harvid
@@ -911,8 +955,8 @@ if test -n "${APPLE_DEVELOPER_ID_FOR_APPLICATION}"; then
 	echo "signing the Jadeo app"
 
 	# Sign everything from inside level working out.
-	find ${PRODUCT_PKG_DIR}/Jadeo.app/Contents/Resources -type f -exec codesign --verbose --timestamp ${HARDENED_OPTIONS} --force --sign "${APPLE_DEVELOPER_ID_FOR_APPLICATION}" "{}" \;
-	find ${PRODUCT_PKG_DIR}/Jadeo.app/Contents/Frameworks -type f -exec codesign --verbose --timestamp ${HARDENED_OPTIONS} --force --sign "${APPLE_DEVELOPER_ID_FOR_APPLICATION}" "{}" \;
+	find ${PRODUCT_PKG_DIR}/Jadeo.app/Contents/Resources -type f -print0 | xargs -0 -I {} -P 7 codesign --verbose --timestamp ${HARDENED_OPTIONS} --force --sign "${APPLE_DEVELOPER_ID_FOR_APPLICATION}" "{}"
+	find ${PRODUCT_PKG_DIR}/Jadeo.app/Contents/Frameworks -type f -print0 | xargs -0 -I {} -P 7 codesign --verbose --timestamp ${HARDENED_OPTIONS} --force --sign "${APPLE_DEVELOPER_ID_FOR_APPLICATION}" "{}"
 
 	codesign --verbose --timestamp ${HARDENED_OPTIONS} --force --sign "${APPLE_DEVELOPER_ID_FOR_APPLICATION}" ${PRODUCT_PKG_DIR}/Jadeo.app/Contents/MacOS/Jadeo-bin
 	codesign --verbose --timestamp ${HARDENED_OPTIONS} --force --sign "${APPLE_DEVELOPER_ID_FOR_APPLICATION}" ${PRODUCT_PKG_DIR}/Jadeo.app/Contents/MacOS/xjremote
@@ -968,21 +1012,28 @@ fi
 
 echo "Building DMG ..."
 
-# UC_DMG=$APPNAME-${release_version}-UC.dmg
-# FINAL_DMG=$APPNAME-${release_version}.dmg
+BUILDTYPE=""
 
 if [ x$DEBUG = xT ]; then
-	UC_DMG=$APPNAME-$release_version-dbg${DMG_ARCH}.dmg
-else
-	UC_DMG=$APPNAME-$release_version${DMG_ARCH}.dmg
+	BUILDTYPE="-dbg"
 fi
+if [ x$FREEBI = xT ]; then
+	BUILDTYPE="-demo"
+fi
+if [ x$DEBUG$FREEBI = xTT ]; then
+  BUILDTYPE="-demo-dbg"
+fi
+
+UC_DMG=$APPNAME-$release_version${BUILDTYPE}${DMG_ARCH}.dmg
+
 VOLNAME=$APPNAME-$release_version
 
 MNTPATH=`mktemp -d -t ardourimg`
 TMPDMG=`mktemp -t ardour`
 ICNSTMP=`mktemp -t ardouricon`
-EXTRA_SPACE_MB=30
-DMGMEGABYTES=$[ `du -sk "$PRODUCT_PKG_DIR" | cut -f 1` * 1024 / 1000000 + $EXTRA_SPACE_MB ]
+DMGMEGABYTES=$[ `du -sk "$PRODUCT_PKG_DIR" | cut -f 1` * 1024 / 1000000 ]
+EXTRA_SPACE_MB=$[ ($DMGMEGABYTES * 25) / 100 ]          #25 percent without using floating point math
+DMGMEGABYTES=$[ $DMGMEGABYTES + $EXTRA_SPACE_MB ]
 
 echo "DMG MB = " $DMGMEGABYTES
 
@@ -992,7 +1043,7 @@ mkdir -p "$MNTPATH"
 
 TMPDMG="${TMPDMG}.dmg"
 
-trap "rm -rf $MNTPATH $TMPDMG ${TMPDMG}.dmg $ICNSTMP" EXIT
+trap "rm -rf $MNTPATH $TMPDMG $ICNSTMP" EXIT
 
 hdiutil create -megabytes $DMGMEGABYTES -fs HFS+ -volname "${VOLNAME}" "$TMPDMG"
 DiskDevice=$(hdid -nomount "$TMPDMG" | grep Apple_HFS | cut -f 1 -d ' ')
@@ -1057,7 +1108,7 @@ set -e
 echo "compressing Image ..."
 
 # Umount the image ('eject' above may already have done that)
-umount "${DiskDevice}" || true
+hdiutil detach "${DiskDevice}" || true
 hdiutil eject "${DiskDevice}" || true
 # Create a read-only version, use zlib compression
 hdiutil convert -format UDZO "${TMPDMG}" -imagekey zlib-level=9 -o "${UC_DMG}"
@@ -1083,7 +1134,7 @@ fi
 rm -rf ${PRODUCT_PKG_DIR}
 
 echo
-echo "packaging suceeded."
+echo "packaging succeeded."
 ls -l "$UC_DMG"
 
 echo "dmg: checking for signing credentials"

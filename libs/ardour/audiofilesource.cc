@@ -221,7 +221,7 @@ AudioFileSource::get_soundfile_info (const string& path, SoundFileInfo& _info, s
 }
 
 XMLNode&
-AudioFileSource::get_state ()
+AudioFileSource::get_state () const
 {
 	XMLNode& root (AudioSource::get_state());
 	root.set_property (X_("channel"), _channel);
@@ -249,7 +249,7 @@ AudioFileSource::set_state (const XMLNode& node, int version)
 }
 
 void
-AudioFileSource::mark_streaming_write_completed (const Lock& lock)
+AudioFileSource::mark_streaming_write_completed (const WriterLock& lock)
 {
 	if (!writable()) {
 		return;
@@ -335,6 +335,7 @@ AudioFileSource::safe_audio_file_extension(const string& file)
 		".smp", ".SMP",
 		".snd", ".SND",
 		".maud", ".MAUD",
+		".opus", ".OPUS",
 		".voc", ".VOC",
 		".vwe", ".VWE",
 		".w64", ".W64",

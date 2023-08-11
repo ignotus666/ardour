@@ -8,7 +8,7 @@ import subprocess
 import sys
 
 # default state file version for this build
-CURRENT_SESSION_FILE_VERSION = 7000
+CURRENT_SESSION_FILE_VERSION = 7002
 
 I18N_PACKAGE = 'ardour'
 
@@ -57,6 +57,7 @@ libardour_sources = [
         'chan_count.cc',
         'chan_mapping.cc',
         'circular_buffer.cc',
+        'clip_library.cc',
         'config_text.cc',
         'control_group.cc',
         'control_protocol_manager.cc',
@@ -90,6 +91,7 @@ libardour_sources = [
         'export_handler.cc',
         'export_preset.cc',
         'export_profile_manager.cc',
+        'export_smf_writer.cc',
         'export_status.cc',
         'export_timespan.cc',
         'ffmpegfileimportable.cc',
@@ -105,6 +107,7 @@ libardour_sources = [
         'globals.cc',
         'graph.cc',
         'graphnode.cc',
+        'graph_edges.cc',
         'iec1ppmdsp.cc',
         'iec2ppmdsp.cc',
         'import.cc',
@@ -114,17 +117,18 @@ libardour_sources = [
         'internal_send.cc',
         'interpolation.cc',
         'io.cc',
+        'io_plug.cc',
         'io_processor.cc',
         'kmeterdsp.cc',
         'ladspa_plugin.cc',
         'latent.cc',
         'legatize.cc',
+        'library.cc',
         'location.cc',
         'location_importer.cc',
         'ltc_file_reader.cc',
         'ltc_slave.cc',
         'lua_api.cc',
-        'luabindings.cc',
         'luaproc.cc',
         'luascripting.cc',
         'meter.cc',
@@ -149,6 +153,7 @@ libardour_sources = [
         'midiport_manager.cc',
         'minibpm.cc',
         'mix.cc',
+        'mixer_scene.cc',
         'mode.cc',
         'monitor_control.cc',
         'monitor_port.cc',
@@ -173,6 +178,7 @@ libardour_sources = [
         'playlist.cc',
         'playlist_factory.cc',
         'playlist_source.cc',
+        'plug_insert_base.cc',
         'plugin.cc',
         'plugin_insert.cc',
         'plugin_manager.cc',
@@ -186,7 +192,6 @@ libardour_sources = [
         'presentation_info.cc',
         'process_thread.cc',
         'processor.cc',
-        'progress.cc',
         'quantize.cc',
         'rc_configuration.cc',
         'readable.cc',
@@ -201,10 +206,10 @@ libardour_sources = [
         'return.cc',
         'reverse.cc',
         'route.cc',
-        'route_graph.cc',
         'route_group.cc',
         'route_group_member.cc',
         'rb_effect.cc',
+        'rt_task.cc',
         'rt_tasklist.cc',
         'scene_change.cc',
         'search_paths.cc',
@@ -233,6 +238,7 @@ libardour_sources = [
         'session_time.cc',
         'session_transport.cc',
         'sidechain.cc',
+        'simple_export.cc',
         'slavable.cc',
         'slavable_automation_control.cc',
         'smf_source.cc',
@@ -272,44 +278,29 @@ libardour_sources = [
         'utils.cc',
         'vca.cc',
         'vca_manager.cc',
+        'velocity_control.cc',
         'video_tools_paths.cc',
         'vumeterdsp.cc',
-        'worker.cc'
+        'worker.cc',
+        'zeroconf.cc'
 ]
-
-def flac_supported():
-    cmd = subprocess.Popen ("sndfile-info testfile.flac",
-                            stdout = subprocess.PIPE,
-                            stderr = subprocess.STDOUT, shell = True)
-    out = cmd.communicate()[0].decode('utf-8');
-    return re.search ('unknown format', out) == None
-
-def ogg_supported():
-    cmd = subprocess.Popen ("sndfile-info testfile.ogg",
-                            stdout = subprocess.PIPE,
-                            stderr = subprocess.STDOUT, shell = True)
-    out = cmd.communicate()[0].decode('utf-8');
-    return re.search ('unknown format', out) == None
 
 def options(opt):
     autowaf.set_options(opt)
 
 def configure(conf):
-    conf.load('compiler_cxx')
     conf.load('gas')
     # we don't use hard-coded micro versions with ardour, so hard code it to zero
-    autowaf.configure(conf)
     autowaf.check_pkg(conf, 'aubio', uselib_store='AUBIO',
                       atleast_version='0.3.2')
     autowaf.check_pkg(conf, 'aubio', uselib_store='AUBIO4',
                       atleast_version='0.4.0', mandatory=False)
     autowaf.check_pkg(conf, 'libxml-2.0', uselib_store='XML')
-    if Options.options.dist_target != 'mingw':
-        if not Options.options.no_lrdf:
-            autowaf.check_pkg(conf, 'lrdf', uselib_store='LRDF',
-                              atleast_version='0.4.0')
-        autowaf.check_pkg(conf, 'aubio', uselib_store='AUBIO',
-                          atleast_version='0.3.2')
+    if not Options.options.no_lrdf:
+        autowaf.check_pkg(conf, 'lrdf', uselib_store='LRDF',
+                          atleast_version='0.4.0', mandatory=False)
+    autowaf.check_pkg(conf, 'aubio', uselib_store='AUBIO',
+                      atleast_version='0.3.2')
     autowaf.check_pkg(conf, 'samplerate', uselib_store='SAMPLERATE',
                       atleast_version='0.1.0')
     autowaf.check_pkg(conf, 'sigc++-2.0', uselib_store='SIGCPP',
@@ -321,6 +312,8 @@ def configure(conf):
                       atleast_version='1.10.0', mandatory=False)
     autowaf.check_pkg(conf, 'lv2', uselib_store='LV2_1_17_2',
                       atleast_version='1.17.2', mandatory=False)
+    autowaf.check_pkg(conf, 'lv2', uselib_store='LV2_1_18_6',
+                      atleast_version='1.18.6', mandatory=False)
     autowaf.check_pkg(conf, 'serd-0', uselib_store='SERD',
                       atleast_version='0.14.0', mandatory=True)
     autowaf.check_pkg(conf, 'sord-0', uselib_store='SORD',
@@ -361,22 +354,14 @@ def configure(conf):
 
     conf.check(header_name='unistd.h', define_name='HAVE_UNISTD',mandatory=False)
 
-    if flac_supported():
-        conf.define ('HAVE_FLAC', 1)
-    if ogg_supported():
-        conf.define ('HAVE_OGG', 1)
-
     conf.write_config_header('libardour-config.h', remove=False)
 
     # Boost headers
-    autowaf.check_header(conf, 'cxx', 'boost/shared_ptr.hpp')
-    autowaf.check_header(conf, 'cxx', 'boost/weak_ptr.hpp')
     autowaf.check_header(conf, 'cxx', 'boost/scoped_ptr.hpp')
     autowaf.check_header(conf, 'cxx', 'boost/ptr_container/ptr_list.hpp')
 
     if conf.env['WINDOWS_VST_SUPPORT'] == True:
         conf.check(compiler='cxx', lib='gdi32', mandatory=True, uselib_store='GDI32')
-
 
 def build(bld):
     # Library version (UNIX style major, minor, micro)
@@ -405,10 +390,10 @@ def build(bld):
         obj.defines      = []
 
     obj.export_includes = ['.']
-    obj.includes     = ['.', '../vst3/', '../surfaces/control_protocol', '..']
+    obj.includes     = ['.', '../vst3/', '../ctrl-interface/control_protocol', '..']
     obj.name         = 'libardour'
     obj.target       = 'ardour'
-    obj.uselib       = ['GLIBMM','GTHREAD','AUBIO','SIGCPP','XML','UUID', 'LO',
+    obj.uselib       = ['GLIBMM','GTHREAD','AUBIO','SIGCPP','XML','UUID', 'LO', 'USB',
                         'SNDFILE','SAMPLERATE','LRDF','AUDIOUNITS', 'GIOMM', 'FFTW3F',
                         'OSX','BOOST','CURL','TAGLIB','VAMPSDK','VAMPHOSTSDK','RUBBERBAND']
     obj.use          = ['libpbd','libmidipp','libevoral',
@@ -421,6 +406,7 @@ def build(bld):
                         ]
     if bld.env['build_target'] != 'mingw':
         obj.uselib += ['DL']
+
     if bld.is_defined('USE_EXTERNAL_LIBS'):
         obj.uselib.extend(['VAMPSDK', 'LIBLTC', 'LIBFLUIDSYNTH'])
     else:
@@ -477,27 +463,46 @@ def build(bld):
     if bld.is_defined('AUDIOUNIT_SUPPORT'):
         obj.source += [ 'audio_unit.cc', 'auv2_scan.cc' ]
 
+    lua_cxxflags = bld.env['compiler_flags_dict']['pic']
+    lua_use = list(obj.use);
+    if bld.env['build_target'] == 'mingw' and bld.env['DEBUG']:
+        lua_cxxflags += " -Og -Wa,-mbig-obj"
+
+    bld(features = 'cxx cxxstlib asm',
+        source   = "luabindings.cc" ,
+        cxxflags = lua_cxxflags,
+        includes = obj.includes,
+        use      = lua_use,
+        uselib   = obj.uselib,
+        target   = 'luabindings')
+
+    obj.use += ['luabindings' ]
+
     avx_sources = []
     fma_sources = []
+    avx512f_sources = []
 
     if Options.options.fpu_optimization:
         if (bld.env['build_target'] == 'i386' or bld.env['build_target'] == 'i686'):
             obj.source += [ 'sse_functions_xmm.cc', 'sse_functions.s', ]
             avx_sources = [ 'sse_functions_avx_linux.cc' ]
             fma_sources = [ 'x86_functions_fma.cc' ]
+            avx512f_sources = [ 'x86_functions_avx512f.cc' ]
         elif bld.env['build_target'] == 'x86_64':
             obj.source += [ 'sse_functions_xmm.cc', 'sse_functions_64bit.s', ]
             avx_sources = [ 'sse_functions_avx_linux.cc' ]
             fma_sources = [ 'x86_functions_fma.cc' ]
+            avx512f_sources = [ 'x86_functions_avx512f.cc' ]
         elif bld.env['build_target'] == 'mingw':
-                # usability of the 64 bit windows assembler depends on the compiler target,
-                # not the build host, which in turn can only be inferred from the name
-                # of the compiler.
-                if re.search ('x86_64-w64', str(bld.env['CC'])):
-                        obj.source += [ 'sse_functions_xmm.cc' ]
-                        obj.source += [ 'sse_functions_64bit_win.s',  'sse_avx_functions_64bit_win.s' ]
-                        avx_sources = [ 'sse_functions_avx.cc' ]
-                        fma_sources = [ 'x86_functions_fma.cc' ]
+            # usability of the 64 bit windows assembler depends on the compiler target,
+            # not the build host, which in turn can only be inferred from the name
+            # of the compiler.
+            if re.search ('x86_64-w64', str(bld.env['CC'])):
+                obj.source += [ 'sse_functions_xmm.cc' ]
+                obj.source += [ 'sse_functions_64bit_win.s',  'sse_avx_functions_64bit_win.s' ]
+                avx_sources = [ 'sse_functions_avx.cc' ]
+                fma_sources = [ 'x86_functions_fma.cc' ]
+                avx512f_sources = [ 'x86_functions_avx512f.cc' ]
         elif bld.env['build_target'] == 'aarch64':
             obj.source += ['arm_neon_functions.cc']
             obj.defines += [ 'ARM_NEON_SUPPORT' ]
@@ -551,6 +556,28 @@ def build(bld):
             obj.use += ['sse_fma_functions' ]
             obj.defines += [ 'FPU_AVX_FMA_SUPPORT' ]
 
+        if bld.is_defined('FPU_AVX512F_SUPPORT') and avx512f_sources:
+            avx512f_cxxflags = list(bld.env['CXXFLAGS'])
+            avx512f_cxxflags.append (bld.env['compiler_flags_dict']['avx512f'])
+            avx512f_cxxflags.append (bld.env['compiler_flags_dict']['avx'])
+            avx512f_cxxflags.append (bld.env['compiler_flags_dict']['pic'])
+            avx512f_cxxflags.append (bld.env['compiler_flags_dict']['fma'])
+            # work around issue with mingc/gcc-8
+            # https://stackoverflow.com/questions/43152633/invalid-register-for-seh-savexmm-in-cygwin
+            if bld.env['build_target'] == 'mingw':
+                avx512f_cxxflags.append ('-fno-asynchronous-unwind-tables')
+
+            bld(features = 'cxx cxxstlib asm',
+                source   = avx512f_sources,
+                cxxflags = avx512f_cxxflags,
+                includes = [ '.' ],
+                use = [ 'libtemporal', 'libpbd', 'libevoral', 'liblua' ],
+                uselib = [ 'GLIBMM', 'XML' ],
+                target   = 'avx512f_functions')
+
+            obj.use += ['avx512f_functions' ]
+            obj.defines += [ 'FPU_AVX512F_SUPPORT' ]
+
     # i18n
     if bld.is_defined('ENABLE_NLS'):
         mo_files = bld.path.ant_glob('po/*.mo')
@@ -566,7 +593,7 @@ def build(bld):
         testcommon.includes     = obj.includes + ['test', '../pbd', '..']
         testcommon.source       = ['test/testrunner.cc', 'test/test_needing_session.cc',
                                    'test/dummy_lxvst.cc', 'test/audio_region_test.cc', 'test/test_util.cc', 'test/test_ui.cc']
-        testcommon.uselib       = ['CPPUNIT','SIGCPP','GLIBMM','GTHREAD', 'OSX', 'FFTW3F',
+        testcommon.uselib       = ['CPPUNIT','SIGCPP','GLIBMM','GTHREAD', 'OSX', 'FFTW3F', 'USB',
                                    'SAMPLERATE','XML','LRDF','COREAUDIO','TAGLIB','VAMPSDK','VAMPHOSTSDK','RUBBERBAND']
         testcommon.use          = ['libpbd', 'libmidipp', 'libevoral', 'libaudiographer', 'libardour']
         if bld.is_defined('USE_EXTERNAL_LIBS'):
@@ -599,7 +626,7 @@ def build(bld):
             create_ardour_test_program(bld, obj.includes, 'unit-test-control_surface', 'test_control_surfaces', ['test/control_surfaces_test.cc'])
             create_ardour_test_program(bld, obj.includes, 'unit-test-mtdm', 'test_mtdm', ['test/mtdm_test.cc'])
             create_ardour_test_program(bld, obj.includes, 'unit-test-sha1', 'test_sha1', ['test/sha1_test.cc'])
-            #create_ardour_test_program(bld, obj.includes, 'unit-test-session', 'test_session', ['test/session_test.cc'])
+            create_ardour_test_program(bld, obj.includes, 'unit-test-session', 'test_session', ['test/session_test.cc'])
             create_ardour_test_program(bld, obj.includes, 'unit-test-dsp_load_calculator', 'test_dsp_load_calculator', ['test/dsp_load_calculator_test.cc'])
 
         test_sources  = [
@@ -621,7 +648,7 @@ def build(bld):
             'test/control_surfaces_test.cc',
             'test/mtdm_test.cc',
             'test/sha1_test.cc',
-            #'test/session_test.cc',
+            'test/session_test.cc',
         ]
 
 # Tests that don't work
@@ -686,7 +713,7 @@ def create_ardour_test_program(bld, includes, name, target, sources):
     testobj              = bld(features = 'cxx cxxprogram')
     testobj.includes     = includes + ['test', '../pbd', '..']
     testobj.source       = sources
-    testobj.uselib       = ['CPPUNIT','SIGCPP','GLIBMM','GTHREAD', 'FFTW3F', 'OSX',
+    testobj.uselib       = ['CPPUNIT','SIGCPP','GLIBMM','GTHREAD', 'FFTW3F', 'OSX', 'USB',
                             'SAMPLERATE','XML','LRDF','COREAUDIO','TAGLIB','VAMPSDK','VAMPHOSTSDK','RUBBERBAND']
     testobj.use          = [ 'testcommon' ]
     testobj.name         = name

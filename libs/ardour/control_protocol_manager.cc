@@ -21,6 +21,21 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+#ifdef HAVE_USB
+#include "pbd/pthread_utils.h"
+
+#include <libusb.h>
+/* ControlProtocolManager is a singleton, so we can use static
+ * here. This has the advantage that libusb.h does not need
+ * to be used in ardour/control_protocol_manager.h which
+ * is included by various UIs
+ */
+static libusb_hotplug_callback_handle _hpcp = 0;
+static libusb_context*                _usb_ctx = NULL;
+static pthread_t                      _hotplug_thread;
+static bool                           _hotplug_thread_run = false;
+#endif
+
 #include <glibmm/module.h>
 
 #include <glibmm/fileutils.h>
@@ -29,6 +44,7 @@
 #include "pbd/event_loop.h"
 #include "pbd/file_utils.h"
 #include "pbd/error.h"
+#include "pbd/stacktrace.h"
 
 #include "control_protocol/control_protocol.h"
 
@@ -49,10 +65,37 @@ ControlProtocolManager* ControlProtocolManager::_instance = 0;
 const string ControlProtocolManager::state_node_name = X_("ControlProtocols");
 PBD::Signal1<void,StripableNotificationListPtr> ControlProtocolManager::StripableSelectionChanged;
 
+#ifdef HAVE_USB
+static int
+usb_hotplug_cb (libusb_context* ctx, libusb_device* device, libusb_hotplug_event event, void* user_data)
+{
+	ControlProtocolManager* cpm = static_cast<ControlProtocolManager*> (user_data);
+	struct libusb_device_descriptor desc;
+	if (LIBUSB_SUCCESS == libusb_get_device_descriptor (device, &desc)) {
+		DEBUG_TRACE (DEBUG::ControlProtocols, string_compose ("USB Hotplug: %1 vendor: %2 product: %3\n",
+					(event == LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED) ? "arrived" : "removed", std::hex, desc.idVendor, desc.idProduct));
+		cpm->probe_usb_control_protocols (event == LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED, desc.idVendor, desc.idProduct);
+	}
+
+	return _hotplug_thread_run ? 0 : 1;
+}
+
+static void*
+usb_hotplug_thread (void* user_data)
+{
+	while (_hotplug_thread_run) {
+		if (libusb_handle_events (_usb_ctx) < 0) {
+			break;
+		}
+	}
+	return 0;
+}
+#endif
+
 ControlProtocolInfo::~ControlProtocolInfo ()
 {
 	if (protocol && descriptor) {
-		descriptor->destroy (descriptor, protocol);
+		descriptor->destroy (protocol);
 		protocol = 0;
 	}
 
@@ -62,6 +105,9 @@ ControlProtocolInfo::~ControlProtocolInfo ()
 		delete (Glib::Module*) descriptor->module;
 		descriptor = 0;
 	}
+#ifdef HAVE_USB
+	assert (!_hotplug_thread_run);
+#endif
 }
 
 ControlProtocolManager::ControlProtocolManager ()
@@ -93,16 +139,23 @@ ControlProtocolManager::set_session (Session* s)
 	SessionHandlePtr::set_session (s);
 
 	if (!_session) {
+#ifdef HAVE_USB
+		if (_hotplug_thread_run) {
+			_hotplug_thread_run = false;
+			libusb_hotplug_deregister_callback (_usb_ctx, _hpcp);
+			pthread_join (_hotplug_thread, NULL);
+		}
+		if (_usb_ctx) {
+			libusb_exit (_usb_ctx);
+			_usb_ctx = NULL;
+		}
+#endif
 		return;
 	}
 
-	{
-		Glib::Threads::RWLock::ReaderLock lm (protocols_lock);
-
-		for (list<ControlProtocolInfo*>::iterator i = control_protocol_info.begin(); i != control_protocol_info.end(); ++i) {
-			if ((*i)->requested || (*i)->mandatory) {
-				(void) activate (**i);
-			}
+	for (list<ControlProtocolInfo*>::iterator i = control_protocol_info.begin(); i != control_protocol_info.end(); ++i) {
+		if ((*i)->requested) {
+			(void) activate (**i);
 		}
 	}
 
@@ -113,26 +166,44 @@ ControlProtocolManager::set_session (Session* s)
 		StripableNotificationListPtr v (new StripableNotificationList);
 		for (CoreSelection::StripableAutomationControls::iterator i = sac.begin(); i != sac.end(); ++i) {
 			if ((*i).stripable) {
-				v->push_back (boost::weak_ptr<Stripable> ((*i).stripable));
+				v->push_back (std::weak_ptr<Stripable> ((*i).stripable));
 			}
 		}
 		if (!v->empty()) {
 			StripableSelectionChanged (v); /* EMIT SIGNAL */
 		}
 	}
+
+#ifdef HAVE_USB
+	if (LIBUSB_SUCCESS == libusb_init (&_usb_ctx) && libusb_has_capability (LIBUSB_CAP_HAS_HOTPLUG)) {
+		if (LIBUSB_SUCCESS == libusb_hotplug_register_callback (_usb_ctx,
+					libusb_hotplug_event(LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED | LIBUSB_HOTPLUG_EVENT_DEVICE_LEFT),
+					LIBUSB_HOTPLUG_ENUMERATE,
+					LIBUSB_HOTPLUG_MATCH_ANY,
+					LIBUSB_HOTPLUG_MATCH_ANY,
+					LIBUSB_HOTPLUG_MATCH_ANY,
+					usb_hotplug_cb, this,
+					&_hpcp)) {
+			_hotplug_thread_run = true;
+			if (pthread_create (&_hotplug_thread, NULL, usb_hotplug_thread, this)) {
+				_hotplug_thread_run = false;
+			}
+		}
+	}
+#endif
 }
 
 int
 ControlProtocolManager::activate (ControlProtocolInfo& cpi)
 {
+	Glib::Threads::RWLock::WriterLock lm (protocols_lock);
 	ControlProtocol* cp;
 
-	cpi.requested = true;
-
 	if (cpi.protocol && cpi.protocol->active()) {
-		warning << string_compose (_("Control protocol %1 was already active."), cpi.name) << endmsg;
 		return 0;
 	}
+
+	cpi.requested = true;
 
 	if ((cp = instantiate (cpi)) == 0) {
 		return -1;
@@ -216,7 +287,9 @@ ControlProtocolManager::instantiate (ControlProtocolInfo& cpi)
 		return 0;
 	}
 
-	cpi.descriptor = get_descriptor (cpi.path);
+	if (!cpi.descriptor) {
+		cpi.descriptor = get_descriptor (cpi.path);
+	}
 
 	DEBUG_TRACE (DEBUG::ControlProtocols, string_compose ("instantiating %1\n", cpi.name));
 
@@ -227,7 +300,7 @@ ControlProtocolManager::instantiate (ControlProtocolInfo& cpi)
 
 	DEBUG_TRACE (DEBUG::ControlProtocols, string_compose ("initializing %1\n", cpi.name));
 
-	if ((cpi.protocol = cpi.descriptor->initialize (cpi.descriptor, _session)) == 0) {
+	if ((cpi.protocol = cpi.descriptor->initialize (_session)) == 0) {
 		error << string_compose (_("control protocol name \"%1\" could not be initialized"), cpi.name) << endmsg;
 		return 0;
 	}
@@ -262,38 +335,32 @@ ControlProtocolManager::teardown (ControlProtocolInfo& cpi, bool lock_required)
 		return 0;
 	}
 
-	if (cpi.mandatory) {
-		return 0;
-	}
-
 	/* save current state */
 
 	delete cpi.state;
 	cpi.state = new XMLNode (cpi.protocol->get_state());
 	cpi.state->set_property (X_("active"), false);
 
-	cpi.descriptor->destroy (cpi.descriptor, cpi.protocol);
+	cpi.descriptor->destroy (cpi.protocol);
 
+	Glib::Threads::RWLock::WriterLock lm (protocols_lock, Glib::Threads::NOT_LOCK);
 	if (lock_required) {
 		/* the lock is required when the protocol is torn down by a user from the GUI. */
-		Glib::Threads::RWLock::WriterLock lm (protocols_lock);
-		list<ControlProtocol*>::iterator p = find (control_protocols.begin(), control_protocols.end(), cpi.protocol);
-		if (p != control_protocols.end()) {
-			control_protocols.erase (p);
-		} else {
-			cerr << "Programming error: ControlProtocolManager::teardown() called for " << cpi.name << ", but it was not found in control_protocols" << endl;
-		}
+		lm.acquire ();
+	}
+
+	list<ControlProtocol*>::iterator p = find (control_protocols.begin(), control_protocols.end(), cpi.protocol);
+	if (p != control_protocols.end()) {
+		control_protocols.erase (p);
 	} else {
-		list<ControlProtocol*>::iterator p = find (control_protocols.begin(), control_protocols.end(), cpi.protocol);
-		if (p != control_protocols.end()) {
-			control_protocols.erase (p);
-		} else {
-			cerr << "Programming error: ControlProtocolManager::teardown() called for " << cpi.name << ", but it was not found in control_protocols" << endl;
-		}
+		cerr << "Programming error: ControlProtocolManager::teardown() called for " << cpi.name << ", but it was not found in control_protocols" << endl;
+	}
+
+	if (lock_required) {
+		lm.release();
 	}
 
 	cpi.protocol = 0;
-
 	delete (Glib::Module*) cpi.descriptor->module;
 	/* cpi->descriptor is now inaccessible since dlclose() or equivalent
 	 * has been performed, and the descriptor is (or could be) a static
@@ -304,24 +371,6 @@ ControlProtocolManager::teardown (ControlProtocolInfo& cpi, bool lock_required)
 	ProtocolStatusChange (&cpi);
 
 	return 0;
-}
-
-void
-ControlProtocolManager::load_mandatory_protocols ()
-{
-	if (_session == 0) {
-		return;
-	}
-
-	Glib::Threads::RWLock::ReaderLock lm (protocols_lock);
-
-	for (list<ControlProtocolInfo*>::iterator i = control_protocol_info.begin(); i != control_protocol_info.end(); ++i) {
-		if ((*i)->mandatory && ((*i)->protocol == 0)) {
-			DEBUG_TRACE (DEBUG::ControlProtocols,
-				     string_compose (_("Instantiating mandatory control protocol %1"), (*i)->name));
-			instantiate (**i);
-		}
-	}
 }
 
 struct ControlProtocolOrderByName
@@ -395,8 +444,9 @@ ControlProtocolManager::control_protocol_discover (string path)
 
 	if ((descriptor = get_descriptor (path)) != 0) {
 
-		if (!descriptor->probe (descriptor)) {
+		if (descriptor->available && !descriptor->available ()) {
 			warning << string_compose (_("Control protocol %1 not usable"), descriptor->name) << endmsg;
+			delete (Glib::Module*) descriptor->module;
 		} else {
 
 			ControlProtocolInfo* cpi = new ControlProtocolInfo ();
@@ -406,8 +456,7 @@ ControlProtocolManager::control_protocol_discover (string path)
 			cpi->path = path;
 			cpi->protocol = 0;
 			cpi->requested = false;
-			cpi->mandatory = descriptor->mandatory;
-			cpi->supports_feedback = descriptor->supports_feedback;
+			cpi->automatic = false;
 			cpi->state = 0;
 
 			control_protocol_info.push_back (cpi);
@@ -446,6 +495,8 @@ ControlProtocolManager::get_descriptor (string path)
 
 	if (descriptor) {
 		descriptor->module = (void*)module;
+	} else {
+		delete module;
 	}
 
 	return descriptor;
@@ -527,16 +578,16 @@ ControlProtocolManager::set_state (const XMLNode& node, int session_specific_sta
 }
 
 XMLNode&
-ControlProtocolManager::get_state ()
+ControlProtocolManager::get_state () const
 {
 	XMLNode* root = new XMLNode (state_node_name);
 	Glib::Threads::RWLock::ReaderLock lm (protocols_lock);
 
-	for (list<ControlProtocolInfo*>::iterator i = control_protocol_info.begin(); i != control_protocol_info.end(); ++i) {
+	for (list<ControlProtocolInfo*>::const_iterator i = control_protocol_info.begin(); i != control_protocol_info.end(); ++i) {
 
 		if ((*i)->protocol) {
 			XMLNode& child_state ((*i)->protocol->get_state());
-			child_state.set_property (X_("active"), true);
+			child_state.set_property (X_("active"), !(*i)->automatic);
 			delete ((*i)->state);
 			(*i)->state = new XMLNode (child_state);
 			root->add_child_nocopy (child_state);
@@ -578,19 +629,65 @@ ControlProtocolManager::midi_connectivity_established ()
 }
 
 void
-ControlProtocolManager::register_request_buffer_factories ()
+ControlProtocolManager::probe_midi_control_protocols ()
 {
-	Glib::Threads::RWLock::ReaderLock lm (protocols_lock);
+	if (!Config->get_auto_enable_surfaces ()) {
+		return;
+	}
+	for (auto const& cpi : control_protocol_info) {
+		/* Note: manual teardown deletes the descriptor */
+		if (!cpi->descriptor) {
+			cpi->automatic = false;
+			continue;
+		}
+		if (!cpi->descriptor->probe_port) {
+			continue;
+		}
+		bool active = 0 != cpi->protocol;
+		bool found = cpi->descriptor->probe_port ();
 
-	for (list<ControlProtocolInfo*>::iterator i = control_protocol_info.begin(); i != control_protocol_info.end(); ++i) {
+		if (!active && found) {
+			cpi->automatic = true;
+			activate (*cpi);
+		} else if (active && cpi->automatic && !found) {
+			cpi->automatic = false;
+			deactivate (*cpi);
+			/* allow to auto-enable again */
+			if (!cpi->descriptor) {
+				cpi->descriptor = get_descriptor (cpi->path);
+			}
+		}
+	}
+}
 
-		if ((*i)->descriptor == 0) {
-			warning << string_compose (_("Control protocol \"%1\" has no descriptor"), (*i)->name) << endmsg;
+void
+ControlProtocolManager::probe_usb_control_protocols (bool arrived, uint16_t vendor, uint16_t product)
+{
+	if (!Config->get_auto_enable_surfaces ()) {
+		return;
+	}
+	for (auto const& cpi : control_protocol_info) {
+		/* Note: manual teardown deletes the descriptor */
+		if (!cpi->descriptor) {
+			cpi->automatic = false;
+			continue;
+		}
+		if (!cpi->descriptor->match_usb || !cpi->descriptor->match_usb (vendor, product)) {
 			continue;
 		}
 
-		if ((*i)->descriptor->request_buffer_factory) {
-			EventLoop::register_request_buffer_factory ((*i)->descriptor->name, (*i)->descriptor->request_buffer_factory);
+		bool active = 0 != cpi->protocol;
+
+		if (!active && arrived) {
+			cpi->automatic = true;
+			activate (*cpi);
+		} else if (active && cpi->automatic && !arrived) {
+			cpi->automatic = false;
+			deactivate (*cpi);
+			/* allow to auto-enable again */
+			if (!cpi->descriptor) {
+				cpi->descriptor = get_descriptor (cpi->path);
+			}
 		}
 	}
 }

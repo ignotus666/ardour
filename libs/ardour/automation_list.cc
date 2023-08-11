@@ -61,12 +61,12 @@ static void dumpit (const AutomationList& al, string prefix = "")
 	cerr << "\n";
 }
 #endif
-AutomationList::AutomationList (const Evoral::Parameter& id, const Evoral::ParameterDescriptor& desc, Temporal::TimeDomain time_domain)
-	: ControlList(id, desc, time_domain)
+AutomationList::AutomationList (const Evoral::Parameter& id, const Evoral::ParameterDescriptor& desc, Temporal::TimeDomainProvider const & tdp)
+	: ControlList(id, desc, tdp)
 	, _before (0)
 {
 	_state = Off;
-	g_atomic_int_set (&_touching, 0);
+	_touching.store (0);
 	_interpolation = default_interpolation ();
 
 	create_curve_if_necessary();
@@ -75,12 +75,12 @@ AutomationList::AutomationList (const Evoral::Parameter& id, const Evoral::Param
 	AutomationListCreated(this);
 }
 
-AutomationList::AutomationList (const Evoral::Parameter& id, Temporal::TimeDomain time_domain)
-	: ControlList(id, ARDOUR::ParameterDescriptor(id), time_domain)
+AutomationList::AutomationList (const Evoral::Parameter& id, Temporal::TimeDomainProvider const & tdp)
+	: ControlList(id, ARDOUR::ParameterDescriptor(id), tdp)
 	, _before (0)
 {
 	_state = Off;
-	g_atomic_int_set (&_touching, 0);
+	_touching.store (0);
 	_interpolation = default_interpolation ();
 
 	create_curve_if_necessary();
@@ -95,7 +95,7 @@ AutomationList::AutomationList (const AutomationList& other)
 	, _before (0)
 {
 	_state = other._state;
-	g_atomic_int_set (&_touching, other.touching());
+	_touching.store (other.touching());
 
 	create_curve_if_necessary();
 
@@ -108,7 +108,7 @@ AutomationList::AutomationList (const AutomationList& other, timepos_t const & s
 	, _before (0)
 {
 	_state = other._state;
-	g_atomic_int_set (&_touching, other.touching());
+	_touching.store (other.touching());
 
 	create_curve_if_necessary();
 
@@ -117,13 +117,13 @@ AutomationList::AutomationList (const AutomationList& other, timepos_t const & s
 }
 
 /** @param id is used for legacy sessions where the type is not present
- * in or below the AutomationList node.  It is used if @param id is non-null.
+ * in or below the AutomationList node.  It is used if @p id is non-null.
  */
 AutomationList::AutomationList (const XMLNode& node, Evoral::Parameter id)
-	: ControlList(id, ARDOUR::ParameterDescriptor(id), Temporal::AudioTime) /* domain may change in ::set_state */
+	: ControlList(id, ARDOUR::ParameterDescriptor(id), Temporal::TimeDomainProvider (Temporal::AudioTime)) /* domain may change in ::set_state */
 	, _before (0)
 {
-	g_atomic_int_set (&_touching, 0);
+	_touching.store (0);
 	_interpolation = default_interpolation ();
 	_state = Off;
 
@@ -144,12 +144,12 @@ AutomationList::~AutomationList()
 	delete _before;
 }
 
-boost::shared_ptr<Evoral::ControlList>
+std::shared_ptr<Evoral::ControlList>
 AutomationList::create(const Evoral::Parameter&           id,
                        const Evoral::ParameterDescriptor& desc,
-                       Temporal::TimeDomain time_domain)
+                       Temporal::TimeDomainProvider const & tdp)
 {
-	return boost::shared_ptr<Evoral::ControlList>(new AutomationList(id, desc, time_domain));
+	return std::shared_ptr<Evoral::ControlList>(new AutomationList(id, desc, tdp));
 }
 
 void
@@ -158,6 +158,7 @@ AutomationList::create_curve_if_necessary()
 	switch (_parameter.type()) {
 	case GainAutomation:
 	case BusSendLevel:
+	case InsertReturnLevel:
 	case TrimAutomation:
 	case PanAzimuthAutomation:
 	case PanElevationAutomation:
@@ -165,6 +166,7 @@ AutomationList::create_curve_if_necessary()
 	case FadeInAutomation:
 	case FadeOutAutomation:
 	case EnvelopeAutomation:
+	case MidiVelocityAutomation:
 		create_curve();
 		break;
 	default:
@@ -184,7 +186,7 @@ AutomationList::operator= (const AutomationList& other)
 		 */
 		ControlList::operator= (other);
 		_state = other._state;
-		_touching = other._touching;
+		_touching.store (other._touching);
 		ControlList::thaw ();
 	}
 
@@ -232,6 +234,7 @@ AutomationList::default_interpolation () const
 	switch (_parameter.type()) {
 		case GainAutomation:
 		case BusSendLevel:
+		case InsertReturnLevel:
 		case EnvelopeAutomation:
 			return ControlList::Exponential;
 			break;
@@ -262,24 +265,20 @@ AutomationList::write_pass_finished (timepos_t const & when, double thinning_fac
 void
 AutomationList::start_touch (timepos_t const & when)
 {
-	if (_state == Touch) {
-		start_write_pass (when);
-	}
-
-	g_atomic_int_set (&_touching, 1);
+	_touching.store (1);
 }
 
 void
 AutomationList::stop_touch (timepos_t const & /* not used */)
 {
-	if (g_atomic_int_get (&_touching) == 0) {
+	if (_touching.load () == 0) {
 		/* this touch has already been stopped (probably by Automatable::transport_stopped),
 		   so we've nothing to do.
 		*/
 		return;
 	}
 
-	g_atomic_int_set (&_touching, 0);
+	_touching.store (0);
 }
 
 /* _before may be owned by the undo stack,
@@ -316,20 +315,20 @@ AutomationList::thaw ()
 	}
 }
 
-Command*
+PBD::Command*
 AutomationList::memento_command (XMLNode* before, XMLNode* after)
 {
 	return new MementoCommand<AutomationList> (*this, before, after);
 }
 
 XMLNode&
-AutomationList::get_state ()
+AutomationList::get_state () const
 {
 	return state (true, true);
 }
 
 XMLNode&
-AutomationList::state (bool save_auto_state, bool need_lock)
+AutomationList::state (bool save_auto_state, bool need_lock) const
 {
 	XMLNode* root = new XMLNode (X_("AutomationList"));
 
@@ -364,7 +363,7 @@ AutomationList::state (bool save_auto_state, bool need_lock)
 }
 
 XMLNode&
-AutomationList::serialize_events (bool need_lock)
+AutomationList::serialize_events (bool need_lock) const
 {
 	XMLNode* node = new XMLNode (X_("events"));
 	stringstream str;
@@ -373,14 +372,14 @@ AutomationList::serialize_events (bool need_lock)
 	if (need_lock) {
 		lm.acquire ();
 	}
-	for (iterator xx = _events.begin(); xx != _events.end(); ++xx) {
+	for (const_iterator xx = _events.begin(); xx != _events.end(); ++xx) {
 		str << PBD::to_string ((*xx)->when);
 		str << ' ';
 		str << PBD::to_string ((*xx)->value);
 		str << '\n';
 	}
 
-	/* XML is a bit wierd */
+	/* XML is a bit weird */
 
 	XMLNode* content_node = new XMLNode (X_("foo")); /* it gets renamed by libxml when we set content */
 	content_node->set_content (str.str());
@@ -450,7 +449,7 @@ AutomationList::set_state (const XMLNode& node, int version)
 	Temporal::TimeDomain time_domain;
 
 	if (node.get_property ("time-domain", time_domain)) {
-		set_time_domain_empty (time_domain);
+		set_time_domain (time_domain);
 	}
 
 	if (node.name() == X_("events")) {
@@ -562,7 +561,7 @@ AutomationListProperty::clone () const
 {
 	return new AutomationListProperty (
 		this->property_id(),
-		boost::shared_ptr<AutomationList> (new AutomationList (*this->_old.get())),
-		boost::shared_ptr<AutomationList> (new AutomationList (*this->_current.get()))
+		std::shared_ptr<AutomationList> (new AutomationList (*this->_old.get())),
+		std::shared_ptr<AutomationList> (new AutomationList (*this->_current.get()))
 		);
 }

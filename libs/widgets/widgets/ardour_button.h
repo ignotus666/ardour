@@ -102,18 +102,19 @@ class LIBWIDGETS_API ArdourButton : public CairoWidget , public Gtkmm2ext::Activ
 	void set_layout_ellipsize_width (int w);
 	void set_layout_font (const Pango::FontDescription&);
 	void set_text_ellipsize (Pango::EllipsizeMode);
+	void set_width_padding (float);
 
     /* Sets the text used for size request computation. Pass an
      * empty string to return to the default behavior which uses
      * the currently displayed text for measurement. */
-	void set_sizing_text (const std::string&);
-	const std::string& get_sizing_text () {return _sizing_text;}
+	void set_sizing_text (std::string const&);
+	void set_sizing_texts (std::vector<std::string> const&);
 
 	sigc::signal<void, GdkEventButton*> signal_led_clicked;
 	sigc::signal<void> signal_clicked;
 
-	boost::shared_ptr<PBD::Controllable> get_controllable() { return binding_proxy.get_controllable(); }
-	void set_controllable (boost::shared_ptr<PBD::Controllable> c);
+	std::shared_ptr<PBD::Controllable> get_controllable() { return binding_proxy.get_controllable(); }
+	void set_controllable (std::shared_ptr<PBD::Controllable> c);
 	void watch ();
 
 	void set_related_action (Glib::RefPtr<Gtk::Action>);
@@ -156,7 +157,7 @@ class LIBWIDGETS_API ArdourButton : public CairoWidget , public Gtkmm2ext::Activ
 	Glib::RefPtr<Pango::Layout> _layout;
 	Glib::RefPtr<Gdk::Pixbuf>   _pixbuf;
 	std::string                 _text;
-	std::string                 _sizing_text;
+	std::vector<std::string>    _sizing_texts;
 	bool                        _markup;
 	Element                     _elements;
 	ArdourIcon::Icon            _icon;
@@ -171,6 +172,7 @@ class LIBWIDGETS_API ArdourButton : public CairoWidget , public Gtkmm2ext::Activ
 	unsigned int _char_pixel_width;
 	unsigned int _char_pixel_height;
 	float        _char_avg_pixel_width;
+	float        _width_padding;
 	bool         _custom_font_set;
 
 	int   _text_width;

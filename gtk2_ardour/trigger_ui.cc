@@ -16,6 +16,8 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+#include <glib/gstdio.h>
+
 #include <gtkmm/alignment.h>
 #include <gtkmm/filechooserdialog.h>
 #include <gtkmm/menu.h>
@@ -37,6 +39,8 @@
 #include "ardour/region.h"
 #include "ardour/triggerbox.h"
 
+#include "gtkmm2ext/colors.h"
+
 #include "slot_properties_box.h"
 
 #include "ardour_ui.h"
@@ -44,8 +48,10 @@
 #include "keyboard.h"
 #include "public_editor.h"
 #include "region_view.h"
-#include "trigger_ui.h"
+#include "trigger_jump_dialog.h"
 #include "ui_config.h"
+
+#include "trigger_ui.h"
 
 #include "pbd/i18n.h"
 
@@ -64,9 +70,6 @@ std::string              TriggerUI::longest_launch;
 std::vector<std::string> TriggerUI::stretch_mode_strings;
 std::string              TriggerUI::longest_stretch_mode;
 
-Gtkmm2ext::Bindings*           TriggerUI::bindings = 0;
-Glib::RefPtr<Gtk::ActionGroup> TriggerUI::trigger_actions;
-
 TriggerUI::TriggerUI ()
 	: _renaming (false)
 	, _file_chooser (0)
@@ -79,15 +82,11 @@ TriggerUI::TriggerUI ()
 		follow_strings.push_back (follow_action_to_string (FollowAction (FollowAction::None)));
 		follow_strings.push_back (follow_action_to_string (FollowAction (FollowAction::Stop)));
 		follow_strings.push_back (follow_action_to_string (FollowAction (FollowAction::Again)));
-		follow_strings.push_back (follow_action_to_string (FollowAction (FollowAction::QueuedTrigger)));
-		follow_strings.push_back (follow_action_to_string (FollowAction (FollowAction::NextTrigger)));
-		follow_strings.push_back (follow_action_to_string (FollowAction (FollowAction::PrevTrigger)));
 		follow_strings.push_back (follow_action_to_string (FollowAction (FollowAction::ForwardTrigger)));
 		follow_strings.push_back (follow_action_to_string (FollowAction (FollowAction::ReverseTrigger)));
 		follow_strings.push_back (follow_action_to_string (FollowAction (FollowAction::FirstTrigger)));
 		follow_strings.push_back (follow_action_to_string (FollowAction (FollowAction::LastTrigger)));
-		follow_strings.push_back (follow_action_to_string (FollowAction (FollowAction::AnyTrigger)));
-		follow_strings.push_back (follow_action_to_string (FollowAction (FollowAction::OtherTrigger)));
+		follow_strings.push_back (follow_action_to_string (FollowAction (FollowAction::JumpTrigger)));
 
 		for (std::vector<std::string>::const_iterator i = follow_strings.begin(); i != follow_strings.end(); ++i) {
 			if (i->length() > longest_follow.length()) {
@@ -134,66 +133,29 @@ TriggerUI::trigger_swap (uint32_t n)
 	}
 	trigger_connections.drop_connections ();
 
-	trigger()->PropertyChanged.connect (trigger_connections, MISSING_INVALIDATOR, boost::bind (&TriggerUI::trigger_changed, this, _1), gui_context ());
-	tref.box->PropertyChanged.connect (trigger_connections, MISSING_INVALIDATOR, boost::bind (&TriggerUI::trigger_changed, this, _1), gui_context ());
+	trigger()->PropertyChanged.connect (trigger_connections, invalidator (*this), boost::bind (&TriggerUI::trigger_changed, this, _1), gui_context ());
+	tref.box->PropertyChanged.connect (trigger_connections, invalidator (*this), boost::bind (&TriggerUI::trigger_changed, this, _1), gui_context ());
 
 	trigger_changed (Properties::name);
-}
-
-
-void
-TriggerUI::setup_actions_and_bindings ()
-{
-	load_bindings ();
-	register_actions ();
-}
-
-void
-TriggerUI::load_bindings ()
-{
-	bindings = Bindings::get_bindings (X_("Triggers"));
-}
-
-void
-TriggerUI::register_actions ()
-{
-	trigger_actions = ActionManager::create_action_group (bindings, X_("Triggers"));
-
-	for (int32_t n = 0; n < default_triggers_per_box; ++n) {
-		const std::string action_name  = string_compose ("trigger-scene-%1", n);
-		const std::string display_name = string_compose (_("Scene %1"), n);
-
-		ActionManager::register_toggle_action (trigger_actions, action_name.c_str (), display_name.c_str (), sigc::bind (sigc::ptr_fun (TriggerUI::trigger_scene), n));
-	}
-}
-
-void
-TriggerUI::trigger_scene (int32_t n)
-{
-	Session* s = AudioEngine::instance()->session();
-
-	if (s) {
-		s->cue_bang (n);
-	}
 }
 
 void
 TriggerUI::choose_color ()
 {
-	_color_dialog.get_colorsel()->set_has_opacity_control (false);
-	_color_dialog.get_colorsel()->set_has_palette (true);
+	_color_dialog.get_color_selection()->set_has_opacity_control (false);
+	_color_dialog.get_color_selection()->set_has_palette (true);
 	_color_dialog.get_ok_button()->signal_clicked().connect (sigc::bind (sigc::mem_fun (_color_dialog, &Gtk::Dialog::response), Gtk::RESPONSE_ACCEPT));
 	_color_dialog.get_cancel_button()->signal_clicked().connect (sigc::bind (sigc::mem_fun (_color_dialog, &Gtk::Dialog::response), Gtk::RESPONSE_CANCEL));
 
-	Gdk::Color c = ARDOUR_UI_UTILS::gdk_color_from_rgba(trigger()->color());
+	Gdk::Color c = Gtkmm2ext::gdk_color_from_rgba(trigger()->color());
 
-	_color_dialog.get_colorsel()->set_previous_color (c);
-	_color_dialog.get_colorsel()->set_current_color (c);
+	_color_dialog.get_color_selection()->set_previous_color (c);
+	_color_dialog.get_color_selection()->set_current_color (c);
 
 	switch (_color_dialog.run()) {
 		case Gtk::RESPONSE_ACCEPT: {
-			c = _color_dialog.get_colorsel()->get_current_color();
-			color_t ct = ARDOUR_UI_UTILS::gdk_color_to_rgba(c);
+			c = _color_dialog.get_color_selection()->get_current_color();
+			color_t ct = Gtkmm2ext::gdk_color_to_rgba(c);
 			trigger()->set_color(ct);
 		} break;
 		default:
@@ -207,7 +169,7 @@ void
 TriggerUI::choose_sample (bool allow_multiple_select)
 {
 	if (!_file_chooser) {
-		_file_chooser = new Gtk::FileChooserDialog (_("Select sample"), Gtk::FILE_CHOOSER_ACTION_OPEN);
+		_file_chooser = new Gtk::FileChooserDialog (_("Select file to load into slot"), Gtk::FILE_CHOOSER_ACTION_OPEN);
 		_file_chooser->add_button (Gtk::Stock::CANCEL, Gtk::RESPONSE_CANCEL);
 		_file_chooser->add_button (Gtk::Stock::OK, Gtk::RESPONSE_OK);
 
@@ -434,22 +396,32 @@ TriggerUI::context_menu ()
 	MenuList& items = _context_menu->items ();
 	_context_menu->set_name ("ArdourContextMenu");
 
-	Menu*     load_menu = manage (new Menu);
-	MenuList& loitems (load_menu->items ());
-
-	loitems.push_back (MenuElem (_("from file"), sigc::bind(sigc::mem_fun (*this, (&TriggerUI::choose_sample)), true)));
-	loitems.push_back (MenuElem (_("from selection"), sigc::mem_fun (*this, &TriggerUI::set_from_selection)));
-
-	items.push_back (MenuElem (_("Load..."), *load_menu));
-#if DOUBLE_CLICK_IS_NOT_OBVIOUS_ENOUGH
-	items.push_back (MenuElem (_("Edit..."), sigc::mem_fun (*this, &TriggerUI::edit_trigger)));
-#endif
+	items.push_back (MenuElem (_("Load..."), sigc::bind(sigc::mem_fun (*this, (&TriggerUI::choose_sample)), true)));
 	items.push_back (SeparatorElem());
 	items.push_back (MenuElem (_("Color..."), sigc::mem_fun (*this, &TriggerUI::choose_color)));
-	items.push_back (SeparatorElem());
 	items.push_back (MenuElem (_("Clear"), sigc::mem_fun (*this, &TriggerUI::clear_trigger)));
+	items.push_back (SeparatorElem());
+	items.push_back (MenuElem (_("MIDI Learn"), sigc::mem_fun (*this, &TriggerUI::trigger_midi_learn)));
+	items.push_back (MenuElem (_("MIDI un-Learn"), sigc::mem_fun (*this, &TriggerUI::trigger_midi_unlearn)));
 
-	_context_menu->popup (1, gtk_get_current_event_time ());
+
+	_context_menu->popup (3, gtk_get_current_event_time ());
+}
+
+void
+TriggerUI::trigger_midi_learn ()
+{
+	if (!trigger()) {
+		return;
+	}
+
+	tref.box->begin_midi_learn (trigger()->index());
+}
+
+void
+TriggerUI::trigger_midi_unlearn ()
+{
+	tref.box->midi_unlearn (trigger()->index());
 }
 
 void
@@ -563,7 +535,7 @@ TriggerUI::launch_context_menu ()
 	items.push_back (MenuElem (_("Quantization..."), *quant_menu));
 
 	items.push_back (CheckMenuElem (_("Cue Isolate"), sigc::mem_fun (*this, &TriggerUI::toggle_trigger_isolated)));
-	if (trigger ()->scene_isolated ()) {
+	if (trigger ()->cue_isolated ()) {
 		PBD::Unwinder<bool> uw (_ignore_menu_action, true);
 		dynamic_cast<Gtk::CheckMenuItem*> (&items.back ())->set_active (true);
 	}
@@ -584,73 +556,49 @@ TriggerUI::follow_context_menu ()
 	MenuList& items = _follow_context_menu->items ();
 	_follow_context_menu->set_name ("ArdourContextMenu");
 
-	Menu*     follow_menu = manage (new Menu);
-	MenuList& fitems      = follow_menu->items ();
-
-	RadioMenuItem::Group fagroup;
-
 	_ignore_menu_action = true;
 
-	fitems.push_back (RadioMenuElem (fagroup, TriggerUI::follow_action_to_string(FollowAction (FollowAction::None)), sigc::bind(sigc::mem_fun (*this, &TriggerUI::set_follow_action), FollowAction (FollowAction::None))));
-	if (trigger ()->follow_action (0) == FollowAction::None) {
-		dynamic_cast<Gtk::CheckMenuItem*> (&fitems.back ())->set_active (true);
-	}
-	fitems.push_back (RadioMenuElem (fagroup, TriggerUI::follow_action_to_string(FollowAction (FollowAction::Stop)), sigc::bind(sigc::mem_fun (*this, &TriggerUI::set_follow_action), FollowAction (FollowAction::Stop))));
-	if (trigger ()->follow_action (0) == FollowAction::Stop) {
-		dynamic_cast<Gtk::CheckMenuItem*> (&fitems.back ())->set_active (true);
-	}
-	fitems.push_back (RadioMenuElem (fagroup, TriggerUI::follow_action_to_string(FollowAction (FollowAction::Again)), sigc::bind(sigc::mem_fun (*this, &TriggerUI::set_follow_action), FollowAction (FollowAction::Again))));
-	if (trigger ()->follow_action (0) == FollowAction::Again) {
-		dynamic_cast<Gtk::CheckMenuItem*> (&fitems.back ())->set_active (true);
-	}
-#if QUEUED_SLOTS_IMPLEMENTED
-	fitems.push_back (RadioMenuElem (fagroup, TriggerUI::follow_action_to_string(FollowAction (FollowAction::QueuedTrigger)), sigc::bind(sigc::mem_fun (*this, &TriggerUI::set_follow_action), FollowAction (FollowAction::QueuedTrigger))));
-	if (trigger ()->follow_action (0) == FollowAction::QueuedTrigger) {
-		dynamic_cast<Gtk::CheckMenuItem*> (&fitems.back ())->set_active (true);
-	}
-#endif
-	fitems.push_back (RadioMenuElem (fagroup, TriggerUI::follow_action_to_string(FollowAction (FollowAction::PrevTrigger)), sigc::bind(sigc::mem_fun (*this, &TriggerUI::set_follow_action), FollowAction (FollowAction::PrevTrigger))));
-	if (trigger ()->follow_action (0) == FollowAction::PrevTrigger) {
-		dynamic_cast<Gtk::CheckMenuItem*> (&fitems.back ())->set_active (true);
-	}
-	fitems.push_back (RadioMenuElem (fagroup, TriggerUI::follow_action_to_string(FollowAction (FollowAction::NextTrigger)), sigc::bind(sigc::mem_fun (*this, &TriggerUI::set_follow_action), FollowAction (FollowAction::NextTrigger))));
-	if (trigger ()->follow_action (0) == FollowAction::NextTrigger) {
-		dynamic_cast<Gtk::CheckMenuItem*> (&fitems.back ())->set_active (true);
+	items.push_back (MenuElem (TriggerUI::follow_action_to_string(FollowAction (FollowAction::None)), sigc::bind(sigc::mem_fun (*this, &TriggerUI::set_follow_action), FollowAction (FollowAction::None))));
+	items.push_back (MenuElem (TriggerUI::follow_action_to_string(FollowAction (FollowAction::Stop)), sigc::bind(sigc::mem_fun (*this, &TriggerUI::set_follow_action), FollowAction (FollowAction::Stop))));
+	items.push_back (MenuElem (TriggerUI::follow_action_to_string(FollowAction (FollowAction::Again)), sigc::bind(sigc::mem_fun (*this, &TriggerUI::set_follow_action), FollowAction (FollowAction::Again))));
+	items.push_back (MenuElem (TriggerUI::follow_action_to_string(FollowAction (FollowAction::ForwardTrigger)), sigc::bind(sigc::mem_fun (*this, &TriggerUI::set_follow_action), FollowAction (FollowAction::ForwardTrigger))));
+	items.push_back (MenuElem (TriggerUI::follow_action_to_string(FollowAction (FollowAction::ReverseTrigger)), sigc::bind(sigc::mem_fun (*this, &TriggerUI::set_follow_action), FollowAction (FollowAction::ReverseTrigger))));
+
+	Menu*     jump_menu = manage (new Menu);
+	MenuList& jitems      = jump_menu->items ();
+	jitems.push_back (MenuElem (_("Multi..."), sigc::bind (sigc::mem_fun (*this, &TriggerUI::edit_jump), false)));
+	for (int i = 0; i < TriggerBox::default_triggers_per_box; i++) {
+		FollowAction jump_fa = (FollowAction::JumpTrigger);
+		jump_fa.targets.set(i);
+		jitems.push_back (MenuElem (cue_marker_name (i), sigc::bind (sigc::mem_fun (*this, &TriggerUI::set_follow_action), jump_fa)));
 	}
 
-	fitems.push_back (RadioMenuElem (fagroup, TriggerUI::follow_action_to_string(FollowAction (FollowAction::ForwardTrigger)), sigc::bind(sigc::mem_fun (*this, &TriggerUI::set_follow_action), FollowAction (FollowAction::ForwardTrigger))));
-	if (trigger ()->follow_action (0) == FollowAction::ForwardTrigger) {
-		dynamic_cast<Gtk::CheckMenuItem*> (&fitems.back ())->set_active (true);
-	}
-	fitems.push_back (RadioMenuElem (fagroup, TriggerUI::follow_action_to_string(FollowAction (FollowAction::ReverseTrigger)), sigc::bind(sigc::mem_fun (*this, &TriggerUI::set_follow_action), FollowAction (FollowAction::ReverseTrigger))));
-	if (trigger ()->follow_action (0) == FollowAction::ReverseTrigger) {
-		dynamic_cast<Gtk::CheckMenuItem*> (&fitems.back ())->set_active (true);
-	}
-
-#if 0
-	fitems.push_back (RadioMenuElem (fagroup, TriggerUI::follow_action_to_string(FollowAction (FollowAction::FirstTrigger)), sigc::bind(sigc::mem_fun (*this, &TriggerUI::set_follow_action), FollowAction (FollowAction::FirstTrigger))));
-	if (trigger ()->follow_action (0) == FollowAction::FirstTrigger) {
-		dynamic_cast<Gtk::CheckMenuItem*> (&fitems.back ())->set_active (true);
-	}
-	fitems.push_back (RadioMenuElem (fagroup, TriggerUI::follow_action_to_string(FollowAction (FollowAction::LastTrigger)), sigc::bind(sigc::mem_fun (*this, &TriggerUI::set_follow_action), FollowAction (FollowAction::LastTrigger))));
-	if (trigger ()->follow_action (0) == FollowAction::LastTrigger) {
-		dynamic_cast<Gtk::CheckMenuItem*> (&fitems.back ())->set_active (true);
-	}
-#endif
-	fitems.push_back (RadioMenuElem (fagroup, TriggerUI::follow_action_to_string(FollowAction (FollowAction::AnyTrigger)), sigc::bind(sigc::mem_fun (*this, &TriggerUI::set_follow_action), FollowAction (FollowAction::AnyTrigger))));
-	if (trigger ()->follow_action (0) == FollowAction::AnyTrigger) {
-		dynamic_cast<Gtk::CheckMenuItem*> (&fitems.back ())->set_active (true);
-	}
-	fitems.push_back (RadioMenuElem (fagroup, TriggerUI::follow_action_to_string(FollowAction (FollowAction::OtherTrigger)), sigc::bind(sigc::mem_fun (*this, &TriggerUI::set_follow_action), FollowAction (FollowAction::OtherTrigger))));
-	if (trigger ()->follow_action (0) == FollowAction::OtherTrigger) {
-		dynamic_cast<Gtk::CheckMenuItem*> (&fitems.back ())->set_active (true);
-	}
+	items.push_back (MenuElem (_("Jump"), *jump_menu));
 
 	_ignore_menu_action = false;
 
-	items.push_back (MenuElem (_("Follow Action..."), *follow_menu));
-
 	_follow_context_menu->popup (1, gtk_get_current_event_time ());
+}
+
+void
+TriggerUI::edit_jump (bool right_fa)
+{
+	if (_ignore_menu_action) {
+		return;
+	}
+
+	TriggerJumpDialog* d = new TriggerJumpDialog (right_fa);
+	d->set_trigger(tref);
+	d->show_all ();
+
+	d->signal_response().connect (sigc::bind (sigc::mem_fun (*this, &TriggerUI::edit_jump_done), d));
+}
+
+void
+TriggerUI::edit_jump_done (int r, TriggerJumpDialog* d)
+{
+	d->done (r);
+	delete d;
 }
 
 
@@ -661,13 +609,13 @@ TriggerUI::toggle_trigger_isolated ()
 		return;
 	}
 
-	trigger()->set_scene_isolated (!trigger()->scene_isolated ());
+	trigger()->set_cue_isolated (!trigger()->cue_isolated ());
 }
 
 void
 TriggerUI::clear_trigger ()
 {
-	trigger()->set_region (boost::shared_ptr<Region>());
+	trigger()->set_region (std::shared_ptr<Region>());
 }
 
 void
@@ -690,7 +638,7 @@ TriggerUI::set_follow_action (FollowAction const & fa)
 		return;
 	}
 
-	trigger()->set_follow_action (fa, 0);
+	trigger()->set_follow_action0 (fa);
 	trigger()->set_follow_action_probability (0);
 }
 
@@ -778,7 +726,7 @@ TriggerUI::quantize_length_to_string (BBT_Offset const & ql)
 }
 
 std::string
-TriggerUI::follow_action_to_string (FollowAction const & fa)
+TriggerUI::follow_action_to_string (FollowAction const & fa, bool with_targets)
 {
 	switch (fa.type) {
 	case FollowAction::None:
@@ -787,12 +735,6 @@ TriggerUI::follow_action_to_string (FollowAction const & fa)
 		return _("Stop");
 	case FollowAction::Again:
 		return _("Again");
-	case FollowAction::QueuedTrigger:
-		return _("Queued");
-	case FollowAction::NextTrigger:
-		return _("Next");
-	case FollowAction::PrevTrigger:
-		return _("Prev");
 	case FollowAction::ForwardTrigger:
 		return _("Forward");
 	case FollowAction::ReverseTrigger:
@@ -801,13 +743,25 @@ TriggerUI::follow_action_to_string (FollowAction const & fa)
 		return _("First");
 	case FollowAction::LastTrigger:
 		return _("Last");
-	case FollowAction::AnyTrigger:
-		return _("Any");
-	case FollowAction::OtherTrigger:
-		return _("Other");
+	case FollowAction::JumpTrigger:
+		if (!with_targets) {
+			return _("Jump");
+		}
 	}
-	/*NOTREACHED*/
-	return std::string();
+
+	/* Jump case, and target(s) are desired */
+	if ( fa.targets.count() == 1 ) {  //jump to a specific row
+		for (int i = 0; i < TriggerBox::default_triggers_per_box; i++) {
+			if (fa.targets.test(i)) {
+				return string_compose (_("Jump to: %1"), cue_marker_name (i));
+			}
+		}
+	} else {
+		return _("Jump: Multi");
+	}
+
+	/* should never be reached */
+	return "";
 }
 
 std::string
@@ -846,27 +800,12 @@ TriggerUI::set_trigger (ARDOUR::TriggerReference tr)
 
 	tref = tr;
 
-	PropertyChange pc;
+	trigger_changed (TriggerBox::all_trigger_props());
 
-	pc.add (Properties::name);
-	pc.add (Properties::color);
-	pc.add (Properties::gain);
-	pc.add (Properties::stretch_mode);
-	pc.add (Properties::legato);
-	pc.add (Properties::quantization);
-	pc.add (Properties::launch_style);
-	pc.add (Properties::use_follow_length);
-	pc.add (Properties::follow_length);
-	pc.add (Properties::follow_count);
-	pc.add (Properties::follow_action0);
-	pc.add (Properties::follow_action1);
-	pc.add (Properties::velocity_effect);
-	pc.add (Properties::follow_action_probability);
+	trigger()->PropertyChanged.connect (trigger_connections, invalidator (*this), boost::bind (&TriggerUI::trigger_changed, this, _1), gui_context());
+	tref.box->PropertyChanged.connect (trigger_connections, invalidator (*this), boost::bind (&TriggerUI::trigger_changed, this, _1), gui_context ());
 
-	trigger_changed (pc);
+	tref.box->TriggerSwapped.connect (trigger_swap_connection, invalidator (*this), boost::bind (&TriggerUI::trigger_swap, this, _1), gui_context ());
 
-	trigger()->PropertyChanged.connect (trigger_connections, MISSING_INVALIDATOR, boost::bind (&TriggerUI::trigger_changed, this, _1), gui_context());
-	tref.box->PropertyChanged.connect (trigger_connections, MISSING_INVALIDATOR, boost::bind (&TriggerUI::trigger_changed, this, _1), gui_context ());
-
-	tref.box->TriggerSwapped.connect (trigger_swap_connection, MISSING_INVALIDATOR, boost::bind (&TriggerUI::trigger_swap, this, _1), gui_context ());
+	on_trigger_set();  //derived classes can do initialization here
 }

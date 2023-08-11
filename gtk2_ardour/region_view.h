@@ -56,21 +56,21 @@ class RegionView : public TimeAxisViewItem
 public:
 	RegionView (ArdourCanvas::Container*          parent,
 	            TimeAxisView&                     time_view,
-	            boost::shared_ptr<ARDOUR::Region> region,
+	            const std::shared_ptr<ARDOUR::Region>& region,
 	            double                            samples_per_pixel,
 	            uint32_t                          base_color,
 	            bool                              automation = false);
 
 	RegionView (const RegionView& other);
-	RegionView (const RegionView& other, boost::shared_ptr<ARDOUR::Region> other_region);
+	RegionView (const RegionView& other, const std::shared_ptr<ARDOUR::Region>& other_region);
 
 	~RegionView ();
 
-	void set_selected (bool yn);
+	virtual void set_selected (bool yn);
 
-	virtual void init (bool wait_for_data);
+	virtual void init (bool what_changed);
 
-	boost::shared_ptr<ARDOUR::Region> region() const { return _region; }
+	std::shared_ptr<ARDOUR::Region> region() const { return _region; }
 
 	bool is_valid() const    { return valid; }
 
@@ -82,6 +82,7 @@ public:
 
 	void move (double xdelta, double ydelta);
 
+	void visual_layer_on_top();
 	void raise_to_top ();
 	void lower_to_bottom ();
 
@@ -92,8 +93,6 @@ public:
 
 	virtual void region_changed (const PBD::PropertyChange&);
 
-	uint32_t get_fill_color () const;
-
 	virtual GhostRegion* add_ghost (TimeAxisView&) = 0;
 	void remove_ghost_in (TimeAxisView&);
 	void remove_ghost (GhostRegion*);
@@ -101,7 +100,31 @@ public:
 	virtual void entered () {}
 	virtual void exited () {}
 
-	virtual void enable_display(bool yn) { _enable_display = yn; }
+	bool display_enabled() const;
+	void redisplay (bool view_only = true) {
+		_redisplay (view_only);
+	}
+
+	virtual void tempo_map_changed () {
+		_redisplay (true);
+	}
+
+	struct DisplaySuspender {
+		DisplaySuspender (RegionView& rv, bool just_view = false) : region_view (rv), view_only (just_view) {
+			region_view.disable_display ();
+		}
+
+		DisplaySuspender (DisplaySuspender const & other) : region_view (other.region_view), view_only (other.view_only) {
+			region_view.disable_display ();
+		}
+
+		~DisplaySuspender () {
+			region_view.enable_display (view_only);
+		}
+		RegionView& region_view;
+		bool view_only;
+	};
+
 	virtual void update_coverage_frame (LayerDisplay);
 
 	static PBD::Signal1<void,RegionView*> RegionViewGoingAway;
@@ -128,7 +151,7 @@ public:
 		}
 	};
 
-	Temporal::timepos_t snap_region_time_to_region_time (Temporal::timepos_t const &, bool ensure_snap = false) const;
+	Temporal::timecnt_t snap_region_time_to_region_time (Temporal::timecnt_t const &, bool ensure_snap = false) const;
 
 	void update_visibility ();
 
@@ -142,7 +165,7 @@ protected:
 	 */
 	RegionView (ArdourCanvas::Container *,
 	            TimeAxisView&,
-	            boost::shared_ptr<ARDOUR::Region>,
+	            const std::shared_ptr<ARDOUR::Region>&,
 	            double samples_per_pixel,
 	            uint32_t basic_color,
 	            bool recording,
@@ -172,22 +195,21 @@ protected:
 	void maybe_raise_cue_markers ();
 
 	Temporal::timecnt_t region_relative_distance (Temporal::timecnt_t const &, Temporal::TimeDomain desired_time_domain);
-	Temporal::timecnt_t source_relative_distance (Temporal::timecnt_t const &, Temporal::TimeDomain desired_time_domain);
 
-	boost::shared_ptr<ARDOUR::Region> _region;
+	std::shared_ptr<ARDOUR::Region> _region;
 
-	ArdourCanvas::Polygon* sync_mark; ///< polgyon for sync position
-	ArdourCanvas::Line* sync_line; ///< polgyon for sync position
+	ArdourCanvas::Polygon* sync_mark; ///< polygon for sync position
+	ArdourCanvas::Line* sync_line; ///< polygon for sync position
 
 	RegionEditor* editor;
 
 	std::vector<ControlPoint *> control_points;
 	double current_visible_sync_position;
 
-	bool    valid; ///< see StreamView::redisplay_diskstream()
-	bool    _enable_display; ///< see StreamView::redisplay_diskstream()
-	double  _pixel_width;
-	bool    in_destructor;
+	bool      valid; ///< see StreamView::redisplay_diskstream()
+	uint32_t _disable_display; ///< see StreamView::redisplay_diskstream()
+	double   _pixel_width;
+	bool      in_destructor;
 
 	bool wait_for_data;
 
@@ -226,6 +248,13 @@ private:
 	typedef std::list<ViewCueMarker*> ViewCueMarkers;
 	ViewCueMarkers _cue_markers;
 	bool _cue_markers_visible;
+	virtual void _redisplay (bool) = 0;
+
+  private:
+	friend struct DisplaySuspender;
+	void enable_display (bool view_only);
+	void disable_display();
+
 };
 
 #endif /* __gtk_ardour_region_view_h__ */

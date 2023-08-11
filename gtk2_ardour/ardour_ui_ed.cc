@@ -45,6 +45,7 @@
 #include "pbd/fpu.h"
 #include "pbd/convert.h"
 #include "pbd/openuri.h"
+#include "pbd/types_convert.h"
 
 #include "gtkmm2ext/cairo_packer.h"
 #include "gtkmm2ext/utils.h"
@@ -61,6 +62,7 @@
 #include "engine_dialog.h"
 #include "editor.h"
 #include "editing.h"
+#include "enums_convert.h"
 #include "actions.h"
 #include "meterbridge.h"
 #include "luawindow.h"
@@ -171,7 +173,7 @@ ARDOUR_UI::install_actions ()
 	ActionManager::register_action (main_menu_actions, X_("EditorMenu"), _("Editor"));
 	ActionManager::register_action (main_menu_actions, X_("PrefsMenu"), _("Preferences"));
 	ActionManager::register_action (main_menu_actions, X_("RecorderMenu"), _("Recorder"));
-	ActionManager::register_action (main_menu_actions, X_("TriggerMenu"), _("Trigger Drom"));
+	ActionManager::register_action (main_menu_actions, X_("TriggerMenu"), _("Cue Grid"));
 	ActionManager::register_action (main_menu_actions, X_("DetachMenu"), _("Detach"));
 	ActionManager::register_action (main_menu_actions, X_("Help"), _("Help"));
 	ActionManager::register_action (main_menu_actions, X_("KeyMouseActions"), _("Misc. Shortcuts"));
@@ -287,7 +289,6 @@ ARDOUR_UI::install_actions ()
 	ActionManager::register_action (common_actions, X_("tutorial"), S_("Help|Tutorial"),  mem_fun(*this, &ARDOUR_UI::launch_tutorial));
 	ActionManager::register_action (common_actions, X_("reference"), S_("Manual|Reference"),  mem_fun(*this, &ARDOUR_UI::launch_reference));
 	ActionManager::register_action (common_actions, X_("tracker"), _("Report a Bug"), mem_fun(*this, &ARDOUR_UI::launch_tracker));
-	ActionManager::register_action (common_actions, X_("cheat-sheet"), _("Cheat Sheet"), mem_fun(*this, &ARDOUR_UI::launch_cheat_sheet));
 	ActionManager::register_action (common_actions, X_("website"), _("Website"), mem_fun(*this, &ARDOUR_UI::launch_website));
 	ActionManager::register_action (common_actions, X_("website-dev"), _("Development"), mem_fun(*this, &ARDOUR_UI::launch_website_dev));
 	ActionManager::register_action (common_actions, X_("forums"), _("User Forums"), mem_fun(*this, &ARDOUR_UI::launch_forums));
@@ -323,7 +324,6 @@ ARDOUR_UI::install_actions ()
 
 	act = ActionManager::register_action (transport_actions, X_("ToggleRoll"), _("Start/Stop"), sigc::bind (sigc::mem_fun (*this, &ARDOUR_UI::toggle_roll), false, false));
 	ActionManager::session_sensitive_actions.push_back (act);
-	ActionManager::transport_sensitive_actions.push_back (act);
 	act = ActionManager::register_action (transport_actions, X_("alternate-ToggleRoll"), _("Start/Stop"), sigc::bind (sigc::mem_fun (*this, &ARDOUR_UI::toggle_roll), false, false));
 	ActionManager::session_sensitive_actions.push_back (act);
 	ActionManager::transport_sensitive_actions.push_back (act);
@@ -440,26 +440,26 @@ ARDOUR_UI::install_actions ()
 	ActionManager::session_sensitive_actions.push_back (act);
 	ActionManager::transport_sensitive_actions.push_back (act);
 
-	act = ActionManager::register_action (transport_actions, X_("primary-clock-timecode"), _("Timecode"), sigc::bind (sigc::mem_fun(primary_clock, &AudioClock::set_mode), AudioClock::Timecode, false));
+	act = ActionManager::register_action (transport_actions, X_("primary-clock-timecode"), _("Timecode"), sigc::bind (sigc::mem_fun(primary_clock, &AudioClock::set_mode), AudioClock::Timecode));
 	ActionManager::session_sensitive_actions.push_back (act);
-	act = ActionManager::register_action (transport_actions, X_("primary-clock-bbt"), _("Bars & Beats"), sigc::bind (sigc::mem_fun(primary_clock, &AudioClock::set_mode), AudioClock::BBT, false));
+	act = ActionManager::register_action (transport_actions, X_("primary-clock-bbt"), _("Bars & Beats"), sigc::bind (sigc::mem_fun(primary_clock, &AudioClock::set_mode), AudioClock::BBT));
 	ActionManager::session_sensitive_actions.push_back (act);
-	act = ActionManager::register_action (transport_actions, X_("primary-clock-minsec"), _("Minutes & Seconds"), sigc::bind (sigc::mem_fun(primary_clock, &AudioClock::set_mode), AudioClock::MinSec, false));
+	act = ActionManager::register_action (transport_actions, X_("primary-clock-minsec"), _("Minutes & Seconds"), sigc::bind (sigc::mem_fun(primary_clock, &AudioClock::set_mode), AudioClock::MinSec));
 	ActionManager::session_sensitive_actions.push_back (act);
-	act = ActionManager::register_action (transport_actions, X_("primary-clock-seconds"), _("Seconds"), sigc::bind (sigc::mem_fun(primary_clock, &AudioClock::set_mode), AudioClock::Seconds, false));
+	act = ActionManager::register_action (transport_actions, X_("primary-clock-seconds"), _("Seconds"), sigc::bind (sigc::mem_fun(primary_clock, &AudioClock::set_mode), AudioClock::Seconds));
 	ActionManager::session_sensitive_actions.push_back (act);
-	act = ActionManager::register_action (transport_actions, X_("primary-clock-samples"), _("Samples"), sigc::bind (sigc::mem_fun(primary_clock, &AudioClock::set_mode), AudioClock::Samples, false));
+	act = ActionManager::register_action (transport_actions, X_("primary-clock-samples"), _("Samples"), sigc::bind (sigc::mem_fun(primary_clock, &AudioClock::set_mode), AudioClock::Samples));
 	ActionManager::session_sensitive_actions.push_back (act);
 
-	act = ActionManager::register_action (transport_actions, X_("secondary-clock-timecode"), _("Timecode"), sigc::bind (sigc::mem_fun(secondary_clock, &AudioClock::set_mode), AudioClock::Timecode, false));
+	act = ActionManager::register_action (transport_actions, X_("secondary-clock-timecode"), _("Timecode"), sigc::bind (sigc::mem_fun(secondary_clock, &AudioClock::set_mode), AudioClock::Timecode));
 	ActionManager::session_sensitive_actions.push_back (act);
-	act = ActionManager::register_action (transport_actions, X_("secondary-clock-bbt"), _("Bars & Beats"), sigc::bind (sigc::mem_fun(secondary_clock, &AudioClock::set_mode), AudioClock::BBT, false));
+	act = ActionManager::register_action (transport_actions, X_("secondary-clock-bbt"), _("Bars & Beats"), sigc::bind (sigc::mem_fun(secondary_clock, &AudioClock::set_mode), AudioClock::BBT));
 	ActionManager::session_sensitive_actions.push_back (act);
-	act = ActionManager::register_action (transport_actions, X_("secondary-clock-minsec"), _("Minutes & Seconds"), sigc::bind (sigc::mem_fun(secondary_clock, &AudioClock::set_mode), AudioClock::MinSec, false));
+	act = ActionManager::register_action (transport_actions, X_("secondary-clock-minsec"), _("Minutes & Seconds"), sigc::bind (sigc::mem_fun(secondary_clock, &AudioClock::set_mode), AudioClock::MinSec));
 	ActionManager::session_sensitive_actions.push_back (act);
-	act = ActionManager::register_action (transport_actions, X_("secondary-clock-seconds"), _("Seconds"), sigc::bind (sigc::mem_fun(secondary_clock, &AudioClock::set_mode), AudioClock::Seconds, false));
+	act = ActionManager::register_action (transport_actions, X_("secondary-clock-seconds"), _("Seconds"), sigc::bind (sigc::mem_fun(secondary_clock, &AudioClock::set_mode), AudioClock::Seconds));
 	ActionManager::session_sensitive_actions.push_back (act);
-	act = ActionManager::register_action (transport_actions, X_("secondary-clock-samples"), _("Samples"), sigc::bind (sigc::mem_fun(secondary_clock, &AudioClock::set_mode), AudioClock::Samples, false));
+	act = ActionManager::register_action (transport_actions, X_("secondary-clock-samples"), _("Samples"), sigc::bind (sigc::mem_fun(secondary_clock, &AudioClock::set_mode), AudioClock::Samples));
 	ActionManager::session_sensitive_actions.push_back (act);
 
 	act = ActionManager::register_toggle_action (transport_actions, X_("SessionMonitorIn"), _("All Input"), sigc::mem_fun(*this, &ARDOUR_UI::toggle_session_monitoring_in));
@@ -496,9 +496,6 @@ ARDOUR_UI::install_actions ()
 	act = ActionManager::register_toggle_action (transport_actions, X_("ToggleFollowEdits"), _("Follow Range"), sigc::mem_fun(*this, &ARDOUR_UI::toggle_follow_edits));
 	ActionManager::session_sensitive_actions.push_back (act);
 	ActionManager::transport_sensitive_actions.push_back (act);
-
-	act = ActionManager::register_toggle_action (common_actions, X_("toggle-triggers"), _("Enable Triggers Drom"), sigc::mem_fun (*this, &ARDOUR_UI::toggle_triggers));
-	ActionManager::session_sensitive_actions.push_back (act);
 
 	act = ActionManager::register_toggle_action (main_actions, X_("ToggleLatencyCompensation"), _("Disable Latency Compensation"), sigc::mem_fun(*this, &ARDOUR_UI::toggle_latency_switch));
 	ActionManager::session_sensitive_actions.push_back (act);
@@ -586,11 +583,19 @@ ARDOUR_UI::install_dependent_actions ()
 		ActionManager::session_sensitive_actions.push_back (act);
 	}
 
+	act = ActionManager::register_action (common_actions, "jump-to-loop-start", _("Jump to Loop Start"), sigc::bind(sigc::mem_fun(*editor, &PublicEditor::jump_to_loop_marker), true));
+	ActionManager::session_sensitive_actions.push_back (act);
+	act = ActionManager::register_action (common_actions, "jump-to-loop-end", _("Jump to Loop End"), sigc::bind(sigc::mem_fun(*editor, &PublicEditor::jump_to_loop_marker), false));
+	ActionManager::session_sensitive_actions.push_back (act);
+
 	act = ActionManager::register_action (common_actions, X_("addExistingAudioFiles"), _("Import"), sigc::mem_fun (*editor, &PublicEditor::external_audio_dialog));
 	ActionManager::session_sensitive_actions.push_back (act);
 	ActionManager::write_sensitive_actions.push_back (act);
 
 	act = ActionManager::register_action (main_actions, X_("StemExport"), _("Stem export..."),  sigc::mem_fun (*editor, &PublicEditor::stem_export));
+	ActionManager::session_sensitive_actions.push_back (act);
+
+	act = ActionManager::register_action (main_actions, X_("QuickExport"), _("Quick Audio Export..."),  sigc::mem_fun (*editor, &PublicEditor::quick_export));
 	ActionManager::session_sensitive_actions.push_back (act);
 
 	act = ActionManager::register_action (main_actions, X_("ExportAudio"), _("Export to Audio File(s)..."),  sigc::mem_fun (*editor, &PublicEditor::export_audio));
@@ -632,6 +637,9 @@ ARDOUR_UI::install_dependent_actions ()
 	act = ActionManager::register_action (common_actions, "remove-location-from-playhead", _("Remove Mark at Playhead"), sigc::mem_fun(editor, &PublicEditor::remove_location_at_playhead_cursor));
 	ActionManager::session_sensitive_actions.push_back (act);
 	act = ActionManager::register_action (common_actions, "alternate-remove-location-from-playhead", _("Remove Mark at Playhead"), sigc::mem_fun(editor, &PublicEditor::remove_location_at_playhead_cursor));
+	ActionManager::session_sensitive_actions.push_back (act);
+
+	act = ActionManager::register_action (common_actions, "add-bbt-from-playhead", _("Add BBT Marker from Playhead"), sigc::mem_fun(editor, &PublicEditor::add_bbt_marker_at_playhead_cursor));
 	ActionManager::session_sensitive_actions.push_back (act);
 
 	act = ActionManager::register_action (common_actions, "nudge-next-forward", _("Nudge Next Later"), sigc::bind (sigc::mem_fun(editor, &PublicEditor::nudge_forward), true, false));
@@ -708,7 +716,7 @@ ARDOUR_UI::install_dependent_actions ()
 	ActionManager::register_action (common_actions, X_("show-mixer"), _("Show Mixer"), sigc::bind (sigc::mem_fun (*this, &ARDOUR_UI::show_tabbable), mixer));
 	ActionManager::register_action (common_actions, X_("show-preferences"), _("Show"), sigc::bind (sigc::mem_fun (*this, &ARDOUR_UI::show_tabbable), rc_option_editor));
 	ActionManager::register_action (common_actions, X_("show-recorder"), _("Show Recorder"), sigc::bind (sigc::mem_fun (*this, &ARDOUR_UI::show_tabbable), recorder));
-	ActionManager::register_action (common_actions, X_("show-trigger"), _("Show Trigger Drom"), sigc::bind (sigc::mem_fun (*this, &ARDOUR_UI::show_tabbable), trigger_page));
+	ActionManager::register_action (common_actions, X_("show-trigger"), _("Show Cues"), sigc::bind (sigc::mem_fun (*this, &ARDOUR_UI::show_tabbable), trigger_page));
 
 	/* These "change" actions are not intended to be used inside menus, but
 	   are for the tab/window control buttons, which have somewhat odd
@@ -944,6 +952,16 @@ ARDOUR_UI::save_ardour_state ()
 	XMLNode& rnode (recorder->get_state());
 	XMLNode& tnode (trigger_page->get_state());
 
+	/* store clock modes */
+	XMLNode* cnode = new XMLNode(X_("ClockModes"));
+	for (auto const& i: AudioClock::clocks) {
+		XMLNode* child = new XMLNode (X_("Clock"));
+		child->set_property (X_("name"), i->name());
+		child->set_property (X_("mode"), i->mode());
+		child->set_property (X_("on"), i->on());
+		cnode->add_child_nocopy (*child);
+	}
+
 	Config->add_extra_xml (*window_node);
 	Config->add_extra_xml (audio_midi_setup->get_state());
 
@@ -961,6 +979,7 @@ ARDOUR_UI::save_ardour_state ()
 		_session->add_instant_xml (bnode);
 		_session->add_instant_xml (rnode);
 		_session->add_instant_xml (tnode);
+		_session->add_instant_xml (*cnode);
 		if (location_ui) {
 			_session->add_instant_xml (location_ui->ui().get_state ());
 		}
@@ -969,7 +988,10 @@ ARDOUR_UI::save_ardour_state ()
 			vkstate.add_child_nocopy (virtual_keyboard_window.get_state ());
 			_session->add_instant_xml (vkstate);
 		}
-	} else {
+	}
+
+	/* save current Window settings and sizes for new sessions */
+	{
 		Config->add_instant_xml (main_window_node);
 		Config->add_instant_xml (enode);
 		Config->add_instant_xml (mnode);
@@ -977,6 +999,7 @@ ARDOUR_UI::save_ardour_state ()
 		Config->add_instant_xml (bnode);
 		Config->add_instant_xml (rnode);
 		Config->add_instant_xml (tnode);
+		Config->add_instant_xml (*cnode);
 		if (location_ui) {
 			Config->add_instant_xml (location_ui->ui().get_state ());
 		}
@@ -993,6 +1016,7 @@ ARDOUR_UI::save_ardour_state ()
 	delete &pnode;
 	delete &rnode;
 	delete &tnode;
+	delete cnode;
 
 	Keyboard::save_keybindings ();
 }

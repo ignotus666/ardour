@@ -31,7 +31,7 @@ namespace ARDOUR {
 
 class LIBARDOUR_API SrcFileSource : public AudioFileSource {
 public:
-	SrcFileSource (Session&, boost::shared_ptr<AudioFileSource>, SrcQuality srcq = SrcQuality(SrcQuick));
+	SrcFileSource (Session&, std::shared_ptr<AudioFileSource>, SrcQuality srcq = SrcQuality(SrcQuick));
 	~SrcFileSource ();
 
 	int  update_header (samplepos_t /*when*/, struct tm&, time_t) { return 0; }
@@ -42,9 +42,9 @@ public:
 
 	float sample_rate () const { return _session.nominal_sample_rate(); }
 
-	timepos_t natural_position() const { return _source->natural_position() * _ratio;}
-	samplecnt_t readable_length_samples() const { return _source->length_samples () * _ratio; }
-	timecnt_t length () const { return timecnt_t ((samplecnt_t) (_source->length_samples () * _ratio)); }
+	timepos_t natural_position() const { return _source->natural_position().scale (_ratio); }
+	samplecnt_t readable_length_samples() const { assert (_source->length().time_domain() == Temporal::AudioTime); return _source->length().samples () * _ratio; }
+	timepos_t length () const { assert (_source->length().time_domain() == Temporal::AudioTime); return timepos_t ((samplepos_t) (_source->length().samples () * _ratio)); }
 
 	bool can_be_analysed() const { return false; }
 	bool clamped_at_unity() const { return false; }
@@ -62,7 +62,7 @@ protected:
 
 private:
 	static const uint32_t max_blocksize;
-	boost::shared_ptr<AudioFileSource> _source;
+	std::shared_ptr<AudioFileSource> _source;
 
 	mutable SRC_STATE* _src_state;
 	mutable SRC_DATA   _src_data;

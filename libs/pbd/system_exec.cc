@@ -79,17 +79,17 @@ SystemExec::init ()
 #endif
 }
 
-SystemExec::SystemExec (std::string c, std::string a)
+SystemExec::SystemExec (std::string c, std::string a, bool supress_ld_env)
 	: cmd(c)
 {
 	init ();
 
 	argp = NULL;
-	make_envp();
+	make_envp (supress_ld_env);
 	make_argp(a);
 }
 
-SystemExec::SystemExec (std::string c, char **a)
+SystemExec::SystemExec (std::string c, char **a, bool supress_ld_env)
 	: cmd(c) , argp(a)
 {
 	init ();
@@ -97,10 +97,10 @@ SystemExec::SystemExec (std::string c, char **a)
 #ifdef PLATFORM_WINDOWS
 	make_wargs(a);
 #endif
-	make_envp();
+	make_envp (supress_ld_env);
 }
 
-SystemExec::SystemExec (std::string command, const std::map<char, std::string> subs)
+SystemExec::SystemExec (std::string command, const std::map<char, std::string> subs, bool supress_ld_env)
 {
 	init ();
 	make_argp_escaped(command, subs);
@@ -141,7 +141,7 @@ SystemExec::SystemExec (std::string command, const std::map<char, std::string> s
 	// Glib::find_program_in_path () is only available in Glib >= 2.28
 	// cmd = Glib::find_program_in_path (argp[0]);
 #endif
-	make_envp();
+	make_envp (supress_ld_env);
 }
 
 char*
@@ -364,7 +364,7 @@ CALLBACK my_terminateApp(HWND hwnd, LPARAM procId)
 /* PROCESS API */
 
 void
-SystemExec::make_envp()
+SystemExec::make_envp (bool)
 {
 	; /* environemt is copied over with CreateProcess(...,env=0 ,..) */
 }
@@ -407,21 +407,30 @@ SystemExec::terminate ()
 	close_stdin();
 
 	if (pid) {
-		/* terminate */
-		EnumWindows(my_terminateApp, (LPARAM)pid->dwProcessId);
-		PostThreadMessage(pid->dwThreadId, WM_CLOSE, 0, 0);
+		/* close windows (if any) */
+		EnumWindows (my_terminateApp, (LPARAM)pid->dwProcessId);
+
+		if (PostThreadMessage (pid->dwThreadId, WM_CLOSE, 0, 0)) {
+			/* OK, wait for child to terminate cleanly */
+			WaitForSingleObject(pid->hProcess, 150 /*ms*/);
+		}
 
 		/* kill ! */
-		TerminateProcess(pid->hProcess, 0xf291);
+		TerminateProcess(pid->hProcess, 0);
+		wait ();
 
-		CloseHandle(pid->hThread);
 		CloseHandle(pid->hProcess);
+		CloseHandle(pid->hThread);
+		pid->hThread = pid->hProcess = 0;
 		destroy_pipe(stdinP);
 		destroy_pipe(stdoutP);
 		destroy_pipe(stderrP);
 		delete pid;
 		pid=0;
 	}
+
+	if (thread_active) pthread_join(thread_id_tt, NULL);
+	thread_active = false;
 	::pthread_mutex_unlock(&write_lock);
 }
 
@@ -431,7 +440,11 @@ SystemExec::wait (int options)
 	while (is_running()) {
 		WaitForSingleObject(pid->hProcess, 40);
 	}
-	return 0;
+	DWORD exit_code;
+	if (GetExitCodeProcess(pid->hProcess, &exit_code)) {
+		return exit_code;
+	}
+	return -1;
 }
 
 bool
@@ -524,7 +537,7 @@ void
 SystemExec::output_interposer()
 {
 	DWORD bytesRead = 0;
-	char data[BUFSIZ];
+	char data[8192];
 #if 0 // untested code to set up nonblocking
 	unsigned long l = 1;
 	ioctlsocket(stdoutP[0], FIONBIO, &l);
@@ -536,14 +549,15 @@ SystemExec::output_interposer()
 		if (bytesAvail < 1) {Sleep(500); printf("N/A\n"); continue;}
 #endif
 		if (stdoutP[0] == INVALID_HANDLE_VALUE) break;
-		if (!ReadFile(stdoutP[0], data, BUFSIZ - 1, &bytesRead, 0)) {
+		if (!ReadFile(stdoutP[0], data, 8191, &bytesRead, 0)) {
 			DWORD err =  GetLastError();
 			if (err == ERROR_IO_PENDING) continue;
 			break;
 		}
 		if (bytesRead < 1) continue; /* actually not needed; but this is safe. */
 		data[bytesRead] = 0;
-		ReadStdout(data, bytesRead); /* EMIT SIGNAL */
+		std::string rv = std::string (data, bytesRead);
+		ReadStdout(rv, bytesRead); /* EMIT SIGNAL */
 	}
 	Terminated(); /* EMIT SIGNAL */
 	pthread_exit(0);
@@ -556,6 +570,8 @@ SystemExec::close_stdin()
 	if (stdinP[1] != INVALID_HANDLE_VALUE) FlushFileBuffers (stdinP[1]);
 	Sleep(200);
 	destroy_pipe (stdinP);
+	if (stdoutP[0] != INVALID_HANDLE_VALUE) FlushFileBuffers (stdoutP[0]);
+	if (stdoutP[1] != INVALID_HANDLE_VALUE) FlushFileBuffers (stdoutP[1]);
 }
 
 size_t
@@ -590,16 +606,25 @@ SystemExec::write_to_stdin (const void* data, size_t bytes)
 extern char **environ;
 
 void
-SystemExec::make_envp()
+SystemExec::make_envp (bool supress_ld_env)
 {
-	int i = 0;
-	envp = (char **) calloc(1, sizeof(char*));
+	int i = 0, j = 0;
+	envp = (char **) calloc (1, sizeof(char*));
 	/* copy current environment */
 	for (i = 0; environ[i]; ++i) {
-	  envp[i] = strdup(environ[i]);
-	  envp = (char **) realloc(envp, (i+2) * sizeof(char*));
+#ifdef __APPLE__
+		if (supress_ld_env && 0 == strncmp (environ[i], "DYLD_FALLBACK_LIBRARY_PATH", 26)) {
+			continue;
+		}
+#else
+		if (supress_ld_env && 0 == strncmp (environ[i], "LD_LIBRARY_PATH", 15)) {
+			continue;
+		}
+#endif
+	  envp[j++] = strdup(environ[i]);
+	  envp = (char **) realloc(envp, (j + 1) * sizeof(char*));
 	}
-	envp[i] = 0;
+	envp[j] = 0;
 }
 
 void
@@ -669,6 +694,13 @@ SystemExec::terminate ()
 		wait(WNOHANG);
 	}
 
+	if (pid) {
+		::kill(pid, SIGINT);
+		::usleep(250000);
+		sched_yield();
+		wait(WNOHANG);
+	}
+
 	/* if pid is non-zero, the child task is STILL executing after being
 	 * sent SIGTERM. Act tough ... send SIGKILL
 	 */
@@ -707,7 +739,7 @@ SystemExec::wait (int options)
 			}
 		} /* else the process is still running */
 	}
-	return status;
+	return WEXITSTATUS (status);
 }
 
 bool
@@ -894,10 +926,10 @@ SystemExec::close_stdin()
 	if (pin[1] < 0) {
 		return;
 	}
+	fsync (pin[1]);
 	close_fd (pin[0]);
 	close_fd (pin[1]);
-	close_fd (pout[0]);
-	close_fd (pout[1]);
+	fsync (pout[0]);
 }
 
 size_t
@@ -911,15 +943,15 @@ SystemExec::write_to_stdin (const void* data, size_t bytes)
 	while (c < bytes) {
 		for (;;) {
 			r = ::write (pin[1], &((const char*)data)[c], bytes - c);
-			if (r < 0 && (errno == EINTR || errno == EAGAIN)) {
-				sleep(1);
+			if (r >= 0) {
+				break;
+			}
+			if (errno == EINTR || errno == EAGAIN) {
+				g_usleep(100000);
 				continue;
 			}
-			if ((size_t) r != (bytes-c)) {
-				::pthread_mutex_unlock(&write_lock);
-				return c;
-			}
-			break;
+			::pthread_mutex_unlock(&write_lock);
+			return c;
 		}
 		c += r;
 	}

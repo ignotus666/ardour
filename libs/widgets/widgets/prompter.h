@@ -22,6 +22,7 @@
 
 #include <string>
 #include <gtkmm/box.h>
+#include <gtkmm/button.h>
 #include <gtkmm/entry.h>
 #include <gtkmm/label.h>
 #include <gtkmm/dialog.h>
@@ -46,17 +47,13 @@ public:
 		entryLabel.set_label (prompt);
 	}
 
-	void set_initial_text (std::string txt, bool allow_replace = false) {
-		entry.set_text (txt);
-		entry.select_region (0, entry.get_text_length());
-		if (allow_replace) {
-			on_entry_changed ();
-		}
-	}
+	void set_initial_text (std::string txt, bool allow_replace = false);
+	void set_default_text (std::string const& txt);
 
 	void change_labels (std::string ok, std::string cancel);
 
 	void get_result (std::string &str, bool strip=true);
+	void set_allow_empty (bool yn = true);
 
 protected:
 	Gtk::Entry& the_entry() { return entry; }
@@ -68,8 +65,11 @@ private:
 	Gtk::Entry entry;
 	Gtk::HBox entryBox;
 	Gtk::Label entryLabel;
+	Gtk::Button resetButton;
 	bool first_show;
 	bool can_accept_from_entry;
+	bool allow_empty;
+	std::string default_text;
 
 	void init (bool with_cancel);
 	void entry_activated ();

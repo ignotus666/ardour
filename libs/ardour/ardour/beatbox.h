@@ -31,6 +31,7 @@
 #include "pbd/ringbuffer.h"
 
 #include "temporal/bbt_time.h"
+#include "temporal/superclock.h
 
 #include "ardour/midi_state_tracker.h"
 #include "ardour/processor.h"
@@ -43,10 +44,6 @@ class StepSequencer;
 
 typedef uint64_t superclock_t;
 
-static const superclock_t superclock_ticks_per_second = 508032000; // 2^10 * 3^4 * 5^3 * 7^2
-inline superclock_t superclock_to_samples (superclock_t s, int sr) { return (s * sr) / superclock_ticks_per_second; }
-inline superclock_t samples_to_superclock (int samples, int sr) { return (samples * superclock_ticks_per_second) / sr; }
-
 class BeatBox : public ARDOUR::Processor {
   public:
 	BeatBox (ARDOUR::Session& s);
@@ -58,17 +55,17 @@ class BeatBox : public ARDOUR::Processor {
 	void silence (samplecnt_t nframes, samplepos_t start_frame);
 	bool can_support_io_configuration (const ChanCount& in, ChanCount& out);
 
-	XMLNode& state();
-	XMLNode& get_state(void);
+	XMLNode& state() const;
+	XMLNode& get_state () const;
 
-	bool fill_source (boost::shared_ptr<Source>);
+	bool fill_source (std::shared_ptr<Source>);
 
   private:
 	StepSequencer* _sequencer;
 
-	ARDOUR::MidiStateTracker inbound_tracker;
+	ARDOUR::MidiNoteTracker inbound_tracker;
 
-	bool fill_midi_source (boost::shared_ptr<SMFSource>);
+	bool fill_midi_source (std::shared_ptr<SMFSource>);
 
 };
 

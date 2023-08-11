@@ -152,7 +152,9 @@ function factory() return function()
 				if prefs["io"] then
 					local io_proc = proc:to_ioprocessor()
 					if not(io_proc:isnil()) then
-						queue[#queue + 1] = proc
+						if proc:display_to_user() then
+							queue[#queue + 1] = proc
+						end
 					end
 				end
 			end
@@ -196,14 +198,14 @@ function factory() return function()
 		if pref["sends"] then 
 			reset_send_controls(route, disp, auto)
 
-			-- Can't use reset() on this becuase ctrl:desc().normal 
+			-- Can't use reset() on this because ctrl:desc().normal 
 			-- for master_send_enable_controllable is 0, and we really 
 			-- want 1.
 			local msec = route:master_send_enable_controllable()
 			if not(msec:isnil()) then
 				msec:set_value(1, disp)
 				if auto then
-					ctrl:set_automation_state(auto)
+					msec:set_automation_state(auto)
 				end
 			end
 		end

@@ -82,6 +82,9 @@ LIBARDOUR_API void compute_equal_power_fades (ARDOUR::samplecnt_t nframes, float
 LIBARDOUR_API const char* edit_mode_to_string (ARDOUR::EditMode);
 LIBARDOUR_API ARDOUR::EditMode string_to_edit_mode (std::string);
 
+LIBARDOUR_API const char* ripple_mode_to_string (ARDOUR::RippleMode);
+LIBARDOUR_API ARDOUR::RippleMode string_to_ripple_mode (std::string);
+
 LIBARDOUR_API double gain_to_slider_position_with_max (double g, double max_gain = 2.0);
 LIBARDOUR_API double slider_position_to_gain_with_max (double g, double max_gain = 2.0);
 
@@ -109,11 +112,11 @@ LIBARDOUR_API uint32_t how_many_dsp_threads ();
 
 LIBARDOUR_API std::string compute_sha1_of_file (std::string path);
 
-template<typename T> boost::shared_ptr<ControlList> route_list_to_control_list (boost::shared_ptr<RouteList> rl, boost::shared_ptr<T> (Stripable::*get_control)() const) {
-	boost::shared_ptr<ControlList> cl (new ControlList);
+template<typename T> std::shared_ptr<AutomationControlList> route_list_to_control_list (std::shared_ptr<RouteList const> rl, std::shared_ptr<T> (Stripable::*get_control)() const) {
+	std::shared_ptr<AutomationControlList> cl (new AutomationControlList);
 	if (!rl) { return cl; }
-	for (RouteList::const_iterator r = rl->begin(); r != rl->end(); ++r) {
-		boost::shared_ptr<AutomationControl> ac = ((*r).get()->*get_control)();
+	for (auto const& r : *rl) {
+		std::shared_ptr<AutomationControl> ac = (r.get()->*get_control)();
 		if (ac) {
 			cl->push_back (ac);
 		}
@@ -121,10 +124,21 @@ template<typename T> boost::shared_ptr<ControlList> route_list_to_control_list (
 	return cl;
 }
 
-template<typename T> boost::shared_ptr<ControlList> stripable_list_to_control_list (StripableList& sl, boost::shared_ptr<T> (Stripable::*get_control)() const) {
-	boost::shared_ptr<ControlList> cl (new ControlList);
-	for (StripableList::const_iterator s = sl.begin(); s != sl.end(); ++s) {
-		boost::shared_ptr<AutomationControl> ac = ((*s).get()->*get_control)();
+template<typename T> std::shared_ptr<AutomationControlList> stripable_list_to_control_list (StripableList& sl, std::shared_ptr<T> (Stripable::*get_control)() const) {
+	std::shared_ptr<AutomationControlList> cl (new AutomationControlList);
+	for (auto const & s : sl) {
+		std::shared_ptr<AutomationControl> ac = (s.get()->*get_control)();
+		if (ac) {
+			cl->push_back (ac);
+		}
+	}
+	return cl;
+}
+
+template<typename T> std::shared_ptr<AutomationControlList> stripable_list_to_control_list (std::shared_ptr<StripableList const> sl, std::shared_ptr<T> (Stripable::*get_control)() const) {
+	std::shared_ptr<AutomationControlList> cl (new AutomationControlList);
+	for (auto const & s : *sl) {
+		std::shared_ptr<AutomationControl> ac = (s.get()->*get_control)();
 		if (ac) {
 			cl->push_back (ac);
 		}

@@ -63,9 +63,6 @@ StripSilenceDialog::StripSilenceDialog (Session* s, list<RegionView*> const & v)
 		views.push_back (ViewInterval (*r));
 	}
 
-	_minimum_length->set_is_duration (true, views.front().view->region()->position());
-	_fade_length->set_is_duration (true, views.front().view->region()->position());
-
 	Gtk::HBox* hbox = Gtk::manage (new Gtk::HBox);
 
 	Gtk::Table* table = Gtk::manage (new Gtk::Table (3, 3));
@@ -106,7 +103,6 @@ StripSilenceDialog::StripSilenceDialog (Session* s, list<RegionView*> const & v)
 
 	_fade_length->set_session (s);
 	_fade_length->set_mode (AudioClock::Samples);
-	_fade_length->set_is_duration (true, timepos_t());
 	_fade_length->set_duration (timecnt_t (_fade_length_value), true);
 
 	hbox->pack_start (*table);
@@ -179,7 +175,7 @@ void
 StripSilenceDialog::silences (AudioIntervalMap& m)
 {
 	for (list<ViewInterval>::iterator v = views.begin(); v != views.end(); ++v) {
-		pair<boost::shared_ptr<Region>,AudioIntervalResult> newpair (v->view->region(), v->intervals);
+		pair<std::shared_ptr<Region>,AudioIntervalResult> newpair (v->view->region(), v->intervals);
 		m.insert (newpair);
 	}
 }
@@ -187,8 +183,8 @@ StripSilenceDialog::silences (AudioIntervalMap& m)
 void
 StripSilenceDialog::drop_rects ()
 {
-	// called by parent when starting to progess (dialog::run returned),
-	// but before the dialog is destoyed.
+	// called by parent when starting to progress (dialog::run returned),
+	// but before the dialog is destroyed.
 
 	_interthread_info.cancel = true;
 
@@ -272,7 +268,7 @@ StripSilenceDialog::detection_thread_work ()
 		analysis_progress_cur = 0;
 		analysis_progress_max = views.size();
 		for (list<ViewInterval>::iterator i = views.begin(); i != views.end(); ++i) {
-			boost::shared_ptr<AudioRegion> ar = boost::dynamic_pointer_cast<AudioRegion> ((*i).view->region());
+			std::shared_ptr<AudioRegion> ar = std::dynamic_pointer_cast<AudioRegion> ((*i).view->region());
 
 			if (ar) {
 				i->intervals = ar->find_silence (dB_to_coefficient (threshold ()), minimum_length (), fade_length(), _interthread_info);
@@ -361,7 +357,7 @@ StripSilenceDialog::update_progress_gui (float p)
 }
 
 XMLNode&
-StripSilenceDialog::get_state ()
+StripSilenceDialog::get_state () const
 {
 	XMLNode* node = new XMLNode(X_("StripSilence"));
 	node->set_property(X_("threshold"), threshold());

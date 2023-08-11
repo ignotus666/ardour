@@ -20,9 +20,9 @@
 #ifndef _ardour_disk_reader_h_
 #define _ardour_disk_reader_h_
 
-#include <boost/optional.hpp>
+#include <atomic>
 
-#include "pbd/g_atomic_compat.h"
+#include <boost/optional.hpp>
 
 #include "evoral/Curve.h"
 
@@ -41,7 +41,7 @@ template <typename T> class MidiRingBuffer;
 class LIBARDOUR_API DiskReader : public DiskIOProcessor
 {
 public:
-	DiskReader (Session&, Track&, std::string const& name, Temporal::TimeDomain, DiskIOProcessor::Flag f = DiskIOProcessor::Flag (0));
+	DiskReader (Session&, Track&, std::string const& name, Temporal::TimeDomainProvider const &, DiskIOProcessor::Flag f = DiskIOProcessor::Flag (0));
 	~DiskReader ();
 
 	bool set_name (std::string const& str);
@@ -73,7 +73,7 @@ public:
 
 	float buffer_load () const;
 
-	void move_processor_automation (boost::weak_ptr<Processor>, std::list<Temporal::RangeMove> const&);
+	void move_processor_automation (std::weak_ptr<Processor>, std::list<Temporal::RangeMove> const&);
 
 	/* called by the Butler in a non-realtime context as part of its normal
 	 * buffer refill loop (not due to transport-mechanism requests like
@@ -114,7 +114,7 @@ public:
 	static void dec_no_disk_output ();
 	static bool no_disk_output ()
 	{
-		return g_atomic_int_get (&_no_disk_output);
+		return _no_disk_output.load ();
 	}
 	static void reset_loop_declick (Location*, samplecnt_t sample_rate);
 	static void alloc_loop_declick (samplecnt_t sample_rate);
@@ -146,14 +146,14 @@ protected:
 		bool        initialized;
 	};
 
-	XMLNode& state ();
+	XMLNode& state () const;
 
 	void resolve_tracker (Evoral::EventSink<samplepos_t>& buffer, samplepos_t time);
 
-	int  use_playlist (DataType, boost::shared_ptr<Playlist>);
+	int  use_playlist (DataType, std::shared_ptr<Playlist>);
 	void playlist_ranges_moved (std::list<Temporal::RangeMove> const&, bool);
 
-	int add_channel_to (boost::shared_ptr<ChannelList>, uint32_t how_many);
+	int add_channel_to (std::shared_ptr<ChannelList>, uint32_t how_many);
 
 	class DeclickAmp
 	{
@@ -202,18 +202,18 @@ private:
 	IOChange       input_change_pending;
 	samplepos_t    file_sample[DataType::num_types];
 
-	mutable GATOMIC_QUAL gint _pending_overwrite;
+	mutable std::atomic<OverwriteReason> _pending_overwrite;
 
 	DeclickAmp            _declick_amp;
 	sampleoffset_t        _declick_offs;
 	bool                  _declick_enabled;
-	MidiStateTracker      _tracker;
+	MidiNoteTracker      _tracker;
 	boost::optional<bool> _last_read_reversed;
 	boost::optional<bool> _last_read_loop;
 
 	static samplecnt_t _chunk_samples;
 
-	static GATOMIC_QUAL gint _no_disk_output;
+	static std::atomic<int> _no_disk_output;
 
 	static Declicker   loop_declick_in;
 	static Declicker   loop_declick_out;

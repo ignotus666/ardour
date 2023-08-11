@@ -15,7 +15,7 @@ function factory (params) return function ()
 			local playlist = route:to_track():playlist ()
 			playlist:to_stateful ():clear_changes ()
 			for region in playlist:regions_at (pos):iter () do
-				playlist:split_region (region, ARDOUR.MusicSample (pos, 0))
+				playlist:split_region (region, Temporal.timepos_t (pos))
 			end
 			if not Session:add_stateful_diff_command (playlist:to_statefuldestructible ()):empty () then
 				add_undo = true
@@ -48,7 +48,7 @@ function factory (params) return function ()
 		end
 		local t_end = ARDOUR.LuaAPI.monotonic_time ()
 
-		Session:request_locate((playhead + step * n_steps), ARDOUR.LocateTransportDisposition.MustStop, ARDOUR.TransportRequestSource.TRS_UI)
+		Session:request_locate((playhead + step * n_steps), false, ARDOUR.LocateTransportDisposition.MustStop, ARDOUR.TransportRequestSource.TRS_UI)
 		print (count_regions (), (t_end - t_start) / 1000 / n_steps)
 		collectgarbage ();
 		ARDOUR.LuaAPI.usleep(500000)

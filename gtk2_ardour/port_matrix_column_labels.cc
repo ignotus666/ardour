@@ -265,7 +265,7 @@ PortMatrixColumnLabels::port_name_shape (double xoff, double yoff) const
 
 void
 PortMatrixColumnLabels::render_bundle_name (
-	cairo_t* cr, Gdk::Color fg_colour, Gdk::Color bg_colour, double xoff, double yoff, boost::shared_ptr<ARDOUR::Bundle> b
+	cairo_t* cr, Gdk::Color fg_colour, Gdk::Color bg_colour, double xoff, double yoff, std::shared_ptr<ARDOUR::Bundle> b
 	)
 {
 	set_source_rgb (cr, bg_colour);
@@ -298,7 +298,7 @@ PortMatrixColumnLabels::render_bundle_name (
 	cairo_stroke (cr);
 
 	Gdk::Color textcolor;
-	ARDOUR_UI_UTILS::set_color_from_rgba(textcolor, Gtkmm2ext::contrasting_text_color(ARDOUR_UI_UTILS::gdk_color_to_rgba(bg_colour)));
+	Gtkmm2ext::set_color_from_rgba(textcolor, Gtkmm2ext::contrasting_text_color(Gtkmm2ext::gdk_color_to_rgba(bg_colour)));
 	set_source_rgb (cr, textcolor);
 
 	double const q = ((grid_spacing() * sin (angle())) - _text_height) / 2 + _descender_height;
@@ -365,7 +365,7 @@ PortMatrixColumnLabels::render_channel_name (
 	}
 
 	Gdk::Color textcolor;
-	ARDOUR_UI_UTILS::set_color_from_rgba(textcolor, Gtkmm2ext::contrasting_text_color(ARDOUR_UI_UTILS::gdk_color_to_rgba(bg_colour)));
+	Gtkmm2ext::set_color_from_rgba(textcolor, Gtkmm2ext::contrasting_text_color(Gtkmm2ext::gdk_color_to_rgba(bg_colour)));
 	set_source_rgb (cr, textcolor);
 
 	double const q = ((grid_spacing() * sin (angle())) - _text_height) / 2 + _descender_height;
@@ -460,7 +460,7 @@ PortMatrixColumnLabels::queue_draw_for (ARDOUR::BundleChannel const & bc)
 }
 
 ARDOUR::BundleChannel
-PortMatrixColumnLabels::position_to_channel (double p, double o, boost::shared_ptr<const PortGroup> group) const
+PortMatrixColumnLabels::position_to_channel (double p, double o, std::shared_ptr<const PortGroup> group) const
 {
 	uint32_t const cx = p - (_height - o) * tan (angle ());
 	return PortMatrixComponent::position_to_channel (cx, o, group);

@@ -114,11 +114,11 @@ LTC_TransportMaster::~LTC_TransportMaster()
 }
 
 void
-LTC_TransportMaster::connection_handler (boost::weak_ptr<ARDOUR::Port> w0, std::string n0, boost::weak_ptr<ARDOUR::Port> w1, std::string n1, bool con) 
+LTC_TransportMaster::connection_handler (std::weak_ptr<ARDOUR::Port> w0, std::string n0, std::weak_ptr<ARDOUR::Port> w1, std::string n1, bool con) 
 {
 	TransportMaster::connection_handler(w0, n0, w1, n1, con);
 
-	boost::shared_ptr<Port> p = w1.lock ();
+	std::shared_ptr<Port> p = w1.lock ();
 	if (p == _port) {
 		resync_latency (false);
 	}
@@ -151,6 +151,7 @@ ARDOUR::samplecnt_t
 LTC_TransportMaster::update_interval() const
 {
 	if (timecode.rate) {
+		/* Use engine rate, timecode ports are not resampled */
 		return AudioEngine::instance()->sample_rate() / timecode.rate;
 	}
 
@@ -264,6 +265,8 @@ LTC_TransportMaster::equal_ltc_sample_time(LTCFrame *a, LTCFrame *b) {
 	}
 	return true;
 }
+
+#if 0
 static ostream& operator<< (ostream& ostr, LTCFrame& a)
 {
 	ostr
@@ -279,7 +282,9 @@ static ostream& operator<< (ostream& ostr, LTCFrame& a)
 		    ;
 	return ostr;
 }
+#endif
 
+#if 0
 static ostream& operator<< (ostream& ostr, SMPTETimecode& t)
 {
 	for (size_t i = 0; i < sizeof (t.timezone); ++i) {
@@ -296,6 +301,7 @@ static ostream& operator<< (ostream& ostr, SMPTETimecode& t)
 		;
 	return ostr;
 }
+#endif
 
 bool
 LTC_TransportMaster::detect_discontinuity(LTCFrameExt *sample, int fps, bool fuzzy)
@@ -651,7 +657,7 @@ std::string
 LTC_TransportMaster::delta_string() const
 {
 	if (!_collect || current.timestamp == 0) {
-		return X_("\u2012\u2012\u2012\u2012");
+		return X_(u8"\u2012\u2012\u2012\u2012");
 	} else if ((monotonic_cnt - current.timestamp) > 2 * samples_per_ltc_frame) {
 		return _("flywheel");
 	} else {

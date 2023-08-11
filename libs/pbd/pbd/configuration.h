@@ -20,6 +20,10 @@
 #ifndef __libpbd_configuration_h__
 #define __libpbd_configuration_h__
 
+#include <map>
+#include <string>
+#include <vector>
+
 #include <boost/function.hpp>
 #include "pbd/signals.h"
 #include "pbd/stateful.h"
@@ -29,7 +33,7 @@ class XMLNode;
 
 namespace PBD {
 
-class Configuration : public PBD::Stateful
+class LIBPBD_API Configuration : public PBD::Stateful
 {
   public:
 	Configuration() {}
@@ -37,11 +41,16 @@ class Configuration : public PBD::Stateful
 
 	virtual void map_parameters (boost::function<void (std::string)>&) = 0;
 	virtual int set_state (XMLNode const &, int) = 0;
-	virtual XMLNode & get_state () = 0;
-	virtual XMLNode & get_variables () = 0;
+	virtual XMLNode & get_state () const = 0;
+	virtual XMLNode & get_variables (std::string const & nodename) const = 0;
 	virtual void set_variables (XMLNode const &) = 0;
 
 	PBD::Signal1<void,std::string> ParameterChanged;
+
+	typedef std::vector<std::string> Metadata;
+
+	static Metadata const * get_metadata (std::string const &);
+	static std::map<std::string,Metadata> all_metadata;
 };
 
 } // namespace PBD

@@ -37,6 +37,7 @@
 #include "ardour/audioregion.h"
 #include "ardour/export_channel_configuration.h"
 #include "ardour/export_format_specification.h"
+#include "ardour/export_format_manager.h"
 #include "ardour/export_status.h"
 #include "ardour/export_handler.h"
 #include "ardour/profile.h"
@@ -58,11 +59,12 @@ ExportDialog::ExportDialog (PublicEditor & editor, std::string title, ARDOUR::Ex
   : ArdourDialog (title)
   , type (type)
   , editor (editor)
-  , warn_label ("", Gtk::ALIGN_LEFT)
-  , list_files_label (_("<span color=\"#ffa755\">Some already existing files will be overwritten.</span>"), Gtk::ALIGN_RIGHT)
+  , warn_label ("", Gtk::ALIGN_START)
+  , list_files_label (_("<span color=\"#ffa755\">Some already existing files will be overwritten.</span>"), Gtk::ALIGN_END)
   , list_files_button (_("List files"))
   , previous_progress (0)
   , _initialized (false)
+  , _analysis_only (false)
 { }
 
 ExportDialog::~ExportDialog ()
@@ -120,11 +122,7 @@ ExportDialog::set_session (ARDOUR::Session* s)
 	preset_selector->CriticalSelectionChanged.connect (sigc::mem_fun (*this, &ExportDialog::maybe_set_session_dirty));
 	timespan_selector->CriticalSelectionChanged.connect (sigc::mem_fun (*this, &ExportDialog::maybe_set_session_dirty));
 	channel_selector->CriticalSelectionChanged.connect (sigc::mem_fun (*this, &ExportDialog::maybe_set_session_dirty));
-	channel_selector->CriticalSelectionChanged.connect (sigc::mem_fun (*this, &ExportDialog::maybe_set_session_dirty));
 	file_notebook->CriticalSelectionChanged.connect (sigc::mem_fun (*this, &ExportDialog::maybe_set_session_dirty));
-
-	update_warnings_and_example_filename ();
-	update_realtime_selection ();
 
 	_initialized = true;
 
@@ -156,13 +154,15 @@ ExportDialog::init ()
 	progress_widget.pack_start (progress_bar, false, false, 6);
 
 	/* Buttons */
-
 	cancel_button = add_button (Gtk::Stock::CANCEL, RESPONSE_CANCEL);
+	analyze_button = add_button (_("Only Analyze"), RESPONSE_ANALYZE);
 	export_button = add_button (_("Export"), RESPONSE_FAST);
+
 	set_default_response (RESPONSE_FAST);
 
 	cancel_button->signal_clicked().connect (sigc::mem_fun (*this, &ExportDialog::close_dialog));
-	export_button->signal_clicked().connect (sigc::mem_fun (*this, &ExportDialog::do_export));
+	export_button->signal_clicked().connect (sigc::bind (sigc::mem_fun (*this, &ExportDialog::do_export), false));
+	analyze_button->signal_clicked().connect (sigc::bind (sigc::mem_fun (*this, &ExportDialog::do_export), true));
 
 	file_notebook->soundcloud_export_selector = soundcloud_selector;
 
@@ -177,7 +177,7 @@ ExportDialog::init_gui ()
 {
 	Gtk::Alignment * preset_align = Gtk::manage (new Gtk::Alignment());
 	preset_align->add (*preset_selector);
-	preset_align->set_padding (0, 12, 0, 0);
+	preset_align->set_padding (6, 8, 6, 6);
 
 	Gtk::VBox * file_format_selector = Gtk::manage (new Gtk::VBox());
 	file_format_selector->set_homogeneous (false);
@@ -261,10 +261,11 @@ ExportDialog::update_warnings_and_example_filename ()
 	list_files_string = "";
 
 	export_button->set_sensitive (true);
+	analyze_button->set_sensitive (true);
 
 	/* Add new warnings */
 
-	boost::shared_ptr<ExportProfileManager::Warnings> warnings = profile_manager->get_warnings();
+	std::shared_ptr<ExportProfileManager::Warnings> warnings = profile_manager->get_warnings();
 
 	for (std::list<string>::iterator it = warnings->errors.begin(); it != warnings->errors.end(); ++it) {
 		add_error (*it);
@@ -327,7 +328,7 @@ ExportDialog::show_conflicting_files ()
 {
 	ArdourDialog dialog (_("Files that will be overwritten"), true);
 
-	Gtk::Label label ("", Gtk::ALIGN_LEFT);
+	Gtk::Label label ("", Gtk::ALIGN_START);
 	label.set_use_markup (true);
 	label.set_markup (list_files_string);
 
@@ -346,8 +347,18 @@ ExportDialog::soundcloud_upload_progress(double total, double now, std::string t
 }
 
 void
-ExportDialog::do_export ()
+ExportDialog::do_export (bool analysis_only)
 {
+	_analysis_only = analysis_only;
+	if (analysis_only) {
+		for (auto const& fmt : profile_manager->get_formats ()) {
+			std::shared_ptr<ExportFormatSpecification> fmp = fmt->format;
+			fmp->set_format_id (ExportFormatBase::F_None);
+			fmp->set_type (ExportFormatBase::T_None);
+			fmp->set_analyse (true);
+		}
+	}
+
 	try {
 		profile_manager->prepare_for_export ();
 		handler->soundcloud_username     = soundcloud_selector->username ();
@@ -367,6 +378,12 @@ ExportDialog::do_export ()
 				gui_context()
 				);
 #endif
+
+		_files_to_reimport.clear ();
+		Session::Exported.connect_same_thread (*this, sigc::bind (
+					[] (std::string, std::string fn, bool re, samplepos_t pos, ReImportMap* v) { if (re) { (*v)[pos].push_back (fn); } },
+					&_files_to_reimport));
+
 		handler->do_export ();
 		show_progress ();
 	} catch(std::exception & e) {
@@ -382,6 +399,7 @@ ExportDialog::show_progress ()
 
 	cancel_button->set_label (_("Stop Export"));
 	export_button->set_sensitive (false);
+	analyze_button->set_sensitive (false);
 
 	progress_bar.set_fraction (0.0);
 	warning_widget.hide_all();
@@ -400,6 +418,14 @@ ExportDialog::show_progress ()
 	}
 
 	status->finish (TRS_UI);
+
+	if (!status->aborted() && !_files_to_reimport.empty ()) {
+		for (auto const& x : _files_to_reimport) {
+			timepos_t pos (x.first);
+			Editing::ImportDisposition disposition = Editing::ImportDistinctFiles;
+			editor.do_import (x.second, disposition, Editing::ImportAsTrack, SrcBest, SMFTrackNumber, SMFTempoIgnore, pos);
+		}
+	}
 
 	if (!status->aborted() && UIConfiguration::instance().get_save_export_mixer_screenshot ()) {
 		ExportProfileManager::TimespanStateList const& timespans = profile_manager->get_timespans();
@@ -440,8 +466,13 @@ ExportDialog::show_progress ()
 
 	if (!status->aborted() && status->result_map.size() > 0) {
 		hide();
-		ExportReport er (_session, status);
-		er.run();
+		if (_analysis_only) {
+			ExportReport er (_("Export Report/Analysis"), status->result_map);
+			er.run();
+		} else {
+			ExportReport er (_session, status);
+			er.run();
+		}
 	}
 
 	if (!status->aborted()) {
@@ -464,33 +495,50 @@ ExportDialog::progress_timeout ()
 {
 	std::string status_text;
 	float progress = -1;
-	switch (status->active_job) {
-	case ExportStatus::Exporting:
-		status_text = string_compose (_("Exporting '%3' (timespan %1 of %2)"),
-		                              status->timespan, status->total_timespans, status->timespan_name);
-		progress = ((float) status->processed_samples_current_timespan) / status->total_samples_current_timespan;
-		break;
-	case ExportStatus::Normalizing:
-		status_text = string_compose (_("Normalizing '%3' (timespan %1 of %2)"),
-		                              status->timespan, status->total_timespans, status->timespan_name);
-		progress = ((float) status->current_postprocessing_cycle) / status->total_postprocessing_cycles;
-		break;
-	case ExportStatus::Encoding:
-		status_text = string_compose (_("Encoding '%3' (timespan %1 of %2)"),
-		                              status->timespan, status->total_timespans, status->timespan_name);
-		progress = ((float) status->current_postprocessing_cycle) / status->total_postprocessing_cycles;
-		break;
-	case ExportStatus::Tagging:
-		status_text = string_compose (_("Tagging '%3' (timespan %1 of %2)"),
-		                              status->timespan, status->total_timespans, status->timespan_name);
-		break;
-	case ExportStatus::Uploading:
-		status_text = string_compose (_("Uploading '%3' (timespan %1 of %2)"),
-		                              status->timespan, status->total_timespans, status->timespan_name);
-		break;
-	case ExportStatus::Command:
-		status_text = string_compose (_("Running Post Export Command for '%1'"), status->timespan_name);
-		break;
+
+	if (_analysis_only) {
+		switch (status->active_job) {
+			case ExportStatus::Exporting:
+				status_text = string_compose (_("Export for Analysis '%3' (timespan %1 of %2)"),
+				                              status->timespan, status->total_timespans, status->timespan_name);
+				progress = ((float) status->processed_samples_current_timespan) / status->total_samples_current_timespan;
+				break;
+			default:
+				status_text = string_compose (_("Analyzing '%3' (timespan %1 of %2)"),
+				                              status->timespan, status->total_timespans, status->timespan_name);
+				progress = ((float) status->current_postprocessing_cycle) / status->total_postprocessing_cycles;
+				break;
+		}
+	} else {
+
+		switch (status->active_job) {
+			case ExportStatus::Exporting:
+				status_text = string_compose (_("Exporting '%3' (timespan %1 of %2)"),
+				                              status->timespan, status->total_timespans, status->timespan_name);
+				progress = ((float) status->processed_samples_current_timespan) / status->total_samples_current_timespan;
+				break;
+			case ExportStatus::Normalizing:
+				status_text = string_compose (_("Normalizing '%3' (timespan %1 of %2)"),
+				                              status->timespan, status->total_timespans, status->timespan_name);
+				progress = ((float) status->current_postprocessing_cycle) / status->total_postprocessing_cycles;
+				break;
+			case ExportStatus::Encoding:
+				status_text = string_compose (_("Encoding '%3' (timespan %1 of %2)"),
+				                              status->timespan, status->total_timespans, status->timespan_name);
+				progress = ((float) status->current_postprocessing_cycle) / status->total_postprocessing_cycles;
+				break;
+			case ExportStatus::Tagging:
+				status_text = string_compose (_("Tagging '%3' (timespan %1 of %2)"),
+				                              status->timespan, status->total_timespans, status->timespan_name);
+				break;
+			case ExportStatus::Uploading:
+				status_text = string_compose (_("Uploading '%3' (timespan %1 of %2)"),
+				                              status->timespan, status->total_timespans, status->timespan_name);
+				break;
+			case ExportStatus::Command:
+				status_text = string_compose (_("Running Post Export Command for '%1'"), status->timespan_name);
+				break;
+		}
 	}
 
 	progress_bar.set_text (status_text);
@@ -515,6 +563,7 @@ void
 ExportDialog::add_error (string const & text)
 {
 	export_button->set_sensitive (false);
+	analyze_button->set_sensitive (false);
 
 	if (warn_string.empty()) {
 		warn_string = _("<span color=\"#ffa755\">Error: ") + text + "</span>";

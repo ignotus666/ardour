@@ -20,11 +20,12 @@
 #ifndef __ardour_automation_watch_h__
 #define __ardour_automation_watch_h__
 
+#include <memory>
 #include <set>
-#include <boost/shared_ptr.hpp>
-#include <glibmm/threads.h>
+
 #include <sigc++/signal.h>
 
+#include "pbd/pthread_utils.h"
 #include "pbd/signals.h"
 
 #include "ardour/session_handle.h"
@@ -39,22 +40,22 @@ class LIBARDOUR_API AutomationWatch : public sigc::trackable, public ARDOUR::Ses
 public:
 	static AutomationWatch& instance();
 
-	void add_automation_watch (boost::shared_ptr<ARDOUR::AutomationControl>);
-	void remove_automation_watch (boost::shared_ptr<ARDOUR::AutomationControl>);
+	void add_automation_watch (std::shared_ptr<ARDOUR::AutomationControl>);
+	void remove_automation_watch (std::shared_ptr<ARDOUR::AutomationControl>);
 	void transport_stop_automation_watches (ARDOUR::samplepos_t);
 	void set_session (ARDOUR::Session*);
 
 	gint timer ();
 
 private:
-	typedef std::set<boost::shared_ptr<ARDOUR::AutomationControl> > AutomationWatches;
-	typedef std::map<boost::shared_ptr<ARDOUR::AutomationControl>, PBD::ScopedConnection> AutomationConnection;
+	typedef std::set<std::shared_ptr<ARDOUR::AutomationControl> > AutomationWatches;
+	typedef std::map<std::shared_ptr<ARDOUR::AutomationControl>, PBD::ScopedConnection> AutomationConnection;
 
 	AutomationWatch ();
 	~AutomationWatch();
 
 	static AutomationWatch* _instance;
-	Glib::Threads::Thread*  _thread;
+	PBD::Thread*            _thread;
 	samplepos_t             _last_time;
 	bool                    _run_thread;
 	AutomationWatches        automation_watches;
@@ -63,7 +64,7 @@ private:
 	PBD::ScopedConnection    transport_connection;
 
 	void transport_state_change ();
-	void remove_weak_automation_watch (boost::weak_ptr<ARDOUR::AutomationControl>);
+	void remove_weak_automation_watch (std::weak_ptr<ARDOUR::AutomationControl>);
 	void thread ();
 };
 

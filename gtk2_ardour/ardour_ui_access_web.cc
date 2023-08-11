@@ -58,7 +58,7 @@ ARDOUR_UI::launch_chat ()
 
 	switch (dialog.run()) {
 	case RESPONSE_OK:
-		open_uri("http://ardour.org/chat");
+		open_uri("https://ardour.org/chat");
 		break;
 	default:
 		break;
@@ -80,35 +80,25 @@ ARDOUR_UI::launch_reference ()
 void
 ARDOUR_UI::launch_tracker ()
 {
-	PBD::open_uri ("http://tracker.ardour.org");
+	PBD::open_uri ("https://tracker.ardour.org");
 }
 
 void
 ARDOUR_UI::launch_subscribe ()
 {
-	PBD::open_uri ("https://community.ardour.org/s/subscribe");
-}
-
-void
-ARDOUR_UI::launch_cheat_sheet ()
-{
-#ifdef __APPLE__
-	PBD::open_uri ("http://manual.ardour.org/files/a3_mnemonic_cheat_sheet_osx.pdf");
-#else
-	PBD::open_uri ("http://manual.ardour.org/files/a3_mnemonic_cheatsheet.pdf");
-#endif
+	PBD::open_uri ("https://community.ardour.org/subscribe");
 }
 
 void
 ARDOUR_UI::launch_website ()
 {
-	PBD::open_uri ("http://ardour.org");
+	PBD::open_uri ("https://ardour.org");
 }
 
 void
 ARDOUR_UI::launch_website_dev ()
 {
-	PBD::open_uri ("http://ardour.org/development.html");
+	PBD::open_uri ("https://ardour.org/development.html");
 }
 
 void
@@ -120,6 +110,6 @@ ARDOUR_UI::launch_forums ()
 void
 ARDOUR_UI::launch_howto_report ()
 {
-	PBD::open_uri ("http://ardour.org/reporting_bugs");
+	PBD::open_uri ("https://ardour.org/reporting_bugs");
 }
 

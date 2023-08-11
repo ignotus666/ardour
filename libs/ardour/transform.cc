@@ -119,8 +119,8 @@ Transform::Operation::eval(Context& ctx) const
 	ctx.stack.push(Variant(lhs.type(), value));
 }
 
-Command*
-Transform::operator()(boost::shared_ptr<MidiModel> model,
+PBD::Command*
+Transform::operator()(std::shared_ptr<MidiModel> model,
                       Temporal::Beats              position,
                       std::vector<Notes>&          seqs)
 {

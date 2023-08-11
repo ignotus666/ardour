@@ -21,13 +21,13 @@
 #define __ardour_gtk_playlist_selection_h__
 
 #include <list>
-#include <boost/shared_ptr.hpp>
+#include <memory>
 
 namespace ARDOUR {
 	class Playlist;
 }
 
-struct PlaylistSelection : std::list<boost::shared_ptr<ARDOUR::Playlist> > {
+struct PlaylistSelection : std::list<std::shared_ptr<ARDOUR::Playlist> > {
 public:
 	const_iterator
 	get_nth(ARDOUR::DataType type, size_t nth) const {

@@ -21,7 +21,8 @@
 #ifndef __ardour_sndfile_importable_source_h__
 #define __ardour_sndfile_importable_source_h__
 
-#include <boost/shared_ptr.hpp>
+#include <memory>
+
 #include <sndfile.h>
 #include "ardour/libardour_visibility.h"
 #include "ardour/types.h"
@@ -44,7 +45,7 @@ public:
 
 protected:
 	SF_INFO sf_info;
-	boost::shared_ptr<SNDFILE> in;
+	std::shared_ptr<SNDFILE> in;
 
 	/* these are int64_t so as to be independent of whatever
 	 * types Ardour may use for samplepos_t, samplecnt_t etc.

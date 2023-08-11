@@ -95,6 +95,9 @@ Plugin::Plugin (AudioEngine& e, Session& s)
 	, _have_pending_stop_events (false)
 	, _parameter_changed_since_last_preset (false)
 	, _immediate_events(6096) // FIXME: size?
+	, _resolve_midi (false)
+	, _pi (0)
+	, _num (0)
 {
 	_pending_stop_events.ensure_buffers (DataType::MIDI, 1, 4096);
 	PresetsChanged.connect_same_thread(_preset_connection, boost::bind (&Plugin::invalidate_preset_cache, this, _1, _2, _3));
@@ -114,6 +117,9 @@ Plugin::Plugin (const Plugin& other)
 	, _last_preset (other._last_preset)
 	, _parameter_changed_since_last_preset (false)
 	, _immediate_events(6096) // FIXME: size?
+	, _resolve_midi (false)
+	, _pi (other._pi)
+	, _num (other._num)
 {
 	_pending_stop_events.ensure_buffers (DataType::MIDI, 1, 4096);
 
@@ -358,6 +364,7 @@ const Plugin::PresetRecord *
 Plugin::preset_by_label (const string& label)
 {
 	if (!_have_presets) {
+		_presets.clear ();
 		find_presets ();
 		_have_presets = true;
 	}
@@ -379,6 +386,7 @@ Plugin::preset_by_uri (const string& uri)
 		return 0;
 	}
 	if (!_have_presets) {
+		_presets.clear ();
 		find_presets ();
 		_have_presets = true;
 	}
@@ -404,7 +412,7 @@ int
 Plugin::connect_and_run (BufferSet& bufs,
 		samplepos_t /*start*/, samplepos_t /*end*/, double /*speed*/,
 		ChanMapping const& /*in_map*/, ChanMapping const& /*out_map*/,
-		pframes_t nframes, samplecnt_t /*offset*/)
+		pframes_t nframes, samplecnt_t offset)
 {
 	if (bufs.count().n_midi() > 0) {
 
@@ -415,7 +423,16 @@ Plugin::connect_and_run (BufferSet& bufs,
 		/* Track notes that we are sending to the plugin */
 		const MidiBuffer& b = bufs.get_midi (0);
 
-		_tracker.track (b.begin(), b.end());
+		for (auto const ev : b) {
+			if (ev.time () >= offset && ev.time () < nframes + offset) {
+				_tracker.track (ev);
+			}
+		}
+
+		bool canderef (true);
+		if (_resolve_midi.compare_exchange_strong (canderef, false)) {
+			resolve_midi ();
+		}
 
 		if (_have_pending_stop_events) {
 			/* Transmit note-offs that are pending from the last transport stop */
@@ -430,21 +447,21 @@ Plugin::connect_and_run (BufferSet& bufs,
 void
 Plugin::realtime_handle_transport_stopped ()
 {
-	resolve_midi ();
+	_resolve_midi = true;
 }
 
 void
 Plugin::realtime_locate (bool for_loop_end)
 {
 	if (!for_loop_end) {
-		resolve_midi ();
+		_resolve_midi = true;
 	}
 }
 
 void
 Plugin::monitoring_changed ()
 {
-	resolve_midi ();
+	_resolve_midi = true;
 }
 
 void
@@ -465,6 +482,7 @@ Plugin::get_presets ()
 	vector<PresetRecord> p;
 
 	if (!_have_presets) {
+		_presets.clear ();
 		find_presets ();
 		_have_presets = true;
 	}
@@ -472,6 +490,8 @@ Plugin::get_presets ()
 	for (map<string, PresetRecord>::const_iterator i = _presets.begin(); i != _presets.end(); ++i) {
 		p.push_back (i->second);
 	}
+
+	std::sort (p.begin(), p.end());
 
 	return p;
 }
@@ -541,7 +561,7 @@ Plugin::set_state (const XMLNode& node, int /*version*/)
 }
 
 XMLNode &
-Plugin::get_state ()
+Plugin::get_state () const
 {
 	XMLNode* root = new XMLNode (state_node_name ());
 
@@ -592,5 +612,5 @@ PluginInfo::is_utility () const
 bool
 PluginInfo::is_analyzer () const
 {
-	return (category == "Analyser" || category == "Anaylsis" || category == "Analyzer");
+	return (category == "Analyser" || category == "Analysis" || category == "Analyzer");
 }

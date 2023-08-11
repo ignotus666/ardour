@@ -32,7 +32,7 @@ def include_config_h(self):
     self.env.append_value('INCPATHS', self.bld.bldnode.abspath())
 
 def set_options(opt, debug_by_default=False):
-    "Add standard autowaf options if they havn't been added yet"
+    "Add standard autowaf options if they haven't been added yet"
     global g_step
     if g_step > 0:
         return
@@ -66,10 +66,10 @@ def set_options(opt, debug_by_default=False):
     # Build options
     if debug_by_default:
         opt.add_option('--optimize', action='store_false', default=True, dest='debug',
-                       help="Build optimized binaries")
+                       help="Build optimized binaries (not debug)")
     else:
         opt.add_option('--debug', action='store_true', default=False, dest='debug',
-                       help="Build debuggable binaries")
+                       help="Build debuggable binaries (not optimized)")
 
     opt.add_option('--pardebug', action='store_true', default=False, dest='pardebug',
                        help="Build parallel-installable debuggable libraries with D suffix")

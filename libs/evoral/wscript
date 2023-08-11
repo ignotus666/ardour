@@ -34,21 +34,12 @@ def options(opt):
                    help='Build internal libs as shared libraries')
 
 def configure(conf):
-    conf.load('compiler_c')
-    conf.load('compiler_cxx')
-    autowaf.configure(conf)
     #autowaf.display_header('Evoral Configuration')
 
-    autowaf.check_pkg(conf, 'cppunit', uselib_store='CPPUNIT', atleast_version='1.12.0', mandatory=False)
-    autowaf.check_pkg(conf, 'glib-2.0', uselib_store='GLIB', atleast_version='2.2')
-    autowaf.check_pkg(conf, 'glibmm-2.4', uselib_store='GLIBMM', atleast_version='2.14.0')
-    autowaf.check_pkg(conf, 'gthread-2.0', uselib_store='GTHREAD', atleast_version='2.14.0')
     if not autowaf.is_child():
         autowaf.check_pkg(conf, 'libpbd-4', uselib_store='LIBPBD', atleast_version='4.0.0', mandatory=True)
 
     # Boost headers
-    autowaf.check_header(conf, 'cxx', 'boost/shared_ptr.hpp')
-    autowaf.check_header(conf, 'cxx', 'boost/weak_ptr.hpp')
 
     conf.env['BUILD_TESTS'] = Options.options.build_tests
     conf.env['TEST_COVERAGE'] = Options.options.test_coverage
@@ -74,7 +65,7 @@ def build(bld):
             libsmf/smf_save.c
             libsmf/smf_tempo.c
     '''
-    libsmf.export_includes = ['./libsmf']
+    libsmf.export_includes = ['.']
     libsmf.defines      = ['SMF_VERSION="1.2"', 'LIBSMF_DLL_EXPORTS']
     libsmf.includes     = ['./src']
     libsmf.name         = 'libsmf'
@@ -120,7 +111,7 @@ def build(bld):
     obj.defines       += [ 'PACKAGE="libevoral"' ]
 
     # disable unit-tests -- build is broken with nutempo
-    if False and bld.env['BUILD_TESTS'] and bld.is_defined('HAVE_CPPUNIT'):
+    if bld.env['BUILD_TESTS'] and bld.is_defined('HAVE_CPPUNIT'):
         # Static library (for unit test code coverage)
         obj = bld(features = 'cxx cstlib')
         obj.source         = lib_source
@@ -143,7 +134,6 @@ def build(bld):
         obj.source       = [
                 'test/SequenceTest.cc',
                 'test/SMFTest.cc',
-                'test/RangeTest.cc',
                 'test/NoteTest.cc',
                 'test/CurveTest.cc',
                 'test/testrunner.cc',

@@ -82,10 +82,10 @@ function my_die ($msg) {
 }
 
 ##function ptr_strip ($ctype) {
-#	# boost::shared_ptr<std::list<boost::shared_ptr<ARDOUR::Route>> > >
+#	# std::shared_ptr<std::list<std::shared_ptr<ARDOUR::Route>> > >
 #	# -> std::list<ARDOUR::Route>
-#	$ctype = preg_replace ('/boost::shared_ptr<([^>]*)[ ]*>/', '$1', $ctype);
-#	return preg_replace ('/boost::shared_ptr<([^>]*)[ ]*>/', '$1', $ctype);
+#	$ctype = preg_replace ('/std::shared_ptr<([^>]*)[ ]*>/', '$1', $ctype);
+#	return preg_replace ('/std::shared_ptr<([^>]*)[ ]*>/', '$1', $ctype);
 #}
 
 function arg2lua ($argtype, $flags = 0) {
@@ -193,7 +193,7 @@ function canonical_ctor ($b) {
 function canonical_decl ($b) {
 	$rv = '';
 	$pfx = '';
-	# match clang's declatation format
+	# match clang's declaration format
 	if (preg_match('/[^(]*\(([^)*]*)\*\)\((.*)\)/', $b['decl'], $matches)) {
 		if (strpos ($b['type'], 'Free Function') !== false) {
 			$pfx = str_replace (':', '::', luafn2class ($b['lua'])) . '::';
@@ -307,6 +307,14 @@ foreach ($doc as $b) {
 			$args = array ();
 			$ret = array (luafn2class ($b['lua']) => 0);
 			$canon = 'ARDOUR::LuaAPI::datatype_ctor_'.strtolower (luafn2name ($b['lua'])).'(lua_State*)';
+		} else if (strpos ($b['lua'], 'ARDOUR:RouteListPtr') === 0) {
+			$ret = array ('ARDOUR.RouteListPtr' => 0);
+			$args = decl2args ('void (RouteList::*)(std::list<std::shared_ptr<ARDOUR::Route> >)');
+			$canon = '';
+		} else if (strpos ($b['lua'], 'ARDOUR:RegionListPtr') === 0) {
+			$ret = array ('ARDOUR.RegionListPtr' => 0);
+			$args = decl2args ('void (RouteList::*)(std::list<std::shared_ptr<ARDOUR::Region> >)');
+			$canon = '';
 		} else {
 			my_die ('unhandled Static C: ' . print_r($b, true));
 		}
@@ -454,7 +462,7 @@ foreach ($classlist as $ns => $cl) {
 		if ($c['lua'] == $ns) {
 			if (strpos ($c['type'], 'Pointer Class') !== false) {
 				$classlist[$ns]['ptr'] = true;
-				$classlist[$ns]['cdecl'] = 'boost::shared_ptr< '.$c['decl']. ' >, boost::weak_ptr< '.$c['decl']. ' >';
+				$classlist[$ns]['cdecl'] = 'std::shared_ptr< '.$c['decl']. ' >, std::weak_ptr< '.$c['decl']. ' >';
 				break;
 			} else {
 				$classlist[$ns]['cdecl'] = $c['decl'];
@@ -473,7 +481,7 @@ foreach ($classlist as $ns => $cl) {
 # step 4c: merge free functions into classlist
 foreach ($funclist as $ns => $fl) {
 	if (isset ($classlist[$ns])) {
-		my_die ('Free Funcion in existing namespace: '.$ns.' '. print_r ($ns, true));
+		my_die ('Free Function in existing namespace: '.$ns.' '. print_r ($ns, true));
 	}
 	$classlist[$ns]['func'] = $fl;
 	$classlist[$ns]['free'] = true;
@@ -509,7 +517,7 @@ foreach (json_decode ($json, true) as $a) {
 $dox_found = 0;
 $dox_miss = 0;
 
-# retrive a value from $api
+# retrieve a value from $api
 function doxydoc ($canonical_declaration) {
 	global $api;
 	global $dox_found;
@@ -519,8 +527,8 @@ function doxydoc ($canonical_declaration) {
 		return $api[$canonical_declaration]['doc'];
 	}
 	// remove template namespace e.g.
-	//  "ARDOUR::Track::bounceable(boost::shared_ptr<ARDOUR::Processor>"
-	//  "ARDOUR::Track::bounceable(boost::shared_ptr<Processor>"
+	//  "ARDOUR::Track::bounceable(std::shared_ptr<ARDOUR::Processor>"
+	//  "ARDOUR::Track::bounceable(std::shared_ptr<Processor>"
 	$cn = preg_replace ('/<[^>]*::([^>]*)>/', '<$1>', $canonical_declaration);
 	if (isset ($api[$cn])) {
 		$dox_found++;
@@ -563,7 +571,7 @@ function varname ($a) {
 	return array_keys ($a)[0];
 }
 
-# recusively collect class parents (derived classes)
+# recursively collect class parents (derived classes)
 function traverse_parent ($ns, &$inherited) {
 	global $classlist;
 	$rv = '';
@@ -657,7 +665,7 @@ function name_sort_cb ($a, $b) {
 # main output function for every class
 function format_class_members ($ns, $cl, &$dups) {
 	$rv = '';
-	# print contructor - if any
+	# print constructor - if any
 	if (isset ($cl['ctor'])) {
 		usort ($cl['ctor'], 'name_sort_cb');
 		$rv.= ' <tr><th colspan="3">Constructor</th></tr>'.NL;
@@ -943,7 +951,7 @@ print (rv, ref[1], ref[2])
 
 <h3>Pointer Classes</h3>
 <p>
-Libardour makes extensive use of reference counted <code>boost::shared_ptr</code> to manage lifetimes.
+Libardour makes extensive use of reference counted <code>std::shared_ptr</code> to manage lifetimes.
 The Lua bindings provide a complete abstraction of this. There are no pointers in Lua.
 For example a <?=typelink('ARDOUR:Route')?> is a pointer in C++, but Lua functions operate on it like it was a class instance.
 </p>
@@ -957,7 +965,7 @@ Construction may fail. e.g. <code><?=typelink('ARDOUR:LuaAPI')?>.newplugin()</co
 may not be able to find the given plugin and hence cannot create an object.
 </p>
 <p>
-The second case if for <code>boost::weak_ptr</code>. As opposed to <code>boost::shared_ptr</code> weak-pointers are not reference counted.
+The second case if for <code>std::weak_ptr</code>. As opposed to <code>std::shared_ptr</code> weak-pointers are not reference counted.
 The object may vanish at any time.
 If Lua code calls a method on a nil object, the interpreter will raise an exception and the script will not continue.
 This is not unlike <code>a = nil a:test()</code> which results in en error "<em>attempt to index a nil value</em>".

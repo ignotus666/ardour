@@ -23,8 +23,10 @@
 #ifndef EVORAL_EVENT_HPP
 #define EVORAL_EVENT_HPP
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
+#include <cmath>
 #include <sstream>
 #include <stdint.h>
 
@@ -169,7 +171,7 @@ public:
 	uint8_t  pgm_number()         const { return _buf[1]; }
 	uint8_t  pitch_bender_lsb()   const { return _buf[1]; }
 	uint8_t  pitch_bender_msb()   const { return _buf[2]; }
-	uint16_t pitch_bender_value() const { return ((0x7F & _buf[2]) << 7 | (0x7F & _buf[1])); }
+	uint16_t pitch_bender_value() const { return (uint16_t) ((0x7F & _buf[2]) << 7 | (0x7F & _buf[1])); }
 
 	void set_channel(uint8_t channel)  { _buf[0] = (0xF0 & _buf[0]) | (0x0F & channel); }
 	void set_type(uint8_t type)        { _buf[0] = (0x0F & _buf[0]) | (0xF0 & type); }
@@ -178,6 +180,11 @@ public:
 	void set_cc_number(uint8_t num)    { _buf[1] = num; }
 	void set_cc_value(uint8_t val)     { _buf[2] = val; }
 	void set_pgm_number(uint8_t num)   { _buf[1] = num; }
+
+	void scale_velocity (float factor) {
+		factor = std::max (factor, 0.0f);
+		set_velocity ((uint8_t) (std::min (127L, lrintf (velocity() * factor))));
+	}
 
 	uint16_t value() const {
 		switch (type()) {

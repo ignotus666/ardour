@@ -81,6 +81,9 @@ class DeviceInfo
 	bool uses_ipmidi() const;
 	bool no_handshake() const;
 	bool is_qcon() const;
+	bool is_platformMp() const;
+	bool is_proG2() const;
+	bool is_xtouch() const;
 	bool has_qcon_second_lcd() const;
 	bool has_qcon_master_meters() const;
 	bool has_meters() const;
@@ -114,6 +117,9 @@ class DeviceInfo
 	bool     _uses_ipmidi;
 	bool     _no_handshake;
 	bool     _is_qcon;
+	bool     _is_platformMp;
+	bool	 _is_proG2;
+	bool	 _is_xtouch;
 	bool     _has_qcon_second_lcd;
 	bool     _has_qcon_master_meters;
 	bool     _has_meters;

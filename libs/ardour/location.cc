@@ -55,14 +55,15 @@ using namespace ARDOUR;
 using namespace PBD;
 using namespace Temporal;
 
-PBD::Signal0<void> Location::scene_changed;
 PBD::Signal1<void,Location*> Location::name_changed;
 PBD::Signal1<void,Location*> Location::end_changed;
 PBD::Signal1<void,Location*> Location::start_changed;
 PBD::Signal1<void,Location*> Location::flags_changed;
 PBD::Signal1<void,Location*> Location::lock_changed;
-PBD::Signal1<void,Location*> Location::changed;
 PBD::Signal1<void,Location*> Location::cue_change;
+PBD::Signal1<void,Location*> Location::scene_changed;
+PBD::Signal1<void,Location*> Location::time_domain_changed;
+PBD::Signal1<void,Location*> Location::changed;
 
 Location::Location (Session& s)
 	: SessionHandleRef (s)
@@ -70,6 +71,7 @@ Location::Location (Session& s)
 	, _locked (false)
 	, _timestamp (time (0))
 	, _cue (0)
+	, _signals_suspended (0)
 {
 }
 
@@ -83,23 +85,24 @@ Location::Location (Session& s, timepos_t const & start, timepos_t const & end, 
 	, _locked (false)
 	, _timestamp (time (0))
 	, _cue (cue_id)
+	, _signals_suspended (0)
 {
+	/* Locations follow the global Session time domain */
 
-	/* it would be nice if the caller could ensure that the start and end
-	   values simply use the correct domain, but that would involve
-	   enforcing/checking that at every place where we create a
-	   Location. So instead we centralize this here.
+	set_position_time_domain (_session.time_domain());
+}
 
-	   NUTEMPO: it might make sense to switch time domains when <something>
-	   happens, but it's not clear what the <something> might be? Maybe
-	   changing some setting of the tempo map.
-	*/
-
-	if (s.config.get_glue_new_markers_to_bars_and_beats()) {
-		set_position_time_domain (Temporal::BeatTime);
-	} else {
-		set_position_time_domain (Temporal::AudioTime);
+void
+Location::set_position_time_domain (TimeDomain domain)
+{
+	if (_start.time_domain() == domain) {
+		return;
 	}
+
+	_start.set_time_domain (domain);
+	_end.set_time_domain (domain);
+
+	emit_signal (Domain); /* EMIT SIGNAL */
 }
 
 Location::Location (const Location& other)
@@ -111,8 +114,10 @@ Location::Location (const Location& other)
 	, _flags (other._flags)
 	, _timestamp (time (0))
 	, _cue (other._cue)
+	, _signals_suspended (0)
 {
 	/* copy is not locked even if original was */
+	assert (other._signals_suspended == 0);
 
 	_locked = false;
 
@@ -123,6 +128,7 @@ Location::Location (Session& s, const XMLNode& node)
 	: SessionHandleRef (s)
 	, _flags (Flags (0))
 	, _timestamp (time (0))
+	, _signals_suspended (0)
 {
 	//_start.set_time_domain (AudioTime);
 	//_end.set_time_domain (AudioTime);
@@ -160,6 +166,8 @@ Location::operator= (const Location& other)
 	_end = other._end;
 	_flags = other._flags;
 
+	assert (other._signals_suspended == 0);
+
 	/* XXX need to copy scene change */
 
 	/* copy is not locked even if original was */
@@ -171,16 +179,86 @@ Location::operator= (const Location& other)
 	return this;
 }
 
-/** Set location name
- */
+void
+Location::suspend_signals ()
+{
+	++_signals_suspended;
+}
 
+void
+Location::resume_signals ()
+{
+	assert (_signals_suspended > 0);
+	if (--_signals_suspended > 0) {
+		return;
+	}
+	for (auto const& s : _postponed_signals) {
+		actually_emit_signal (s);
+	}
+}
+
+void
+Location::emit_signal (Signal s)
+{
+	if (_signals_suspended > 0) {
+		_postponed_signals.insert (s);
+		return;
+	}
+	actually_emit_signal (s);
+}
+
+void
+Location::actually_emit_signal (Signal s)
+{
+	switch (s) {
+		case Name:
+			name_changed (this);
+			NameChanged ();
+			break;
+		case StartEnd:
+			changed (this);
+			Changed ();
+			break;
+		case End:
+			end_changed (this);
+			EndChanged ();
+			break;
+		case Start:
+			start_changed (this);
+			StartChanged ();
+			break;
+		case Flag:
+			flags_changed (this);
+			FlagsChanged ();
+			break;
+		case Lock:
+			lock_changed (this);
+			LockChanged ();
+			break;
+		case Cue:
+			cue_change (this);
+			CueChanged ();
+			break;
+		case Scene:
+			scene_changed (this);
+			SceneChanged ();
+			break;
+		case Domain:
+			time_domain_changed (this);
+			TimeDomainChanged ();
+			break;
+		default:
+			assert (0);
+			break;
+	}
+}
+
+/** Set location name */
 void
 Location::set_name (const std::string& str)
 {
 	_name = str;
-
-	name_changed (this); /* EMIT SIGNAL */
-	NameChanged  (); /* EMIT SIGNAL */
+	emit_signal (Name); /* EMIT SIGNAL*/
 }
 
 /** Set start position.
@@ -188,11 +266,18 @@ Location::set_name (const std::string& str)
  *  @param force true to force setting, even if the given new start is after the current end.
  */
 int
-Location::set_start (Temporal::timepos_t const & s, bool force)
+Location::set_start (Temporal::timepos_t const & s_, bool force)
 {
-
 	if (_locked) {
 		return -1;
+	}
+
+	timepos_t s;
+
+	if (_session.time_domain() == Temporal::AudioTime) {
+		s = timepos_t (s_.samples());
+	} else {
+		s = timepos_t (s_.beats());
 	}
 
 	if (!force) {
@@ -205,11 +290,7 @@ Location::set_start (Temporal::timepos_t const & s, bool force)
 		if (_start != s) {
 			_start = s;
 			_end = s;
-
-			start_changed (this); /* EMIT SIGNAL */
-			StartChanged (); /* EMIT SIGNAL */
-			//end_changed (this); /* EMIT SIGNAL */
-			//EndChanged (); /* EMIT SIGNAL */
+			emit_signal (Start); /* EMIT SIGNAL*/
 		}
 
 		/* moving the start (position) of a marker with a scene change
@@ -217,13 +298,13 @@ Location::set_start (Temporal::timepos_t const & s, bool force)
 		*/
 
 		if (_scene_change) {
-			scene_changed (); /* EMIT SIGNAL */
+			emit_signal (Scene); /* EMIT SIGNAL */
 		}
 
 		assert (s.is_zero() || s.is_positive());
 
 		if (is_cue_marker()) {
-			cue_change (this);
+			emit_signal (Cue); /* EMIT SIGNAL */
 		}
 
 		return 0;
@@ -239,8 +320,7 @@ Location::set_start (Temporal::timepos_t const & s, bool force)
 		Temporal::timepos_t const old = _start;
 
 		_start = s;
-		start_changed (this); /* EMIT SIGNAL */
-		StartChanged (); /* EMIT SIGNAL */
+		emit_signal (Start); /* EMIT SIGNAL*/
 
 		if (is_session_range ()) {
 			Session::StartTimeChanged (old.samples()); /* emit signal */
@@ -258,10 +338,18 @@ Location::set_start (Temporal::timepos_t const & s, bool force)
  *  @param force true to force setting, even if the given new end is before the current start.
  */
 int
-Location::set_end (Temporal::timepos_t const & e, bool force)
+Location::set_end (Temporal::timepos_t const & e_, bool force)
 {
 	if (_locked) {
 		return -1;
+	}
+
+	timepos_t e;
+
+	if (_session.time_domain() == Temporal::AudioTime) {
+		e = timepos_t (e_.samples());
+	} else {
+		e = timepos_t (e_.beats());
 	}
 
 	if (!force) {
@@ -274,10 +362,7 @@ Location::set_end (Temporal::timepos_t const & e, bool force)
 		if (_start != e) {
 			_start = e;
 			_end = e;
-			//start_changed (this); /* emit signal */
-			//startchanged (); /* emit signal */
-			end_changed (this); /* emit signal */
-			EndChanged (); /* emit signal */
+			emit_signal (End); /* EMIT SIGNAL*/
 		}
 
 		assert (_start >= 0);
@@ -296,8 +381,7 @@ Location::set_end (Temporal::timepos_t const & e, bool force)
 		timepos_t const old = _end;
 
 		_end = e;
-		end_changed(this); /* EMIT SIGNAL */
-		EndChanged(); /* EMIT SIGNAL */
+		emit_signal (End); /* EMIT SIGNAL*/
 
 		if (is_session_range()) {
 			Session::EndTimeChanged (old.samples()); /* EMIT SIGNAL */
@@ -310,15 +394,26 @@ Location::set_end (Temporal::timepos_t const & e, bool force)
 }
 
 int
-Location::set (Temporal::timepos_t const & s, Temporal::timepos_t const & e)
+Location::set (Temporal::timepos_t const & s_, Temporal::timepos_t const & e_)
 {
 	/* check validity */
-	if (((is_auto_punch() || is_auto_loop()) && s >= e) || (!is_mark() && s > e)) {
+	if (((is_auto_punch() || is_auto_loop()) && s_ >= e_) || (!is_mark() && s_ > e_)) {
 		return -1;
 	}
 
 	bool start_change = false;
 	bool end_change = false;
+
+	timepos_t s;
+	timepos_t e;
+
+	if (_session.time_domain() == Temporal::AudioTime) {
+		s = timepos_t (s_.samples());
+		e = timepos_t (e_.samples());
+	} else {
+		s = timepos_t (s_.beats());
+		e = timepos_t (e_.beats());
+	}
 
 	if (is_mark()) {
 
@@ -367,18 +462,15 @@ Location::set (Temporal::timepos_t const & s, Temporal::timepos_t const & e)
 	}
 
 	if (start_change && end_change) {
-		changed (this);
-		Changed ();
+		emit_signal (StartEnd); /* EMIT SIGNAL */
 	} else if (start_change) {
-		start_changed(this); /* EMIT SIGNAL */
-		StartChanged(); /* EMIT SIGNAL */
+		emit_signal (Start); /* EMIT SIGNAL */
 	} else if (end_change) {
-		end_changed(this); /* EMIT SIGNAL */
-		EndChanged(); /* EMIT SIGNAL */
+		emit_signal (End); /* EMIT SIGNAL*/
 	}
 
 	if (is_cue_marker()) {
-		cue_change (this);
+		emit_signal (Cue); /* EMIT SIGNAL */
 	}
 
 	return 0;
@@ -396,11 +488,9 @@ Location::move_to (Temporal::timepos_t const & pos)
 		_start = pos;
 		_end = pos + len;
 
-		changed (this); /* EMIT SIGNAL */
-		Changed (); /* EMIT SIGNAL */
-
+		emit_signal (StartEnd); /* EMIT SIGNAL */
 		if (is_cue_marker()) {
-			cue_change (this);
+			emit_signal (Cue); /* EMIT SIGNAL */
 		}
 	}
 
@@ -419,8 +509,7 @@ Location::set_hidden (bool yn, void*)
 	}
 
 	if (set_flag_internal (yn, IsHidden)) {
-		flags_changed (this); /* EMIT SIGNAL */
-		FlagsChanged ();
+		emit_signal (Flag); /* EMIT SIGNAL */
 	}
 }
 
@@ -428,8 +517,7 @@ void
 Location::set_cd (bool yn, void*)
 {
 	if (set_flag_internal (yn, IsCDMarker)) {
-		flags_changed (this); /* EMIT SIGNAL */
-		FlagsChanged ();
+		emit_signal (Flag); /* EMIT SIGNAL */
 	}
 }
 
@@ -441,7 +529,7 @@ Location::set_cue_id (int32_t cue_id)
 	}
 	if (_cue != cue_id) {
 		_cue = cue_id;
-		cue_change (this);
+		emit_signal (Cue); /* EMIT SIGNAL */
 	}
 }
 
@@ -449,8 +537,7 @@ void
 Location::set_is_range_marker (bool yn, void*)
 {
 	if (set_flag_internal (yn, IsRangeMarker)) {
-		flags_changed (this);
-		FlagsChanged (); /* EMIT SIGNAL */
+		emit_signal (Flag); /* EMIT SIGNAL */
 	}
 }
 
@@ -458,8 +545,7 @@ void
 Location::set_is_clock_origin (bool yn, void*)
 {
 	if (set_flag_internal (yn, IsClockOrigin)) {
-		flags_changed (this);
-		FlagsChanged (); /* EMIT SIGNAL */
+		emit_signal (Flag); /* EMIT SIGNAL */
 	}
 }
 
@@ -468,8 +554,7 @@ Location::set_skip (bool yn)
 {
 	if (is_range_marker() && length().is_positive()) {
 		if (set_flag_internal (yn, IsSkip)) {
-			flags_changed (this);
-			FlagsChanged ();
+			emit_signal (Flag); /* EMIT SIGNAL */
 		}
 	}
 }
@@ -479,8 +564,7 @@ Location::set_skipping (bool yn)
 {
 	if (is_range_marker() && is_skip() && length().is_positive()) {
 		if (set_flag_internal (yn, IsSkipping)) {
-			flags_changed (this);
-			FlagsChanged ();
+			emit_signal (Flag); /* EMIT SIGNAL */
 		}
 	}
 }
@@ -493,8 +577,7 @@ Location::set_auto_punch (bool yn, void*)
 	}
 
 	if (set_flag_internal (yn, IsAutoPunch)) {
-		flags_changed (this); /* EMIT SIGNAL */
-		FlagsChanged (); /* EMIT SIGNAL */
+		emit_signal (Flag); /* EMIT SIGNAL */
 	}
 }
 
@@ -506,8 +589,7 @@ Location::set_auto_loop (bool yn, void*)
 	}
 
 	if (set_flag_internal (yn, IsAutoLoop)) {
-		flags_changed (this); /* EMIT SIGNAL */
-		FlagsChanged (); /* EMIT SIGNAL */
+		emit_signal (Flag); /* EMIT SIGNAL */
 	}
 }
 
@@ -553,7 +635,7 @@ Location::cd_info_node(const string & name, const string & value)
 
 
 XMLNode&
-Location::get_state ()
+Location::get_state () const
 {
 	XMLNode *node = new XMLNode ("Location");
 
@@ -630,7 +712,7 @@ Location::set_state (const XMLNode& node, int version)
 	}
 
 	if (old_flags != _flags) {
-		FlagsChanged ();
+		emit_signal (Flag); /* EMIT SIGNAL */
 	}
 
 	if (!node.get_property ("locked", _locked)) {
@@ -662,8 +744,7 @@ Location::set_state (const XMLNode& node, int version)
 		_scene_change = SceneChange::factory (*scene_child, version);
 	}
 
-	changed (this); /* EMIT SIGNAL */
-	Changed (); /* EMIT SIGNAL */
+	emit_signal (StartEnd); /* EMIT SIGNAL */
 
 	assert (_start.is_positive() || _start.is_zero());
 	assert (_end.is_positive() || _end.is_zero());
@@ -672,44 +753,50 @@ Location::set_state (const XMLNode& node, int version)
 }
 
 void
-Location::set_position_time_domain (TimeDomain domain)
-{
-	if (_start.time_domain() == domain) {
-		return;
-	}
-
-	_start.set_time_domain (domain);
-	_end.set_time_domain (domain);
-
-	TimeDomainChanged (); /* EMIT SIGNAL */
-}
-
-void
 Location::lock ()
 {
 	_locked = true;
-	lock_changed (this);
-	LockChanged ();
+	emit_signal (Lock); /* EMIT SIGNAL */
 }
 
 void
 Location::unlock ()
 {
 	_locked = false;
-	lock_changed (this);
-	LockChanged ();
+	emit_signal (Lock); /* EMIT SIGNAL */
 }
 
 void
-Location::set_scene_change (boost::shared_ptr<SceneChange>  sc)
+Location::set_scene_change (std::shared_ptr<SceneChange>  sc)
 {
-        if (_scene_change != sc) {
-                _scene_change = sc;
-                _session.set_dirty ();
+	if (_scene_change != sc) {
+		_scene_change = sc;
+		_session.set_dirty ();
+		emit_signal (Scene); /* EMIT SIGNAL */
+	}
+}
 
-                scene_changed (); /* EMIT SIGNAL */
-                SceneChangeChanged (); /* EMIT SIGNAL */
-        }
+void
+Location::globally_change_time_domain (Temporal::TimeDomain from, Temporal::TimeDomain to)
+{
+	assert (domain_swap);
+
+	if (_start.time_domain() == from) {
+
+		_start.set_time_domain (to);
+		_end.set_time_domain (to);
+
+		domain_swap->add (_start);
+		domain_swap->add (_end);
+	}
+}
+
+void
+Location::change_time_domain (Temporal::TimeDomain from, Temporal::TimeDomain to)
+{
+	if (_start.time_domain() == from) {
+		set_position_time_domain (to);
+	}
 }
 
 /*---------------------------------------------------------------------- */
@@ -979,6 +1066,18 @@ Locations::add (Location *loc, bool make_current)
 
 	{
 		Glib::Threads::RWLock::WriterLock lm (_lock);
+
+		/* Do not allow multiple cue markers in the same location */
+
+		if (loc->is_cue_marker()) {
+			for (LocationList::iterator i = locations.begin(); i != locations.end(); ++i) {
+				if ((*i)->is_cue_marker() && (*i)->start() == loc->start()) {
+					locations.erase (i);
+					break;
+				}
+			}
+		}
+
 		locations.push_back (loc);
 
 		if (make_current) {
@@ -1012,7 +1111,7 @@ Locations::add (Location *loc, bool make_current)
 	}
 
 	if (loc->is_cue_marker()) {
-		Location::cue_change (loc);
+		Location::cue_change (loc); /* EMIT SIGNAL */
 	}
 }
 
@@ -1059,7 +1158,6 @@ Locations::remove (Location *loc)
 				_session.set_auto_punch_location (0);
 				lm.acquire ();
 			}
-			delete *i;
 			locations.erase (i);
 			was_removed = true;
 			if (current_location == loc) {
@@ -1088,18 +1186,18 @@ Locations::remove (Location *loc)
 		if (was_current) {
 			current_changed (0); /* EMIT SIGNAL */
 		}
+		delete loc;
 	}
 }
 
 XMLNode&
-Locations::get_state ()
+Locations::get_state () const
 {
 	XMLNode *node = new XMLNode ("Locations");
-	LocationList::iterator iter;
 	Glib::Threads::RWLock::ReaderLock lm (_lock);
 
-	for (iter = locations.begin(); iter != locations.end(); ++iter) {
-		node->add_child_nocopy ((*iter)->get_state ());
+	for (auto const & l : locations) {
+		node->add_child_nocopy (l->get_state ());
 	}
 
 	return *node;
@@ -1119,6 +1217,7 @@ Locations::set_state (const XMLNode& node, int version)
 	LocationList new_locations;
 
 	{
+		std::vector<Location::ChangeSuspender> lcs;
 		Glib::Threads::RWLock::WriterLock lm (_lock);
 
 		current_location = 0;
@@ -1147,8 +1246,7 @@ Locations::set_state (const XMLNode& node, int version)
 				if (i != locations.end()) {
 					/* we can re-use an old Location object */
 					loc = *i;
-
-					// changed locations will be updated by Locations::changed signal
+					lcs.emplace_back (std::move (loc));
 					loc->set_state (**niter, version);
 				} else {
 					loc = new Location (_session, **niter);
@@ -1381,7 +1479,7 @@ Locations::marks_either_side (timepos_t const & pos, timepos_t& before, timepos_
 	std::list<timepos_t> positions;
 
 	for (LocationList::const_iterator i = locs.begin(); i != locs.end(); ++i) {
-		if (((*i)->is_auto_loop() || (*i)->is_auto_punch()) || (*i)->is_xrun()) {
+		if (((*i)->is_auto_loop() || (*i)->is_auto_punch()) || (*i)->is_xrun() || (*i)->is_cue_marker()) {
 			continue;
 		}
 
@@ -1567,18 +1665,7 @@ Locations::ripple (timepos_t const & at, timecnt_t const & distance, bool includ
 
 	for (LocationList::iterator i = copy.begin(); i != copy.end(); ++i) {
 
-		/* keep session range markers covering entire region if
-		   a ripple "extends" the session.
-		*/
-		if (distance.is_positive() && (*i)->is_session_range()) {
-
-			/* Don't move start unless it occurs after the ripple point.
-			 */
-			if ((*i)->start() >= at) {
-				(*i)->set ((*i)->start() + distance, (*i)->end() + distance);
-			} else {
-				(*i)->set_end ((*i)->end() + distance);
-			}
+		if ( (*i)->is_session_range() || (*i)->is_auto_punch() || (*i)->is_auto_loop()  ) {
 			continue;
 		}
 
@@ -1593,11 +1680,13 @@ Locations::ripple (timepos_t const & at, timecnt_t const & distance, bool includ
 		}
 
 		if ((*i)->start() >= at) {
-			(*i)->set_start ((*i)->start().earlier (distance));
+			(*i)->set_start ((*i)->start() + distance);
 
 			if (!(*i)->is_mark()) {
-				(*i)->set_end ((*i)->end().earlier (distance));
+				(*i)->set_end ((*i)->end() + distance);
 			}
+		} else if ((*i)->end() >= at) {
+			(*i)->set_end ((*i)->end() + distance);
 		}
 
 		if (locked) {
@@ -1608,4 +1697,214 @@ Locations::ripple (timepos_t const & at, timecnt_t const & distance, bool includ
 	if (notify) {
 		changed(); /* EMIT SIGNAL */
 	}
+}
+
+void
+Locations::cut_copy_section (timepos_t const& start, timepos_t const& end, timepos_t const& to, SectionOperation const op)
+{
+	LocationList ll;
+	LocationList pastebuf;
+
+	{
+		Glib::Threads::RWLock::WriterLock lm (_lock);
+		ll = locations;
+	}
+
+	for (auto const& i : ll) {
+		if (i->is_session_range () || i->is_auto_punch () || i->is_auto_loop ()) {
+			continue;
+		}
+		if (i->locked ()) {
+			continue;
+		}
+
+		if (i->is_range ()) {
+			if (i->start () >= start && i->end () <= end) {
+				/* range is inside the selction, process it */
+			} else if (i->start () < start && i->end () < start) {
+				/* range is entirely outside the selection, possible ripple it */
+			} else if (i->start () >= end && i->end () >= end) {
+				/* range is entirely outside the selection, possible ripple it */
+			} else if (i->start () < start && i->end () >= end) {
+				/* selection is inside the range, possible shorten or extend it */
+				if (op != DeleteSection && op != InsertSection) {
+					continue;
+				}
+			} else {
+				// TODO - How do we handle ranges that intersect start/end ?
+				continue;
+			}
+		}
+
+		if (op == DeleteSection) {
+			timecnt_t distance = end.distance(start);
+			if (i->start () >= start && i->start () < end) {
+				_session.locations()->remove (i);
+			} else if (i->start () >= end) {
+				if (i->is_range ()) {
+					i->set (i->start () + distance, i->end () + distance);
+				} else {
+					i->set_start (i->start () + distance);
+				}
+			} else if (i->end () >= start) {
+				i->set (i->start (), i->end () + distance);
+			}
+		} else if (op == CutPasteSection) {
+			timecnt_t distance = timecnt_t (i->start ().time_domain ());
+
+			if (i->start () < start) {
+				/* Not affected, unless paste-point `to` is earlier,
+				 * in which case we need to make space there
+				 */
+				if (i->start () >= to) {
+					distance = start.distance(end);
+				}
+			}
+			else if (i->start () >= end) {
+				/* data before this mark is "cut", so move it towards 0, unless
+				 * the whole cut/paste operation is earlier, in which case this mark
+				 * is not affected.
+				 */
+				if (i->start () <= to + start.distance(end)) {
+					distance = end.distance(start);
+				}
+			}
+			else {
+				/* process cut/paste */
+				distance = start.distance (to);
+			}
+
+
+			if (!i->is_range ()) {
+				i->set_start (i->start () + distance);
+				continue;
+			}
+
+			/* process range-end, by default use same distance as i->start
+			 * to retain the range length, but additionally consider the following.
+			 */
+			timecnt_t dist_end = distance;
+			if (i->end () >= end) {
+				if (i->end () > to + start.distance(end)) {
+					/* paste inside range, extend range: keep range end */
+					dist_end = timecnt_t (i->end ().time_domain ());
+				}
+			}
+
+			i->set (i->start () + distance, i->end () + dist_end);
+
+		} else if (op == CopyPasteSection) {
+			if (i->start() >= start && i->start() < end) {
+				Location* copy = new Location (*i);
+				pastebuf.push_back (copy);
+			}
+		}
+	}
+
+	if (op == CopyPasteSection || op == InsertSection) {
+		/* ripple */
+		timecnt_t distance = start.distance(end);
+		for (auto const& i : ll) {
+			if (i->start() >= to) {
+				if (i->is_range ()) {
+					i->set (i->start () + distance, i->end () + distance);
+				} else {
+					i->set_start (i->start () + distance);
+				}
+			} else if (i->is_range () && i->end() >= to) {
+				i->set_end (i->end () + distance);
+			}
+		}
+	}
+	if (op == CopyPasteSection) {
+		/* paste */
+		timecnt_t distance = start.distance(end);
+		distance = start.distance (to);
+		for (auto const& i : pastebuf) {
+			if (i->is_range ()) {
+				i->set (i->start () + distance, i->end () + distance);
+			} else {
+				i->set_start (i->start () + distance);
+			}
+			locations.push_back (i);
+			added (i); /* EMIT SIGNAL */
+			if (i->is_cue_marker()) {
+				Location::cue_change (i); /* EMIT SIGNAL */
+			}
+		}
+	}
+}
+
+bool
+Locations::clear_cue_markers (samplepos_t start, samplepos_t end)
+{
+	TempoMap::SharedPtr tmap (TempoMap::use());
+	Temporal::Beats sb;
+	Temporal::Beats eb;
+	bool have_beats = false;
+	vector<Location*> r;
+	bool removed_at_least_one = false;
+
+	{
+		Glib::Threads::RWLock::WriterLock lm (_lock);
+
+		for (LocationList::iterator i = locations.begin(); i != locations.end(); ) {
+
+			if ((*i)->is_cue_marker()) {
+				Location* l (*i);
+
+				if (l->start().time_domain() == AudioTime) {
+					samplepos_t when = l->start().samples();
+					if (when >= start && when < end) {
+						i = locations.erase (i);
+						r.push_back (l);
+						continue;
+					}
+				} else {
+					if (!have_beats) {
+						sb = tmap->quarters_at (timepos_t (start));
+						eb = tmap->quarters_at (timepos_t (end));
+						have_beats = true;
+					}
+
+					Temporal::Beats when = l->start().beats();
+					if (when >= sb && when < eb) {
+						r.push_back (l);
+						i = locations.erase (i);
+						continue;
+					}
+				}
+				removed_at_least_one = true;
+			}
+
+			++i;
+		}
+	} /* end lock scope */
+
+	for (auto & l : r) {
+		removed (l); /* EMIT SIGNAL */
+		delete l;
+	}
+
+	return removed_at_least_one;
+}
+
+void
+Locations::globally_change_time_domain (Temporal::TimeDomain from, Temporal::TimeDomain to)
+{
+	Glib::Threads::RWLock::WriterLock lm (_lock);
+	for (auto & l : locations) {
+		l->globally_change_time_domain (from, to);
+	}
+
+}
+
+void
+Locations::change_time_domain (Temporal::TimeDomain from, Temporal::TimeDomain to)
+{
+	Glib::Threads::RWLock::WriterLock lm (_lock);
+	for (auto & l : locations) {
+		l->change_time_domain (from, to);
+	}
+
 }

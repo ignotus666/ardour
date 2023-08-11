@@ -34,6 +34,7 @@
 
 #include "pbd/signals.h"
 
+#include "temporal/domain_provider.h"
 #include "temporal/timeline.h"
 #include "temporal/types.h"
 #include "temporal/range.h"
@@ -84,7 +85,7 @@ public:
 
 /** A list (sequence) of time-stamped values for a control
  */
-class LIBEVORAL_API ControlList
+class LIBEVORAL_API ControlList : public Temporal::TimeDomainProvider
 {
 public:
 	typedef std::list<ControlEvent*> EventList;
@@ -93,15 +94,12 @@ public:
 	typedef EventList::const_iterator const_iterator;
 	typedef EventList::const_reverse_iterator const_reverse_iterator;
 
-	ControlList (const Parameter& id, const ParameterDescriptor& desc, Temporal::TimeDomain);
+	ControlList (const Parameter& id, const ParameterDescriptor& desc, Temporal::TimeDomainProvider const &);
 	ControlList (const ControlList&, Temporal::timepos_t const & start, Temporal::timepos_t const & end);
 	ControlList (const ControlList&);
 	virtual ~ControlList();
 
-	Temporal::TimeDomain time_domain() const { return _time_domain; }
-	void set_time_domain (Temporal::TimeDomain td);
-
-	virtual boost::shared_ptr<ControlList> create(const Parameter& id, const ParameterDescriptor& desc, Temporal::TimeDomain);
+	virtual std::shared_ptr<ControlList> create(const Parameter& id, const ParameterDescriptor& desc, Temporal::TimeDomainProvider const &);
 
 	void dump (std::ostream&);
 
@@ -171,6 +169,15 @@ public:
 	 */
 	virtual bool editor_add (Temporal::timepos_t const & when, double value, bool with_guard);
 
+	struct OrderedPoint {
+		Temporal::timepos_t when;
+		double value;
+		OrderedPoint (Temporal::timepos_t const & t, double v) : when (t), value (v) {}
+	};
+	typedef std::vector<OrderedPoint> OrderedPoints;
+
+	virtual bool editor_add_ordered (OrderedPoints const &, bool with_guard);
+
 	/* to be used only for loading pre-sorted data from saved state */
 	void fast_simple_add (Temporal::timepos_t const & when, double value);
 
@@ -201,8 +208,8 @@ public:
 	 */
 	void thin (double thinning_factor);
 
-	boost::shared_ptr<ControlList> cut (Temporal::timepos_t const &, Temporal::timepos_t const &);
-	boost::shared_ptr<ControlList> copy (Temporal::timepos_t const &, Temporal::timepos_t const &);
+	std::shared_ptr<ControlList> cut (Temporal::timepos_t const &, Temporal::timepos_t const &);
+	std::shared_ptr<ControlList> copy (Temporal::timepos_t const &, Temporal::timepos_t const &);
 
 	/** Remove all events in the given time range from this list.
 	 *
@@ -308,7 +315,7 @@ public:
 	double unlocked_eval (Temporal::timepos_t const & x) const;
 
 	bool rt_safe_earliest_event_discrete_unlocked (Temporal::timepos_t const & start, Temporal::timepos_t & x, double& y, bool inclusive) const;
-	bool rt_safe_earliest_event_linear_unlocked (Temporal::timepos_t const & start, Temporal::timepos_t & x, double& y, bool inclusive, Temporal::timecnt_t min_x_delta = Temporal::timecnt_t ()) const;
+	bool rt_safe_earliest_event_linear_unlocked (Temporal::timepos_t const & start, Temporal::timepos_t & x, double& y, bool inclusive, Temporal::timecnt_t min_x_delta = Temporal::timecnt_t::max()) const;
 
 	void create_curve();
 	void destroy_curve();
@@ -371,7 +378,7 @@ public:
 
 	void build_search_cache_if_necessary (Temporal::timepos_t const & start) const;
 
-	boost::shared_ptr<ControlList> cut_copy_clear (Temporal::timepos_t const &, Temporal::timepos_t const &, int op);
+	std::shared_ptr<ControlList> cut_copy_clear (Temporal::timepos_t const &, Temporal::timepos_t const &, int op);
 	bool erase_range_internal (Temporal::timepos_t const & start, Temporal::timepos_t const & end, EventList &);
 
 	void     maybe_add_insert_guard (Temporal::timepos_t const & when);
@@ -379,8 +386,6 @@ public:
 	bool     maybe_insert_straight_line (Temporal::timepos_t const & when, double value);
 
 	virtual void maybe_signal_changed ();
-
-	void set_time_domain_empty (Temporal::TimeDomain td);
 
 	void _x_scale (Temporal::ratio_t const &);
 
@@ -396,7 +401,6 @@ public:
 	int8_t                _frozen;
 	bool                  _changed_when_thawed;
 	bool                  _sort_pending;
-	Temporal::TimeDomain  _time_domain;
 
 	Curve* _curve;
 
@@ -412,6 +416,7 @@ public:
 	void add_guard_point (Temporal::timepos_t const & when, Temporal::timecnt_t const & offset);
 
 	bool is_sorted () const;
+	Temporal::timepos_t ensure_time_domain (Temporal::timepos_t const & ) const;
 
 };
 

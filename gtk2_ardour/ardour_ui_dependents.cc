@@ -52,14 +52,12 @@
 #include "trigger_page.h"
 #include "keyboard.h"
 #include "keyeditor.h"
-#include "splash.h"
 #include "rc_option_editor.h"
 #include "route_params_ui.h"
 #include "time_info_box.h"
 #include "trigger_ui.h"
 #include "step_entry.h"
 #include "opts.h"
-#include "utils.h"
 
 #ifdef GDK_WINDOWING_X11
 #include <gdk/gdkx.h>
@@ -88,11 +86,7 @@ ARDOUR_UI::we_have_dependents ()
 	 */
 	mixer->monitor_section().use_others_actions ();
 
-	/* Create "static" actions that apply to all ProcessorBoxes
-	 */
-	ProcessorBox::register_actions ();
 	StepEntry::setup_actions_and_bindings ();
-	TriggerUI::setup_actions_and_bindings ();
 	ClipEditorBox::init ();
 
 	/* Global, editor, mixer, processor box actions are defined now. Link
@@ -204,7 +198,9 @@ ARDOUR_UI::tab_window_root_drop (GtkNotebook* src,
 bool
 ARDOUR_UI::idle_ask_about_quit ()
 {
-	if (_session && _session->dirty()) {
+	const auto ask_before_closing = UIConfiguration::instance ().get_ask_before_closing_last_window ();
+
+	if ((_session && _session->dirty ()) || !ask_before_closing) {
 		finish ();
 	} else {
 		/* no session or session not dirty, but still ask anyway */
@@ -215,8 +211,9 @@ ARDOUR_UI::idle_ask_about_quit ()
 		                         Gtk::BUTTONS_YES_NO,
 		                         true); /* modal */
 		msg.set_default_response (Gtk::RESPONSE_YES);
+		msg.set_position (WIN_POS_MOUSE);
 
-		if (msg.run() == Gtk::RESPONSE_YES) {
+		if (msg.run () == Gtk::RESPONSE_YES) {
 			finish ();
 		}
 	}
@@ -276,10 +273,9 @@ ARDOUR_UI::setup_windows ()
 	}
 
 	if (create_trigger_page ()) {
-		error << _("UI: cannot setup recorder") << endmsg;
+		error << _("UI: cannot setup trigger") << endmsg;
 		return -1;
 	}
-
 
 	if (create_meterbridge ()) {
 		error << _("UI: cannot setup meterbridge") << endmsg;
@@ -344,10 +340,38 @@ ARDOUR_UI::setup_windows ()
 	_main_window.add (main_vpacker);
 	transport_frame.show_all ();
 
+	apply_window_settings (true);
+
+	setup_toplevel_window (_main_window, "", this);
+	_main_window.show_all ();
+
+	_tabs.set_show_tabs (false);
+
+	/* It would be nice if Gtkmm had wrapped this rather than just
+	 * deprecating the old set_window_creation_hook() method, but oh well...
+	 */
+	g_signal_connect (_tabs.gobj(), "create-window", (GCallback) ::tab_window_root_drop, this);
+
+#ifdef GDK_WINDOWING_X11
+	/* allow externalUIs to be transient, on top of the main window */
+	LV2Plugin::set_main_window_id (GDK_DRAWABLE_XID(_main_window.get_window()->gobj()));
+#endif
+
+	return 0;
+}
+
+void
+ARDOUR_UI::apply_window_settings (bool with_size)
+{
 	const XMLNode* mnode = main_window_settings ();
 
-	if (mnode) {
-		XMLProperty const * prop;
+	if (!mnode) {
+		return;
+	}
+
+	XMLProperty const* prop;
+
+	if (with_size) {
 		gint x = -1;
 		gint y = -1;
 		gint w = -1;
@@ -380,43 +404,28 @@ ARDOUR_UI::setup_windows ()
 		if (w > 0 && h > 0) {
 			_main_window.set_default_size (w, h);
 		}
-
-		std::string current_tab;
-
-		if ((prop = mnode->property (X_("current-tab"))) != 0) {
-			current_tab = prop->value();
-		} else {
-			current_tab = "editor";
-		}
-		if (mixer && current_tab == "mixer") {
-			_tabs.set_current_page (_tabs.page_num (mixer->contents()));
-		} else if (rc_option_editor && current_tab == "preferences") {
-			_tabs.set_current_page (_tabs.page_num (rc_option_editor->contents()));
-		} else if (recorder && current_tab == "recorder") {
-			_tabs.set_current_page (_tabs.page_num (recorder->contents()));
-		} else if (recorder && current_tab == "trigger") {
-			_tabs.set_current_page (_tabs.page_num (trigger_page->contents()));
-		} else if (editor) {
-			_tabs.set_current_page (_tabs.page_num (editor->contents()));
-		}
 	}
 
-	setup_toplevel_window (_main_window, "", this);
-	_main_window.show_all ();
+	std::string current_tab;
 
-	_tabs.set_show_tabs (false);
+	if ((prop = mnode->property (X_("current-tab"))) != 0) {
+		current_tab = prop->value();
+	} else {
+		current_tab = "editor";
+	}
 
-	/* It would be nice if Gtkmm had wrapped this rather than just
-	 * deprecating the old set_window_creation_hook() method, but oh well...
-	 */
-	g_signal_connect (_tabs.gobj(), "create-window", (GCallback) ::tab_window_root_drop, this);
-
-#ifdef GDK_WINDOWING_X11
-	/* allow externalUIs to be transient, on top of the main window */
-	LV2Plugin::set_main_window_id (GDK_DRAWABLE_XID(_main_window.get_window()->gobj()));
-#endif
-
-	return 0;
+	if (mixer && current_tab == "mixer") {
+		_tabs.set_current_page (_tabs.page_num (mixer->contents()));
+	} else if (rc_option_editor && current_tab == "preferences") {
+		_tabs.set_current_page (_tabs.page_num (rc_option_editor->contents()));
+	} else if (recorder && current_tab == "recorder") {
+		_tabs.set_current_page (_tabs.page_num (recorder->contents()));
+	} else if (trigger_page && current_tab == "trigger") {
+		_tabs.set_current_page (_tabs.page_num (trigger_page->contents()));
+	} else if (editor) {
+		_tabs.set_current_page (_tabs.page_num (editor->contents()));
+	}
+	return;
 }
 
 bool
@@ -433,7 +442,7 @@ ARDOUR_UI::bind_lua_action_script (GdkEventButton*ev, int i)
 	if (Gtkmm2ext::Keyboard::modifier_state_equals (ev->state, Gtkmm2ext::Keyboard::TertiaryModifier)) {
 		li->remove_lua_action (i);
 	} else {
-		li->interactive_add (LuaScriptInfo::EditorAction, i);
+		li->interactive_add (*editor->current_toplevel (), LuaScriptInfo::EditorAction, i);
 	}
 	return true;
 }

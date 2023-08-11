@@ -19,16 +19,15 @@
 #ifndef _ardour_vst3_host_h_
 #define _ardour_vst3_host_h_
 
+#include <atomic>
+#include <cstdint>
 #include <map>
-#include <stdint.h>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include <glib.h>
 
-#include <boost/shared_ptr.hpp>
-
-#include "pbd/g_atomic_compat.h"
 #include "ardour/libardour_visibility.h"
 #include "vst3/vst3.h"
 
@@ -44,9 +43,12 @@ tresult PLUGIN_API queryInterface (const TUID _iid, void** obj) SMTG_OVERRIDE \
 #if defined(__clang__)
 #  pragma clang diagnostic push
 #  pragma clang diagnostic ignored "-Wnon-virtual-dtor"
-#elif __GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 6)
+#  pragma clang diagnostic ignored "-Wdelete-non-virtual-dtor"
+#  pragma clang diagnostic ignored "-Wdelete-non-abstract-non-virtual-dtor"
+#elif __GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 7)
 #  pragma GCC diagnostic push
 #  pragma GCC diagnostic ignored "-Wnon-virtual-dtor"
+#  pragma GCC diagnostic ignored "-Wdelete-non-virtual-dtor"
 #endif
 
 namespace Steinberg {
@@ -152,7 +154,7 @@ public:
 	uint32 PLUGIN_API release () SMTG_OVERRIDE;
 
 private:
-	GATOMIC_QUAL gint _cnt; // atomic
+	std::atomic<int> _cnt; // atomic
 };
 
 class LIBARDOUR_API HostAttributeList : public Vst::IAttributeList, public RefObject
@@ -212,7 +214,7 @@ public:
 
 protected:
 	char*                                _messageId;
-	boost::shared_ptr<HostAttributeList> _attribute_list;
+	std::shared_ptr<HostAttributeList> _attribute_list;
 };
 
 class LIBARDOUR_API ConnectionProxy : public Vst::IConnectionPoint, public RefObject
@@ -296,7 +298,7 @@ public:
 	tresult PLUGIN_API createInstance (TUID cid, TUID _iid, void** obj) SMTG_OVERRIDE;
 
 protected:
-	boost::shared_ptr<PlugInterfaceSupport> _plug_interface_support;
+	std::unique_ptr<PlugInterfaceSupport> _plug_interface_support;
 };
 
 class LIBARDOUR_LOCAL Vst3ParamValueQueue : public Vst::IParamValueQueue

@@ -43,9 +43,9 @@ public:
 
 	void run (BufferSet& bufs, samplepos_t start_sample, samplepos_t end_sample, double speed, pframes_t nframes, bool);
 
-	boost::shared_ptr<Amp> amp() const { return _amp; }
-	boost::shared_ptr<PeakMeter> meter() const { return _meter; }
-	boost::shared_ptr<GainControl> gain_control() const { return _gain_control; }
+	std::shared_ptr<Amp> amp() const { return _amp; }
+	std::shared_ptr<PeakMeter> meter() const { return _meter; }
+	std::shared_ptr<GainControl> gain_control() const { return _gain_control; }
 
 	bool metering() const { return _metering; }
 	void set_metering (bool yn) { _metering = yn; }
@@ -61,12 +61,12 @@ public:
 	static std::string name_and_id_new_return (Session&, uint32_t&);
 
 protected:
-	XMLNode& state();
+	XMLNode& state() const;
 
 	bool _metering;
-	boost::shared_ptr<GainControl> _gain_control;
-	boost::shared_ptr<Amp> _amp;
-	boost::shared_ptr<PeakMeter> _meter;
+	std::shared_ptr<GainControl> _gain_control;
+	std::shared_ptr<Amp> _amp;
+	std::shared_ptr<PeakMeter> _meter;
 
 private:
 	/* disallow copy construction */

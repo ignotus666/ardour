@@ -63,6 +63,7 @@ public:
 	float                gain()            const { return _gain; }
 
 	virtual void set_gain (float g, bool temporarily = false) { _gain = g; }
+	virtual void set_channel (uint16_t c) { _channel = c; }
 
 	int set_state (const XMLNode&, int version);
 
@@ -76,9 +77,8 @@ public:
 	                     bool must_exist, bool& is_new, uint16_t& chan,
 	                     std::string& found_path);
 
-	void inc_use_count ();
 	bool removable () const;
-        bool is_stub () const;
+	bool is_stub () const;
 
 	const std::string& origin() const { return _origin; }
 	void set_origin (std::string const& o) { _origin = o; }

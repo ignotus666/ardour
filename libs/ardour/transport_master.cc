@@ -164,14 +164,17 @@ TransportMaster::set_name (std::string const & str)
 }
 
 void
-TransportMaster::connection_handler (boost::weak_ptr<ARDOUR::Port>, std::string, boost::weak_ptr<ARDOUR::Port> w1, std::string, bool yn)
+TransportMaster::connection_handler (std::weak_ptr<ARDOUR::Port> w0, std::string, std::weak_ptr<ARDOUR::Port> w1, std::string, bool yn)
 {
 	if (!_port) {
 		return;
 	}
 
-	boost::shared_ptr<Port> p = w1.lock ();
-	if (p == _port) {
+	std::shared_ptr<Port> p0 (w0.lock());
+	std::shared_ptr<Port> p1 (w1.lock());
+
+	if ((p0 && _port == p0) || (p1 && _port == p1)) {
+
 		/* it's about us */
 
 		/* XXX technically .. if the user makes an N->1 connection to
@@ -243,9 +246,6 @@ void
 TransportMaster::set_session (Session* s)
 {
 	_session = s;
-	if (!_session) {
-		unregister_port ();
-	}
 }
 
 int
@@ -294,7 +294,7 @@ TransportMaster::connect_port_using_state ()
 }
 
 XMLNode&
-TransportMaster::get_state ()
+TransportMaster::get_state () const
 {
 	XMLNode* node = new XMLNode (state_node_name);
 	node->set_property (X_("type"), _type);
@@ -337,11 +337,11 @@ TransportMaster::get_state ()
 	return *node;
 }
 
-boost::shared_ptr<TransportMaster>
+std::shared_ptr<TransportMaster>
 TransportMaster::factory (XMLNode const & node)
 {
 	if (node.name() != TransportMaster::state_node_name) {
-		return boost::shared_ptr<TransportMaster>();
+		return std::shared_ptr<TransportMaster>();
 	}
 
 	SyncSource type;
@@ -349,11 +349,11 @@ TransportMaster::factory (XMLNode const & node)
 	bool removeable;
 
 	if (!node.get_property (X_("type"), type)) {
-		return boost::shared_ptr<TransportMaster>();
+		return std::shared_ptr<TransportMaster>();
 	}
 
 	if (!node.get_property (X_("name"), name)) {
-		return boost::shared_ptr<TransportMaster>();
+		return std::shared_ptr<TransportMaster>();
 	}
 
 	if (!node.get_property (X_("removeable"), removeable)) {
@@ -368,12 +368,12 @@ TransportMaster::factory (XMLNode const & node)
 	return factory (type, name, removeable);
 }
 
-boost::shared_ptr<TransportMaster>
+std::shared_ptr<TransportMaster>
 TransportMaster::factory (SyncSource type, std::string const& name, bool removeable)
 {
 	/* XXX need to count existing sources of a given type */
 
-	boost::shared_ptr<TransportMaster> tm;
+	std::shared_ptr<TransportMaster> tm;
 
 	DEBUG_TRACE (DEBUG::Slave, string_compose ("factory-construct %1 name %2 removeable %3\n", enum_2_string (type), name, removeable));
 
@@ -397,7 +397,7 @@ TransportMaster::factory (SyncSource type, std::string const& name, bool removea
 	} catch (...) {
 		error << string_compose (_("Construction of transport master object of type %1 failed"), enum_2_string (type)) << endmsg;
 		std::cerr << string_compose (_("Construction of transport master object of type %1 failed"), enum_2_string (type)) << std::endl;
-		return boost::shared_ptr<TransportMaster>();
+		return std::shared_ptr<TransportMaster>();
 	}
 
 	if (tm) {
@@ -528,7 +528,7 @@ TimecodeTransportMaster::set_fr2997 (bool yn)
 }
 
 /* used for delta_string(): (note: \u00B1 is the plus-or-minus sign) */
-#define PLUSMINUS(A) (((A) < 0) ? "-" : (((A) > 0) ? "+" : "\u00B1"))
+#define PLUSMINUS(A) (((A) < 0) ? "-" : (((A) > 0) ? "+" : u8"\u00B1"))
 #define LEADINGZERO(A) ((A) < 10 ? "    " : (A) < 100 ? "   " : (A) < 1000 ? "  " : (A) < 10000 ? " " : "")
 
 std::string
@@ -539,13 +539,13 @@ TransportMaster::format_delta_time (sampleoffset_t delta) const
 		samplecnt_t sr = _session->sample_rate();
 		if (abs (_current_delta) >= sr) {
 			int secs = rint ((double) delta / sr);
-			snprintf(buf, sizeof(buf), "\u0394%s%s%d s", LEADINGZERO(abs(secs)), PLUSMINUS(-secs), abs(secs));
+			snprintf(buf, sizeof(buf), u8"\u0394%s%s%d s", LEADINGZERO(abs(secs)), PLUSMINUS(-secs), abs(secs));
 			buf[63] = '\0';
 			return std::string(buf);
 		}
 	}
 	/* left-align sign, to make it readable when decimals jitter */
-	snprintf (buf, sizeof(buf), "\u0394%s%s%lldsm", PLUSMINUS(-delta), LEADINGZERO(::llabs(delta)), ::llabs(delta));
+	snprintf (buf, sizeof(buf), u8"\u0394%s%s%lldsm", PLUSMINUS(-delta), LEADINGZERO(::llabs(delta)), ::llabs(delta));
 	buf[63] = '\0';
 	return std::string(buf);
 }
@@ -555,16 +555,16 @@ TransportMasterViaMIDI::~TransportMasterViaMIDI ()
 	session_connections.drop_connections();
 }
 
-boost::shared_ptr<Port>
+std::shared_ptr<Port>
 TransportMasterViaMIDI::create_midi_port (std::string const & port_name)
 {
-	boost::shared_ptr<Port> p;
+	std::shared_ptr<Port> p;
 
 	if ((p = AudioEngine::instance()->register_input_port (DataType::MIDI, port_name, false, TransportMasterPort)) == 0) {
-		return boost::shared_ptr<Port> ();
+		return std::shared_ptr<Port> ();
 	}
 
-	_midi_port = boost::dynamic_pointer_cast<MidiPort> (p);
+	_midi_port = std::dynamic_pointer_cast<MidiPort> (p);
 
 	return p;
 }

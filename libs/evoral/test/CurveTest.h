@@ -1,6 +1,8 @@
+#include <memory>
+
 #include <cppunit/TestFixture.h>
 #include <cppunit/extensions/HelperMacros.h>
-#include <boost/shared_ptr.hpp>
+
 #include "evoral/ControlList.h"
 
 class CurveTest : public CppUnit::TestFixture
@@ -25,9 +27,9 @@ public:
 	void ctrlListEval ();
 
 private:
-	boost::shared_ptr<Evoral::ControlList> TestCtrlList() {
+	std::shared_ptr<Evoral::ControlList> TestCtrlList() {
 		Evoral::Parameter param (Evoral::Parameter(0));
 		const Evoral::ParameterDescriptor desc;
-		return boost::shared_ptr<Evoral::ControlList> (new Evoral::ControlList(param, desc));
+		return std::shared_ptr<Evoral::ControlList> (new Evoral::ControlList(param, desc, Temporal::TimeDomainProvider (Temporal::AudioTime)));
 	}
 };

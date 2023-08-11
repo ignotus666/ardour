@@ -342,8 +342,30 @@ struct CFunc
     static int f (lua_State* L)
     {
       assert (isfulluserdata (L, lua_upvalueindex (1)));
-      boost::shared_ptr<T>* const t = Userdata::get <boost::shared_ptr<T> > (L, 1, false);
+      std::shared_ptr<T>* const t = Userdata::get <std::shared_ptr<T> > (L, 1, false);
       T* const tt = t->get();
+      if (!tt) {
+        return luaL_error (L, "shared_ptr is nil");
+      }
+      MemFnPtr const& fnptr = *static_cast <MemFnPtr const*> (lua_touserdata (L, lua_upvalueindex (1)));
+      assert (fnptr != 0);
+      ArgList <Params, 2> args (L);
+      Stack <ReturnType>::push (L, FuncTraits <MemFnPtr>::call (tt, fnptr, args));
+      return 1;
+    }
+  };
+
+  template <class MemFnPtr, class T,
+           class ReturnType = typename FuncTraits <MemFnPtr>::ReturnType>
+  struct CallMemberCPtr
+  {
+    typedef typename FuncTraits <MemFnPtr>::Params Params;
+
+    static int f (lua_State* L)
+    {
+      assert (isfulluserdata (L, lua_upvalueindex (1)));
+      std::shared_ptr<T const>* const t = Userdata::get <std::shared_ptr<T const> > (L, 1, true);
+      T* const tt = const_cast<T*> (t->get());
       if (!tt) {
         return luaL_error (L, "shared_ptr is nil");
       }
@@ -360,8 +382,8 @@ struct CFunc
   {
     static int f (lua_State* L)
     {
-      boost::shared_ptr<T> t = luabridge::Stack<boost::shared_ptr<T> >::get (L, 1);
-      Stack <boost::shared_ptr<R> >::push (L, boost::dynamic_pointer_cast<R> (t));
+      std::shared_ptr<T> t = luabridge::Stack<std::shared_ptr<T> >::get (L, 1);
+      Stack <std::shared_ptr<R> >::push (L, std::dynamic_pointer_cast<R> (t));
       return 1;
     }
   };
@@ -405,7 +427,7 @@ struct CFunc
   {
     static int f (lua_State* L)
     {
-      boost::shared_ptr<T> t = luabridge::Stack<boost::shared_ptr<T> >::get (L, 1);
+      std::shared_ptr<T> t = luabridge::Stack<std::shared_ptr<T> >::get (L, 1);
       Stack <bool>::push (L, t == 0);
       return 1;
     }
@@ -417,8 +439,8 @@ struct CFunc
     static int f (lua_State* L)
     {
       bool rv = true;
-      boost::weak_ptr<T> tw = luabridge::Stack<boost::weak_ptr<T> >::get (L, 1);
-      boost::shared_ptr<T> const t = tw.lock();
+      std::weak_ptr<T> tw = luabridge::Stack<std::weak_ptr<T> >::get (L, 1);
+      std::shared_ptr<T> const t = tw.lock();
       if (t) {
         T* const tt = t.get();
         rv = (tt == 0);
@@ -433,8 +455,8 @@ struct CFunc
   {
     static int f (lua_State* L)
     {
-      boost::shared_ptr<T> t0 = luabridge::Stack<boost::shared_ptr<T> >::get (L, 1);
-      boost::shared_ptr<T> t1 = luabridge::Stack<boost::shared_ptr<T> >::get (L, 2);
+      std::shared_ptr<T> t0 = luabridge::Stack<std::shared_ptr<T> >::get (L, 1);
+      std::shared_ptr<T> t1 = luabridge::Stack<std::shared_ptr<T> >::get (L, 2);
       Stack <bool>::push (L, t0 == t1);
       return 1;
     }
@@ -446,10 +468,10 @@ struct CFunc
     static int f (lua_State* L)
     {
       bool rv = false;
-      boost::weak_ptr<T> tw0 = luabridge::Stack<boost::weak_ptr<T> >::get (L, 1);
-      boost::weak_ptr<T> tw1 = luabridge::Stack<boost::weak_ptr<T> >::get (L, 2);
-      boost::shared_ptr<T> const t0 = tw0.lock();
-      boost::shared_ptr<T> const t1 = tw1.lock();
+      std::weak_ptr<T> tw0 = luabridge::Stack<std::weak_ptr<T> >::get (L, 1);
+      std::weak_ptr<T> tw1 = luabridge::Stack<std::weak_ptr<T> >::get (L, 2);
+      std::shared_ptr<T> const t0 = tw0.lock();
+      std::shared_ptr<T> const t1 = tw1.lock();
       if (t0 && t1) {
         T* const tt0 = t0.get();
         T* const tt1 = t1.get();
@@ -461,7 +483,7 @@ struct CFunc
   };
 
   template <class T>
-  struct ClassEqualCheck<boost::shared_ptr<T> >
+  struct ClassEqualCheck<std::shared_ptr<T> >
   {
     static int f (lua_State* L)
     {
@@ -470,7 +492,7 @@ struct CFunc
   };
 
   template <class T>
-  struct ClassEqualCheck<boost::weak_ptr<T> >
+  struct ClassEqualCheck<std::weak_ptr<T> >
   {
     static int f (lua_State* L)
     {
@@ -481,7 +503,7 @@ struct CFunc
   template <class C, typename T>
   static int getPtrProperty (lua_State* L)
   {
-    boost::shared_ptr<C> cp = luabridge::Stack<boost::shared_ptr<C> >::get (L, 1);
+    std::shared_ptr<C> cp = luabridge::Stack<std::shared_ptr<C> >::get (L, 1);
     C const* const c = cp.get();
     if (!c) {
       return luaL_error (L, "shared_ptr is nil");
@@ -494,8 +516,8 @@ struct CFunc
   template <class C, typename T>
   static int getWPtrProperty (lua_State* L)
   {
-    boost::weak_ptr<C> cw = luabridge::Stack<boost::weak_ptr<C> >::get (L, 1);
-    boost::shared_ptr<C> const cp = cw.lock();
+    std::weak_ptr<C> cw = luabridge::Stack<std::weak_ptr<C> >::get (L, 1);
+    std::shared_ptr<C> const cp = cw.lock();
     if (!cp) {
       return luaL_error (L, "cannot lock weak_ptr");
     }
@@ -511,7 +533,7 @@ struct CFunc
   template <class C, typename T>
   static int setPtrProperty (lua_State* L)
   {
-    boost::shared_ptr<C> cp = luabridge::Stack<boost::shared_ptr<C> >::get (L, 1);
+    std::shared_ptr<C> cp = luabridge::Stack<std::shared_ptr<C> >::get (L, 1);
     C* const c = cp.get();
     if (!c) {
       return luaL_error (L, "shared_ptr is nil");
@@ -524,8 +546,8 @@ struct CFunc
   template <class C, typename T>
   static int setWPtrProperty (lua_State* L)
   {
-    boost::weak_ptr<C> cw = luabridge::Stack<boost::weak_ptr<C> >::get (L, 1);
-    boost::shared_ptr<C> cp = cw.lock();
+    std::weak_ptr<C> cw = luabridge::Stack<std::weak_ptr<C> >::get (L, 1);
+    std::shared_ptr<C> cp = cw.lock();
     if (!cp) {
       return luaL_error (L, "cannot lock weak_ptr");
     }
@@ -547,8 +569,8 @@ struct CFunc
     static int f (lua_State* L)
     {
       assert (isfulluserdata (L, lua_upvalueindex (1)));
-      boost::weak_ptr<T>* const tw = Userdata::get <boost::weak_ptr<T> > (L, 1, false);
-      boost::shared_ptr<T> const t = tw->lock();
+      std::weak_ptr<T>* const tw = Userdata::get <std::weak_ptr<T> > (L, 1, false);
+      std::shared_ptr<T> const t = tw->lock();
       if (!t) {
         return luaL_error (L, "cannot lock weak_ptr");
       }
@@ -620,8 +642,33 @@ struct CFunc
     static int f (lua_State* L)
     {
       assert (isfulluserdata (L, lua_upvalueindex (1)));
-      boost::shared_ptr<T>* const t = Userdata::get <boost::shared_ptr<T> > (L, 1, false);
+      std::shared_ptr<T>* const t = Userdata::get <std::shared_ptr<T> > (L, 1, false);
       T* const tt = t->get();
+      if (!tt) {
+        return luaL_error (L, "shared_ptr is nil");
+      }
+      MemFnPtr const& fnptr = *static_cast <MemFnPtr const*> (lua_touserdata (L, lua_upvalueindex (1)));
+      assert (fnptr != 0);
+      ArgList <Params, 2> args (L);
+      Stack <ReturnType>::push (L, FuncTraits <MemFnPtr>::call (tt, fnptr, args));
+      LuaRef v (newTable (L));
+      FuncArgs <Params, 0>::refs (v, args);
+      v.push(L);
+      return 2;
+    }
+  };
+
+  template <class MemFnPtr, class T,
+            class ReturnType = typename FuncTraits <MemFnPtr>::ReturnType>
+  struct CallMemberRefCPtr
+  {
+    typedef typename FuncTraits <MemFnPtr>::Params Params;
+
+    static int f (lua_State* L)
+    {
+      assert (isfulluserdata (L, lua_upvalueindex (1)));
+      std::shared_ptr<T const>* const t = Userdata::get <std::shared_ptr<T const> > (L, 1, true);
+      T* const tt = const_cast<T*> (t->get());
       if (!tt) {
         return luaL_error (L, "shared_ptr is nil");
       }
@@ -645,8 +692,8 @@ struct CFunc
     static int f (lua_State* L)
     {
       assert (isfulluserdata (L, lua_upvalueindex (1)));
-      boost::weak_ptr<T>* const tw = Userdata::get <boost::weak_ptr<T> > (L, 1, false);
-      boost::shared_ptr<T> const t = tw->lock();
+      std::weak_ptr<T>* const tw = Userdata::get <std::weak_ptr<T> > (L, 1, false);
+      std::shared_ptr<T> const t = tw->lock();
       if (!t) {
         return luaL_error (L, "cannot lock weak_ptr");
       }
@@ -716,8 +763,26 @@ struct CFunc
     static int f (lua_State* L)
     {
       assert (isfulluserdata (L, lua_upvalueindex (1)));
-      boost::shared_ptr<T>* const t = Userdata::get <boost::shared_ptr<T> > (L, 1, false);
+      std::shared_ptr<T>* const t = Userdata::get <std::shared_ptr<T> > (L, 1, false);
       T* const tt = t->get();
+      MemFnPtr const& fnptr = *static_cast <MemFnPtr const*> (lua_touserdata (L, lua_upvalueindex (1)));
+      assert (fnptr != 0);
+      ArgList <Params, 2> args (L);
+      FuncTraits <MemFnPtr>::call (tt, fnptr, args);
+      return 0;
+    }
+  };
+
+  template <class MemFnPtr, class T>
+  struct CallMemberCPtr <MemFnPtr, T, void>
+  {
+    typedef typename FuncTraits <MemFnPtr>::Params Params;
+
+    static int f (lua_State* L)
+    {
+      assert (isfulluserdata (L, lua_upvalueindex (1)));
+      std::shared_ptr<T const>* const t = Userdata::get <std::shared_ptr<T const> > (L, 1, true);
+      T* const tt = const_cast<T*> (t->get());
       MemFnPtr const& fnptr = *static_cast <MemFnPtr const*> (lua_touserdata (L, lua_upvalueindex (1)));
       assert (fnptr != 0);
       ArgList <Params, 2> args (L);
@@ -734,8 +799,8 @@ struct CFunc
     static int f (lua_State* L)
     {
       assert (isfulluserdata (L, lua_upvalueindex (1)));
-      boost::weak_ptr<T>* const tw = Userdata::get <boost::weak_ptr<T> > (L, 1, false);
-      boost::shared_ptr<T> const t = tw->lock();
+      std::weak_ptr<T>* const tw = Userdata::get <std::weak_ptr<T> > (L, 1, false);
+      std::shared_ptr<T> const t = tw->lock();
       if (!t) {
         return luaL_error (L, "cannot lock weak_ptr");
       }
@@ -801,8 +866,32 @@ struct CFunc
     static int f (lua_State* L)
     {
       assert (isfulluserdata (L, lua_upvalueindex (1)));
-      boost::shared_ptr<T>* const t = Userdata::get <boost::shared_ptr<T> > (L, 1, false);
+      std::shared_ptr<T>* const t = Userdata::get <std::shared_ptr<T> > (L, 1, false);
       T* const tt = t->get();
+      if (!tt) {
+        return luaL_error (L, "shared_ptr is nil");
+      }
+      MemFnPtr const& fnptr = *static_cast <MemFnPtr const*> (lua_touserdata (L, lua_upvalueindex (1)));
+      assert (fnptr != 0);
+      ArgList <Params, 2> args (L);
+      FuncTraits <MemFnPtr>::call (tt, fnptr, args);
+      LuaRef v (newTable (L));
+      FuncArgs <Params, 0>::refs (v, args);
+      v.push(L);
+      return 1;
+    }
+  };
+
+  template <class MemFnPtr, class T>
+  struct CallMemberRefCPtr <MemFnPtr, T, void>
+  {
+    typedef typename FuncTraits <MemFnPtr>::Params Params;
+
+    static int f (lua_State* L)
+    {
+      assert (isfulluserdata (L, lua_upvalueindex (1)));
+      std::shared_ptr<T const>* const t = Userdata::get <std::shared_ptr<T const> > (L, 1, true);
+      T* const tt = const_cast<T*> (t->get());
       if (!tt) {
         return luaL_error (L, "shared_ptr is nil");
       }
@@ -825,8 +914,8 @@ struct CFunc
     static int f (lua_State* L)
     {
       assert (isfulluserdata (L, lua_upvalueindex (1)));
-      boost::weak_ptr<T>* const tw = Userdata::get <boost::weak_ptr<T> > (L, 1, false);
-      boost::shared_ptr<T> const t = tw->lock();
+      std::weak_ptr<T>* const tw = Userdata::get <std::weak_ptr<T> > (L, 1, false);
+      std::shared_ptr<T> const t = tw->lock();
       if (!t) {
         return luaL_error (L, "cannot lock weak_ptr");
       }
@@ -928,6 +1017,30 @@ struct CFunc
     {
       new (lua_newuserdata (L, sizeof (MemFnPtr))) MemFnPtr (mf);
       lua_pushcclosure (L, &CallMemberRefPtr <MemFnPtr, T>::f, 1);
+      rawsetfield (L, -3, name); // class table
+    }
+  };
+
+  template <class MemFnPtr>
+  struct CallMemberCPtrFunctionHelper
+  {
+    typedef typename FuncTraits <MemFnPtr>::ClassType T;
+    static void add (lua_State* L, char const* name, MemFnPtr mf)
+    {
+      new (lua_newuserdata (L, sizeof (MemFnPtr))) MemFnPtr (mf);
+      lua_pushcclosure (L, &CallMemberCPtr <MemFnPtr, T>::f, 1);
+      rawsetfield (L, -3, name); // class table
+    }
+  };
+
+  template <class MemFnPtr>
+  struct CallMemberRefCPtrFunctionHelper
+  {
+    typedef typename FuncTraits <MemFnPtr>::ClassType T;
+    static void add (lua_State* L, char const* name, MemFnPtr mf)
+    {
+      new (lua_newuserdata (L, sizeof (MemFnPtr))) MemFnPtr (mf);
+      lua_pushcclosure (L, &CallMemberRefCPtr <MemFnPtr, T>::f, 1);
       rawsetfield (L, -3, name); // class table
     }
   };
@@ -1146,7 +1259,7 @@ struct CFunc
   template <class T, class C>
   static int ptrTableToList (lua_State *L)
   {
-    boost::shared_ptr<C> const* const t = Userdata::get<boost::shared_ptr<C> > (L, 1, true);
+    std::shared_ptr<C> const* const t = Userdata::get<std::shared_ptr<C> > (L, 1, true);
     if (!t) { return luaL_error (L, "cannot derefencee shared_ptr"); }
     return tableToListHelper<T, C> (L, t->get());
   }
@@ -1200,7 +1313,7 @@ struct CFunc
   template <class T, class C>
   static int ptrListIter (lua_State *L)
   {
-    boost::shared_ptr<C> const* const t = Userdata::get <boost::shared_ptr<C> >(L, 1, true);
+    std::shared_ptr<C> const* const t = Userdata::get <std::shared_ptr<C> >(L, 1, true);
     if (!t) { return luaL_error (L, "cannot derefencee shared_ptr"); }
     return listIterHelper<T, C> (L, t->get());
   }
@@ -1241,7 +1354,7 @@ struct CFunc
   template <class T, class C>
   static int ptrListToTable (lua_State *L)
   {
-    boost::shared_ptr<C> const* const t = Userdata::get <boost::shared_ptr<C> > (L, 1, true);
+    std::shared_ptr<C> const* const t = Userdata::get <std::shared_ptr<C> > (L, 1, true);
     if (!t) { return luaL_error (L, "cannot derefencee shared_ptr"); }
     return listToTableHelper<T, C> (L, t->get());
   }
@@ -1399,6 +1512,16 @@ struct CFunc
     Stack <bool>::push (L, true);
     ++(*iter);
     return 2;
+  }
+
+  template <class T, class C>
+  static int setInsert (lua_State *L)
+  {
+    C* const t = Userdata::get <C> (L, 1, false);
+    T const * const v = Userdata::get <T> (L, 2, true);
+    auto rv = t->insert (*v);
+    Stack <bool>::push (L, rv.second);
+    return 1;
   }
 
   // generate iterator

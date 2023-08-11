@@ -34,12 +34,14 @@
 #include "pbd/gstdio_compat.h"
 
 #include "pbd/pthread_utils.h"
+#include "pbd/unwind.h"
 
 #include "ardour/audio_track.h"
 #include "ardour/audiofilesource.h"
 #include "ardour/audioplaylist.h"
 #include "ardour/audioregion.h"
 #include "ardour/chan_count.h"
+#include "ardour/clip_library.h"
 #include "ardour/midi_region.h"
 #include "ardour/session.h"
 #include "ardour/session_directory.h"
@@ -60,6 +62,7 @@
 #include "midi_region_view.h"
 #include "public_editor.h"
 #include "selection.h"
+#include "simple_export_dialog.h"
 #include "time_axis_view.h"
 #include "utils.h"
 
@@ -82,6 +85,7 @@ void
 Editor::stem_export ()
 {
 	StemExportDialog dialog (*this);
+	PBD::Unwinder<bool> uw (_no_not_select_reimported_tracks, true);
 	dialog.set_session (_session);
 	dialog.run();
 }
@@ -90,6 +94,14 @@ void
 Editor::export_selection ()
 {
 	ExportSelectionDialog dialog (*this);
+	dialog.set_session (_session);
+	dialog.run();
+}
+
+void
+Editor::quick_export ()
+{
+	SimpleExportDialog dialog (*this);
 	dialog.set_session (_session);
 	dialog.run();
 }
@@ -190,7 +202,7 @@ Editor::export_range ()
 }
 
 bool
-Editor::process_midi_export_dialog (MidiExportDialog& dialog, boost::shared_ptr<MidiRegion> midi_region)
+Editor::process_midi_export_dialog (MidiExportDialog& dialog, std::shared_ptr<MidiRegion> midi_region)
 {
 	string path = dialog.get_path ();
 
@@ -221,9 +233,9 @@ Editor::export_region ()
 		return;
 	}
 
-	boost::shared_ptr<Region> r = selection->regions.front()->region();
-	boost::shared_ptr<AudioRegion> audio_region = boost::dynamic_pointer_cast<AudioRegion>(r);
-	boost::shared_ptr<MidiRegion> midi_region = boost::dynamic_pointer_cast<MidiRegion>(r);
+	std::shared_ptr<Region> r = selection->regions.front()->region();
+	std::shared_ptr<AudioRegion> audio_region = std::dynamic_pointer_cast<AudioRegion>(r);
+	std::shared_ptr<MidiRegion> midi_region = std::dynamic_pointer_cast<MidiRegion>(r);
 
 	if (audio_region) {
 
@@ -274,29 +286,95 @@ Editor::write_region_selection (RegionSelection& regions)
 void
 Editor::bounce_region_selection (bool with_processing)
 {
+	/* this code is largely similar to editor_ops ::bounce_range_selection */
+	if (selection->regions.empty ()) {
+		return;
+	}
+
+	bool multiple_selected = selection->regions.size () > 1;
+	bool multiple_per_track = false;
+
+	if (multiple_selected) {
+		std::set<std::shared_ptr<Route>> route_set;
+		for (auto const& i: selection->regions) {
+			RouteTimeAxisView* rtv = dynamic_cast<RouteTimeAxisView*>(&i->get_time_axis_view());
+			auto rv = route_set.insert (rtv->route ());
+			if (!rv.second) {
+				multiple_per_track = true;
+				break;
+			}
+		}
+	}
+
 	/* no need to check for bounceable() because this operation never puts
 	 * its results back in the playlist (only in the region list).
 	 */
 
-	/*prompt the user for a new name*/
-	string bounce_name;
+	string   bounce_name;
+	bool     copy_to_clip_library = false;
+	bool     copy_to_trigger      = false;
+	uint32_t trigger_slot       = 0;
+
 	{
+		/*prompt the user for a new name*/
+
 		ArdourWidgets::Prompter dialog (true);
 
-		dialog.set_prompt (_("Name for Bounced Region:"));
+		if (multiple_selected) {
+			dialog.set_prompt (_("Prefix for Bounced Regions:"));
+			dialog.set_initial_text ("");
+			dialog.set_allow_empty ();
+		} else {
+			std::shared_ptr<Region> region (selection->regions.front()->region ());
+			dialog.set_prompt (_("Name for Bounced Region:"));
+			dialog.set_initial_text (region->name());
+		}
 
 		dialog.set_name ("BounceNameWindow");
 		dialog.set_size_request (400, -1);
 		dialog.set_position (Gtk::WIN_POS_MOUSE);
 
-		dialog.add_button (_("Rename"), RESPONSE_ACCEPT);
-		dialog.set_initial_text (bounce_name);
+		dialog.add_button (_("Bounce"), RESPONSE_ACCEPT);
 
-		Label label;
-		label.set_text (_("Bounced Region will appear in the Source list."));
-		dialog.get_vbox()->set_spacing (8);
-		dialog.get_vbox()->pack_start (label);
-		label.show();
+		Table*  table  = manage (new Table);
+		table->set_spacings (4);
+		table->set_border_width (8);
+		dialog.get_vbox()->pack_start (*table);
+		dialog.get_vbox()->set_spacing (4);
+
+		/* copy to a slot on this track ? */
+		Gtk::CheckButton *to_slot = NULL;
+		if (!with_processing && !multiple_per_track) {
+			to_slot = manage (new Gtk::CheckButton (_("Bounce to Trigger Slot:")));
+			Gtk::Alignment *slot_align = manage (new Gtk::Alignment (0, .5, 0, 0));
+			slot_align->add (*to_slot);
+
+			ArdourWidgets::ArdourDropdown *tslot = manage (new ArdourWidgets::ArdourDropdown ());
+
+			for (int c = 0; c < TriggerBox::default_triggers_per_box; ++c) {
+				std::string lbl = cue_marker_name (c);
+				tslot->AddMenuElem (Menu_Helpers::MenuElem (lbl, sigc::bind ([] (uint32_t* t, uint32_t v, ArdourWidgets::ArdourDropdown* s, std::string l) {*t = v; s->set_text (l);}, &trigger_slot, c, tslot, lbl)));
+			}
+			tslot->set_active ("A");
+
+			HBox *tbox = manage (new HBox());
+			tbox->pack_start(*slot_align, false, false);
+			tbox->pack_start(*tslot, false, false);
+			table->attach (*tbox,       0, 2, 0,1, Gtk::FILL, Gtk::SHRINK);
+		}
+
+		/* copy to the user's Clip Library ? */
+		Gtk::CheckButton *cliplib = manage (new Gtk::CheckButton (_("Bounce to Clip Library")));
+		Gtk::Alignment *align = manage (new Gtk::Alignment (0, .5, 0, 0));
+		align->add (*cliplib);
+		align->show_all ();
+		table->attach (*align,      0, 2, 1,2, Gtk::FILL, Gtk::SHRINK);
+
+		/* in all cases, the selected Range will appear in the Source list */
+		Label* s_label = manage (new Label (_("Bounced Region will appear in the Source list")));
+		table->attach (*s_label,      0, 2, 2,3, Gtk::FILL, Gtk::SHRINK);
+
+		dialog.get_vbox()->show_all ();
 
 		dialog.show ();
 
@@ -307,30 +385,87 @@ Editor::bounce_region_selection (bool with_processing)
 			return;
 		}
 		dialog.get_result(bounce_name);
+
+		if (to_slot && to_slot->get_active()) {
+			copy_to_trigger = true;
+		}
+		if (cliplib->get_active ()) {
+			copy_to_clip_library = true;
+		}
+	}
+
+	/* prevent user from accidentally overwriting a slot that they can't see */
+	bool overwriting = false;
+	if (copy_to_trigger) {
+		for (RegionSelection::iterator i = selection->regions.begin(); i != selection->regions.end(); ++i) {
+
+			std::shared_ptr<Region> region ((*i)->region());
+			RouteTimeAxisView* rtv = dynamic_cast<RouteTimeAxisView*>(&(*i)->get_time_axis_view());
+			std::shared_ptr<Track> track = std::dynamic_pointer_cast<Track> (rtv->route());
+			if (!track) {
+				continue;
+			}
+			if (track->triggerbox()->trigger(trigger_slot)->region()) {
+				overwriting = true;
+			}
+		}
+		if (overwriting) {
+			ArdourMessageDialog msg (string_compose(_("Are you sure you want to overwrite the contents in slot %1?"),cue_marker_name(trigger_slot)), false, MESSAGE_QUESTION, BUTTONS_YES_NO, true);
+			msg.set_title (_("Overwriting slot"));
+			msg.set_secondary_text (_("One of your selected tracks has content in this slot."));
+			if (msg.run () != RESPONSE_YES) {
+				return;
+			}
+		}
 	}
 
 	for (RegionSelection::iterator i = selection->regions.begin(); i != selection->regions.end(); ++i) {
 
-		boost::shared_ptr<Region> region ((*i)->region());
+		std::shared_ptr<Region> region ((*i)->region());
 		RouteTimeAxisView* rtv = dynamic_cast<RouteTimeAxisView*>(&(*i)->get_time_axis_view());
-		boost::shared_ptr<Track> track = boost::dynamic_pointer_cast<Track> (rtv->route());
+		std::shared_ptr<Track> track = std::dynamic_pointer_cast<Track> (rtv->route());
 
 		InterThreadInfo itt;
 
-		boost::shared_ptr<Region> r;
+		std::string name;
+		if (multiple_selected) {
+			name = string_compose ("%1%2", bounce_name, region->name ());
+		} else {
+			name = bounce_name;
+		}
+
+		std::shared_ptr<Region> r;
 
 		if (with_processing) {
-			r = track->bounce_range (region->position_sample(), region->position_sample() + region->length_samples(), itt, track->main_outs(), false, bounce_name);
+			r = track->bounce_range (region->position_sample(), region->position_sample() + region->length_samples(), itt, track->main_outs(), false, name);
 		} else {
-			r = track->bounce_range (region->position_sample(), region->position_sample() + region->length_samples(), itt, boost::shared_ptr<Processor>(), false, bounce_name);
+			r = track->bounce_range (region->position_sample(), region->position_sample() + region->length_samples(), itt, std::shared_ptr<Processor>(), false, name);
 		}
+
+		if (copy_to_clip_library) {
+			export_to_clip_library (r);
+		}
+
+		if (copy_to_trigger) {
+			std::shared_ptr<Trigger::UIState> state (new Trigger::UIState());
+			if (multiple_selected) {
+				state->name = string_compose ("%1%2", bounce_name, r->name ());
+			} else {
+				state->name = bounce_name;
+			}
+			//ToDo: can/should we get the tempo for this region?
+			track->triggerbox ()->enqueue_trigger_state_for_region(r, state);
+			track->triggerbox ()->set_from_selection (trigger_slot, r);
+			track->presentation_info ().set_trigger_track (true);
+		}
+
 	}
 }
 
 bool
-Editor::write_region (string path, boost::shared_ptr<AudioRegion> region)
+Editor::write_region (string path, std::shared_ptr<AudioRegion> region)
 {
-	boost::shared_ptr<AudioFileSource> fs;
+	std::shared_ptr<AudioFileSource> fs;
 	const samplepos_t chunk_size = 4096;
 	samplepos_t to_read;
 	Sample buf[chunk_size];
@@ -338,7 +473,7 @@ Editor::write_region (string path, boost::shared_ptr<AudioRegion> region)
 	samplepos_t pos;
 	char s[PATH_MAX+1];
 	uint32_t cnt;
-	vector<boost::shared_ptr<AudioFileSource> > sources;
+	vector<std::shared_ptr<AudioFileSource> > sources;
 	uint32_t nchans;
 
 	const string sound_directory = _session->session_directory().sound_path();
@@ -381,7 +516,7 @@ Editor::write_region (string path, boost::shared_ptr<AudioRegion> region)
 
 
 			try {
-				fs = boost::dynamic_pointer_cast<AudioFileSource> (SourceFactory::createWritable (DataType::AUDIO, *_session, path, _session->sample_rate()));
+				fs = std::dynamic_pointer_cast<AudioFileSource> (SourceFactory::createWritable (DataType::AUDIO, *_session, path, _session->sample_rate()));
 			}
 
 			catch (failed_constructor& err) {
@@ -404,11 +539,12 @@ Editor::write_region (string path, boost::shared_ptr<AudioRegion> region)
 
 		this_time = min (to_read, chunk_size);
 
-		for (vector<boost::shared_ptr<AudioFileSource> >::iterator src=sources.begin(); src != sources.end(); ++src) {
+		uint32_t chn = 0;
+		for (vector<std::shared_ptr<AudioFileSource> >::iterator src=sources.begin(); src != sources.end(); ++src, ++chn) {
 
 			fs = (*src);
 
-			if (region->read_at (buf, buf, gain_buffer, pos, this_time) != this_time) {
+			if (region->read_at (buf, buf, gain_buffer, pos, this_time, chn) != this_time) {
 				break;
 			}
 
@@ -427,7 +563,7 @@ Editor::write_region (string path, boost::shared_ptr<AudioRegion> region)
 	time (&tnow);
 	now = localtime (&tnow);
 
-	for (vector<boost::shared_ptr<AudioFileSource> >::iterator src = sources.begin(); src != sources.end(); ++src) {
+	for (vector<std::shared_ptr<AudioFileSource> >::iterator src = sources.begin(); src != sources.end(); ++src) {
 		(*src)->update_header (0, *now, tnow);
 		(*src)->mark_immutable ();
 	}
@@ -436,7 +572,7 @@ Editor::write_region (string path, boost::shared_ptr<AudioRegion> region)
 
 error_out:
 
-	for (vector<boost::shared_ptr<AudioFileSource> >::iterator i = sources.begin(); i != sources.end(); ++i) {
+	for (vector<std::shared_ptr<AudioFileSource> >::iterator i = sources.begin(); i != sources.end(); ++i) {
 		(*i)->mark_for_remove ();
 	}
 
@@ -462,7 +598,7 @@ Editor::write_audio_selection (TimeSelection& ts)
 
 		if (atv->is_audio_track()) {
 
-			boost::shared_ptr<AudioPlaylist> playlist = boost::dynamic_pointer_cast<AudioPlaylist>(atv->track()->playlist());
+			std::shared_ptr<AudioPlaylist> playlist = std::dynamic_pointer_cast<AudioPlaylist>(atv->track()->playlist());
 
 			if (playlist && write_audio_range (*playlist, atv->track()->n_channels(), ts) == 0) {
 				ret = -1;
@@ -477,7 +613,7 @@ Editor::write_audio_selection (TimeSelection& ts)
 bool
 Editor::write_audio_range (AudioPlaylist& playlist, const ChanCount& count, list<TimelineRange>& range)
 {
-	boost::shared_ptr<AudioFileSource> fs;
+	std::shared_ptr<AudioFileSource> fs;
 	const samplepos_t chunk_size = 4096;
 	samplecnt_t nframes;
 	Sample buf[chunk_size];
@@ -486,7 +622,7 @@ Editor::write_audio_range (AudioPlaylist& playlist, const ChanCount& count, list
 	char s[PATH_MAX+1];
 	uint32_t cnt;
 	string path;
-	vector<boost::shared_ptr<AudioFileSource> > sources;
+	vector<std::shared_ptr<AudioFileSource> > sources;
 
 	const string sound_directory = _session->session_directory().sound_path();
 
@@ -517,7 +653,7 @@ Editor::write_audio_range (AudioPlaylist& playlist, const ChanCount& count, list
 		path = s;
 
 		try {
-			fs = boost::dynamic_pointer_cast<AudioFileSource> (SourceFactory::createWritable (DataType::AUDIO, *_session, path, _session->sample_rate()));
+			fs = std::dynamic_pointer_cast<AudioFileSource> (SourceFactory::createWritable (DataType::AUDIO, *_session, path, _session->sample_rate()));
 		}
 
 		catch (failed_constructor& err) {
@@ -589,7 +725,7 @@ Editor::write_audio_range (AudioPlaylist& playlist, const ChanCount& count, list
 	time (&tnow);
 	now = localtime (&tnow);
 
-	for (vector<boost::shared_ptr<AudioFileSource> >::iterator s = sources.begin(); s != sources.end(); ++s) {
+	for (vector<std::shared_ptr<AudioFileSource> >::iterator s = sources.begin(); s != sources.end(); ++s) {
 		(*s)->update_header (0, *now, tnow);
 		(*s)->mark_immutable ();
 		// do we need to ref it again?
@@ -600,7 +736,7 @@ Editor::write_audio_range (AudioPlaylist& playlist, const ChanCount& count, list
 error_out:
 	/* unref created files */
 
-	for (vector<boost::shared_ptr<AudioFileSource> >::iterator i = sources.begin(); i != sources.end(); ++i) {
+	for (vector<std::shared_ptr<AudioFileSource> >::iterator i = sources.begin(); i != sources.end(); ++i) {
 		(*i)->mark_for_remove ();
 	}
 

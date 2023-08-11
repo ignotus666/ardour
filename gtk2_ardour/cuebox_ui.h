@@ -41,14 +41,14 @@ namespace ArdourCanvas
 	class Circle;
 }
 
-class CueEntry : public ArdourCanvas::Rectangle
+class CueEntry : public ArdourCanvas::Rectangle, public sigc::trackable
 {
 public:
 	CueEntry (ArdourCanvas::Item* item, uint64_t cue_index);
 	~CueEntry ();
 
 	ArdourCanvas::Circle*    name_button;
-	ArdourCanvas::Text*      name_text;
+	ArdourCanvas::Text*      jump_text;
 
 	void render (ArdourCanvas::Rect const& area, Cairo::RefPtr<Cairo::Context> context) const;
 
@@ -60,9 +60,14 @@ private:
 	void ui_parameter_changed (std::string const& p);
 	void set_default_colors ();
 
+	void rec_state_changed ();
+
+	PBD::ScopedConnectionList _session_connections;
+
 	uint64_t _cue_idx;
 	double   _poly_size;
 	double   _poly_margin;
+	bool _grabbed;
 };
 
 class CueBoxUI : public ArdourCanvas::Rectangle, public ARDOUR::SessionHandlePtr
@@ -71,10 +76,7 @@ public:
 	CueBoxUI (ArdourCanvas::Item* parent);
 	~CueBoxUI ();
 
-	void trigger_scene (uint64_t n);
-
-	static Glib::RefPtr<Gtk::ActionGroup> trigger_actions;
-	static void                           setup_actions_and_bindings ();
+	void trigger_cue_row (uint64_t n);
 
 	void _size_allocate (ArdourCanvas::Rect const&);
 
@@ -94,11 +96,6 @@ private:
 
 	Gtk::Menu* _context_menu;
 	Gtk::ColorSelectionDialog _color_dialog;
-
-	static Gtkmm2ext::Bindings* bindings;
-
-	static void load_bindings ();
-	static void register_actions ();
 
 	typedef std::vector<ArdourCanvas::Rectangle*> Slots;
 

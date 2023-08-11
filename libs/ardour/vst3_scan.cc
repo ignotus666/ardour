@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2019-2023 Robin Gareus <robin@gareus.org>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -47,6 +47,8 @@
 using namespace std;
 using namespace Steinberg;
 
+#define ARDOUR_VST3_CACHE_FILE_VERSION 2
+
 static const char* fmt_media (Vst::MediaType m) {
 	switch (m) {
 		case Vst::kAudio: return "kAudio";
@@ -84,15 +86,6 @@ count_channels (Vst::IComponent* c, Vst::MediaType media, Vst::BusDirection dir,
 		Vst::BusInfo bus;
 		tresult rv = c->getBusInfo (media, dir, i, bus);
 		if (rv == kResultTrue && bus.busType == type) {
-#if 1
-			if ((type == Vst::kMain && i != 0) || (type == Vst::kAux && i != 1)) {
-				/* For now allow we only support one main bus, and one aux-bus.
-				 * Also an aux-bus by itself is currently N/A.
-				 */
-				PBD::info << "VST3: \\ ignored bus: " << i << " type: " << fmt_type (bus.busType) << " count: " << bus.channelCount << endmsg;
-				continue;
-			}
-#endif
 			if (verbose) {
 				PBD::info << "VST3: - bus: " << i << " count: " << bus.channelCount << endmsg;
 			}
@@ -107,9 +100,7 @@ count_channels (Vst::IComponent* c, Vst::MediaType media, Vst::BusDirection dir,
 			} else {
 				n_channels += bus.channelCount;
 			}
-		} else if (verbose && rv == kResultTrue) {
-			PBD::info << "VST3: \\ ignored bus: " << i << " mismatched type: " << fmt_type (bus.busType) << endmsg;
-		} else {
+		} else if (verbose && rv != kResultTrue) {
 			PBD::info << "VST3: \\ error getting busInfo for bus: " << i << " rv: " << rv << ", got type: " << fmt_type (bus.busType) << endmsg;
 		}
 	}
@@ -117,7 +108,7 @@ count_channels (Vst::IComponent* c, Vst::MediaType media, Vst::BusDirection dir,
 }
 
 static bool
-discover_vst3 (boost::shared_ptr<ARDOUR::VST3PluginModule> m, std::vector<ARDOUR::VST3Info>& rv, bool verbose)
+discover_vst3 (std::shared_ptr<ARDOUR::VST3PluginModule> m, std::vector<ARDOUR::VST3Info>& rv, bool verbose)
 {
 	using namespace std;
 	using namespace ARDOUR;
@@ -316,7 +307,10 @@ ARDOUR::module_path_vst3 (string const& path)
 			/* Ignore *.vst3 dll if it resides inside a bundle with the same name.
 			 * Ardour will instead use the bundle.
 			 */
-			return "";
+#ifndef NDEBUG
+		cerr << "Ignore .vst3 file inside bundle '" << path << "'\n";
+#endif
+			return "-1";
 		}
 #endif
 		module_path = path;
@@ -328,7 +322,7 @@ ARDOUR::module_path_vst3 (string const& path)
 #ifdef __APPLE__
 	/* Check for "Contents/MacOS/" and "Context/Info.plist".
 	 * VST3MacModule calls CFBundleCreate() which handles Info.plist files.
-	 * (on macOS/X the binrary name may differ from the bundle name)
+	 * (on macOS/X the binary name may differ from the bundle name)
 	 */
 	string plist = Glib::build_filename (path, "Contents", "Info.plist");
 	if (Glib::file_test (Glib::path_get_dirname (module_path), Glib::FILE_TEST_IS_DIR) &&
@@ -350,7 +344,11 @@ ARDOUR::module_path_vst3 (string const& path)
 static string
 vst3_info_cache_dir ()
 {
+#if defined __APPLE__ && defined __aarch64__
+	string dir = Glib::build_filename (ARDOUR::user_cache_directory (), "vst-arm64");
+#else
 	string dir = Glib::build_filename (ARDOUR::user_cache_directory (), "vst");
+#endif
 	/* if the directory doesn't exist, try to create it */
 	if (!Glib::file_test (dir, Glib::FILE_TEST_IS_DIR)) {
 		if (g_mkdir (dir.c_str (), 0700)) {
@@ -399,7 +397,25 @@ ARDOUR::vst3_valid_cache_file (std::string const& module_path, bool verbose, boo
 		if (sb_vst.st_mtime < sb_v3i.st_mtime) {
 			/* plugin is older than cache file */
 			if (verbose) {
-				PBD::info << "Cache file is up-to-date." << endmsg;
+				PBD::info << "Cache file timestamp is valid." << endmsg;
+			}
+			/* check file format version */
+			XMLTree tree;
+			if (!tree.read (cache_file)) {
+				if (verbose) {
+					PBD::info << "Cache file is not valid XML." << endmsg;
+				}
+				return "";
+			}
+			int cf_version = 0;
+			if (!tree.root()->get_property ("version", cf_version) || cf_version < ARDOUR_VST3_CACHE_FILE_VERSION) {
+				if (verbose) {
+					PBD::info << "Cache file version is too old." << endmsg;
+				}
+				return "";
+			}
+			if (verbose) {
+				PBD::info << "Cache file is valid and up-to-date." << endmsg;
 			}
 			return cache_file;
 		} else if  (verbose) {
@@ -461,12 +477,12 @@ bool
 ARDOUR::vst3_scan_and_cache (std::string const& module_path, std::string const& bundle_path, boost::function<void (std::string const&, std::string const&, VST3Info const&)> cb, bool verbose)
 {
 	XMLNode* root = new XMLNode ("VST3Cache");
-	root->set_property ("version", 1);
+	root->set_property ("version", ARDOUR_VST3_CACHE_FILE_VERSION);
 	root->set_property ("bundle", bundle_path);
 	root->set_property ("module", module_path);
 
 	try {
-		boost::shared_ptr<VST3PluginModule> m = VST3PluginModule::load (module_path);
+		std::shared_ptr<VST3PluginModule> m = VST3PluginModule::load (module_path);
 		std::vector<VST3Info> nfo;
 		if (!discover_vst3 (m, nfo, verbose)) {
 			delete root;

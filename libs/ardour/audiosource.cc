@@ -116,13 +116,16 @@ AudioSource::AudioSource (Session& s, const XMLNode& node)
 
 AudioSource::~AudioSource ()
 {
-	/* shouldn't happen but make sure we don't leak file descriptors anyway */
-
+#ifndef NDEBUG
+	/* shouldn't happen but make sure we don't leak file descriptors anyway,
+	 * (it can happen with stop-and-forget capture)
+	 */
 	if (peak_leftover_cnt) {
 		cerr << "AudioSource destroyed with leftover peak data pending" << endl;
 	}
+#endif
 
-	if ((-1) != _peakfile_fd) {
+	if (-1 != _peakfile_fd) {
 		close (_peakfile_fd);
 		_peakfile_fd = -1;
 	}
@@ -131,7 +134,7 @@ AudioSource::~AudioSource ()
 }
 
 XMLNode&
-AudioSource::get_state ()
+AudioSource::get_state () const
 {
 	XMLNode& node (Source::get_state());
 
@@ -150,10 +153,14 @@ AudioSource::set_state (const XMLNode& node, int /*version*/)
 }
 
 void
-AudioSource::update_length (timecnt_t const & len)
+AudioSource::update_length (timepos_t const & dur)
 {
-	if (len > _length) {
-		_length = len;
+	assert (_length.time_domain() == dur.time_domain());
+
+	/* audio files cannot get smaller via this mechanism */
+
+	if (dur > _length) {
+		_length = dur;
 	}
 }
 
@@ -188,6 +195,10 @@ AudioSource::peaks_ready (boost::function<void()> doThisWhenReady, ScopedConnect
 void
 AudioSource::touch_peakfile ()
 {
+	if (_flags & NoPeakFile) {
+		return;
+	}
+
 	GStatBuf statbuf;
 
 	if (g_stat (_peakpath.c_str(), &statbuf) != 0 || statbuf.st_size == 0) {
@@ -304,14 +315,21 @@ AudioSource::read (Sample *dst, samplepos_t start, samplecnt_t cnt, int /*channe
 {
 	assert (cnt >= 0);
 
-	Glib::Threads::Mutex::Lock lm (_lock);
+	/* as odd as it may seem, given that this method is used to *read* the
+	 * source, that we would need a write lock here. The problem is that
+	 * the audio file API we use (libsndfile) does not allow concurrent use
+	 * of the same SNDFILE object, even for reading. Consequently, even
+	 * readers must be serialized.
+	 */
+
+	WriterLock lm (_lock);
 	return read_unlocked (dst, start, cnt);
 }
 
 samplecnt_t
 AudioSource::write (Sample *dst, samplecnt_t cnt)
 {
-	Glib::Threads::Mutex::Lock lm (_lock);
+	WriterLock lm (_lock);
 	/* any write makes the file not removable */
 	_flags = Flag (_flags & ~Removable);
 	return write_unlocked (dst, cnt);
@@ -331,7 +349,7 @@ int
 AudioSource::read_peaks_with_fpp (PeakData *peaks, samplecnt_t npeaks, samplepos_t start, samplecnt_t cnt,
 				  double samples_per_visual_peak, samplecnt_t samples_per_file_peak) const
 {
-	Glib::Threads::Mutex::Lock lm (_lock);
+	WriterLock lm (_lock);
 
 #if 0 // DEBUG ONLY
 	/* Bypass peak-file cache, compute peaks using raw data from source */
@@ -648,7 +666,9 @@ AudioSource::read_peaks_with_fpp (PeakData *peaks, samplecnt_t npeaks, samplepos
 			}
 
 			if (zero_fill) {
-				cerr << "Zero fill end of peaks (@ " << read_npeaks << " with " << zero_fill << ")" << endl;
+#ifndef NDEBUG
+				cerr << "Zero fill '" << _name << "' end of peaks (@ " << read_npeaks << " with " << zero_fill << ")" << endl;
+#endif
 				memset (&peak_cache[read_npeaks], 0, sizeof (PeakData) * zero_fill);
 			}
 
@@ -758,7 +778,7 @@ AudioSource::build_peaks_from_scratch ()
 	{
 		/* hold lock while building peaks */
 
-		Glib::Threads::Mutex::Lock lp (_lock);
+		WriterLock lp (_lock);
 
 		if (prepare_for_peakfile_writes ()) {
 			goto out;
@@ -823,8 +843,8 @@ AudioSource::build_peaks_from_scratch ()
 int
 AudioSource::close_peakfile ()
 {
-	Glib::Threads::Mutex::Lock lp (_lock);
-	if (_peakfile_fd >= 0) {
+	WriterLock lp (_lock);
+	if (-1 != _peakfile_fd) {
 		close (_peakfile_fd);
 		_peakfile_fd = -1;
 	}
@@ -838,11 +858,11 @@ AudioSource::close_peakfile ()
 int
 AudioSource::prepare_for_peakfile_writes ()
 {
-	if (_session.deletion_in_progress() || _session.peaks_cleanup_in_progres()) {
+	if (_session.deletion_in_progress() || _session.peaks_cleanup_in_progres() || 0 != (_flags & NoPeakFile)) {
 		return -1;
 	}
 
-	if ((_peakfile_fd = g_open (_peakpath.c_str(), O_CREAT|O_RDWR, 0664)) < 0) {
+	if ((_peakfile_fd = g_open (_peakpath.c_str(), O_CREAT|O_RDWR, 0664)) == -1) {
 		error << string_compose(_("AudioSource: cannot open _peakpath (c) \"%1\" (%2)"), _peakpath, strerror (errno)) << endmsg;
 		return -1;
 	}
@@ -853,7 +873,7 @@ void
 AudioSource::done_with_peakfile_writes (bool done)
 {
 	if (_session.deletion_in_progress() || _session.peaks_cleanup_in_progres()) {
-		if (_peakfile_fd) {
+		if (-1 != _peakfile_fd) {
 			close (_peakfile_fd);
 			_peakfile_fd = -1;
 		}
@@ -864,8 +884,10 @@ AudioSource::done_with_peakfile_writes (bool done)
 		compute_and_write_peaks (0, 0, 0, true, false, _FPP);
 	}
 
-	close (_peakfile_fd);
-	_peakfile_fd = -1;
+	if (-1 != _peakfile_fd) {
+		close (_peakfile_fd);
+		_peakfile_fd = -1;
+	}
 
 	if (done) {
 		Glib::Threads::Mutex::Lock lm (_peaks_ready_lock);
@@ -896,7 +918,7 @@ AudioSource::compute_and_write_peaks (Sample* buf, samplecnt_t first_sample, sam
 	off_t first_peak_byte;
 	boost::scoped_array<Sample> buf2;
 
-	if (_peakfile_fd < 0) {
+	if (-1 == _peakfile_fd) {
 		if (prepare_for_peakfile_writes ()) {
 			return -1;
 		}
@@ -947,7 +969,7 @@ AudioSource::compute_and_write_peaks (Sample* buf, samplecnt_t first_sample, sam
 			goto restart;
 		}
 
-		/* else ... had leftovers, but they immediately preceed the new data, so just
+		/* else ... had leftovers, but they immediately precede the new data, so just
 		   merge them and compute.
 		*/
 
@@ -1075,7 +1097,7 @@ AudioSource::compute_and_write_peaks (Sample* buf, samplecnt_t first_sample, sam
 void
 AudioSource::truncate_peakfile ()
 {
-	if (_peakfile_fd < 0) {
+	if (-1 == _peakfile_fd) {
 		error << string_compose (_("programming error: %1"), "AudioSource::truncate_peakfile() called without open peakfile descriptor")
 		      << endmsg;
 		return;
@@ -1113,7 +1135,7 @@ AudioSource::available_peaks (double zoom_factor) const
 }
 
 void
-AudioSource::mark_streaming_write_completed (const Lock& lock)
+AudioSource::mark_streaming_write_completed (const WriterLock& lock)
 {
 	Glib::Threads::Mutex::Lock lm (_peaks_ready_lock);
 

@@ -157,7 +157,8 @@ private:
 		Gtk::TreeModelColumn<std::string> filesize;
 		Gtk::TreeModelColumn<std::string> smplrate;
 		Gtk::TreeModelColumn<std::string> license;
-		Gtk::TreeModelColumn<bool>        started;
+		Gtk::TreeModelColumn<std::string> tooltip;
+		Gtk::TreeModelColumn<bool>        downloading;
 
 		FreesoundColumns() {
 			add(id);
@@ -167,7 +168,8 @@ private:
 			add(filesize);
 			add(smplrate);
 			add(license);
-			add(started);
+			add(tooltip);
+			add(downloading);
 		}
 	};
 
@@ -181,7 +183,7 @@ private:
 	Gtk::Button freesound_similar_btn;
 
 	void handle_freesound_results(std::string theString);
-
+	std::string freesound_licence_filter();
 public:
 	SoundFileBrowser (std::string title, ARDOUR::Session* _s, bool persistent);
 	virtual ~SoundFileBrowser ();
@@ -204,6 +206,7 @@ public:
 
 	Gtk::Entry freesound_entry;
 	Gtk::ComboBoxText freesound_sort;
+	Gtk::ComboBoxText freesound_licence;
 
 	Gtk::Button freesound_search_btn;
 	Gtk::TreeView freesound_list_view;
@@ -250,7 +253,9 @@ protected:
 	void freesound_search_clicked ();
 	void freesound_more_clicked ();
 	void freesound_similar_clicked ();
+	void freesound_search_params_changed ();
 	int freesound_page;
+	std::string freesound_token; // keep oauth token while ardour is running
 
 	void chooser_file_activated ();
 	std::string freesound_get_audio_file(Gtk::TreeIter iter);
@@ -267,6 +272,16 @@ protected:
 	void on_show();
 	bool on_key_press_event (GdkEventKey*);
 	virtual void do_something(int action);
+
+	enum SortOrder {
+		SelectionOrder,
+		FileName,
+		FileMtime
+	};
+
+	virtual SortOrder sort_order () const {
+		return SelectionOrder;
+	}
 };
 
 class SoundFileChooser : public SoundFileBrowser
@@ -294,6 +309,7 @@ public:
 	void reset (uint32_t selected_audio_tracks, uint32_t selected_midi_tracks);
 
 	Gtk::ComboBoxText action_combo;
+	Gtk::ComboBoxText sort_combo;
 	Gtk::ComboBoxText where_combo;
 	Gtk::ComboBoxText channel_combo;
 	Gtk::ComboBoxText src_combo;
@@ -315,6 +331,7 @@ public:
 
 protected:
 	void on_hide();
+	virtual SortOrder sort_order () const;
 
 private:
 	uint32_t selected_audio_track_cnt;
@@ -324,9 +341,6 @@ private:
 	DispositionMap disposition_map;
 
 	Gtk::Table options;
-	Gtk::VBox block_two;
-	Gtk::VBox block_three;
-	Gtk::VBox block_four;
 
 	bool check_info (const std::vector<std::string>& paths,
 	                 bool& same_size, bool& src_needed, bool& multichannel, bool& must_copy);

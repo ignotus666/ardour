@@ -21,9 +21,9 @@
 #ifndef __gtk_ardour_mono_panner_h__
 #define __gtk_ardour_mono_panner_h__
 
-#include "pbd/signals.h"
+#include <memory>
 
-#include <boost/shared_ptr.hpp>
+#include "pbd/signals.h"
 
 #include "widgets/binding_proxy.h"
 
@@ -40,10 +40,10 @@ namespace PBD {
 class MonoPanner : public PannerInterface
 {
 public:
-	MonoPanner (boost::shared_ptr<ARDOUR::PannerShell>);
+	MonoPanner (std::shared_ptr<ARDOUR::PannerShell>);
 	~MonoPanner ();
 
-	boost::shared_ptr<PBD::Controllable> get_controllable() const { return position_control; }
+	std::shared_ptr<PBD::Controllable> get_controllable() const { return position_control; }
 
 	sigc::signal<void> StartGesture;
 	sigc::signal<void> StopGesture;
@@ -56,16 +56,16 @@ protected:
 	bool on_scroll_event (GdkEventScroll*);
 	bool on_key_press_event (GdkEventKey*);
 
-	boost::weak_ptr<PBD::Controllable> proxy_controllable () const
+	std::weak_ptr<PBD::Controllable> proxy_controllable () const
 	{
-		return boost::weak_ptr<PBD::Controllable> (position_binder.get_controllable());
+		return std::weak_ptr<PBD::Controllable> (position_binder.get_controllable());
 	}
 
 private:
 	PannerEditor* editor ();
-	boost::shared_ptr<ARDOUR::PannerShell> _panner_shell;
+	std::shared_ptr<ARDOUR::PannerShell> _panner_shell;
 
-	boost::shared_ptr<PBD::Controllable> position_control;
+	std::shared_ptr<PBD::Controllable> position_control;
 	PBD::ScopedConnectionList panvalue_connections;
 	PBD::ScopedConnectionList panshell_connections;
 	int drag_start_x;

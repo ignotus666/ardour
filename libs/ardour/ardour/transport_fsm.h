@@ -26,7 +26,7 @@ struct TransportFSM
 	/* All code related to this object is expected to be run synchronously
 	 * and single-threaded from the process callback. It can be re-entrant
 	 * if handling one transport state change queues another state change,
-	 * but that is handled explicitly (see the @param processing member and
+	 * but that is handled explicitly (see the @p processing member and
 	 * its usage).
 	 */
 
@@ -105,12 +105,14 @@ struct TransportFSM
 
 		static void init_pool ();
 
-          private:
-		static Pool* pool;
+	private:
+		static PBD::Pool* pool;
 
 	};
 
 	TransportFSM (TransportAPI& tapi);
+
+	void hard_stop ();
 
 	void start () {
 		init ();
@@ -186,7 +188,7 @@ struct TransportFSM
 	bool forwards() const             { return _direction_state == Forwards; }
 	bool backwards() const             { return _direction_state == Backwards; }
 	bool reversing() const             { return _direction_state == Reversing; }
-	bool will_roll_fowards() const;
+	bool will_roll_forwards() const;
 
 	void enqueue (Event* ev);
 

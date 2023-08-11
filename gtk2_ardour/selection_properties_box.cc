@@ -173,15 +173,12 @@ SelectionPropertiesBox::selection_changed ()
 	_slot_prop_box->hide();
 #endif
 
-	if (selection.empty()) {
-		_header_label.hide();
-	} else  {
-		_header_label.set_text(_("Range Properties (Press ESC to Deselect All)"));
-		_header_label.show();
-	}
+	_header_label.hide();
 
 	if (!selection.time.empty()) {
 		_time_info_box->show();
+		_header_label.set_text(_("Range Properties (Press ESC to Deselect All)"));
+		_header_label.show();
 	}
 
 #if SELECTION_PROPERTIES_BOX_TODO
@@ -215,7 +212,7 @@ SelectionPropertiesBox::selection_changed ()
 		_audio_ops_box->show();
 	}
 
-	boost::shared_ptr<ARDOUR::Region> selected_region = boost::shared_ptr<ARDOUR::Region>();
+	std::shared_ptr<ARDOUR::Region> selected_region = std::shared_ptr<ARDOUR::Region>();
 
 	if (!selection.triggers.empty()) {
 		TriggerSelection ts = selection.triggers;

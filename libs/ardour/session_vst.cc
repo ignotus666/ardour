@@ -75,7 +75,6 @@ intptr_t Session::vst_callback (
 	static VstTimeInfo _timeinfo; // only uses as fallback
 	VstTimeInfo* timeinfo;
 	int32_t newflags = 0;
-	TempoMap::SharedPtr tmap (TempoMap::use());
 
 	if (effect && effect->ptr1) {
 		plug = (VSTPlugin *) (effect->ptr1);
@@ -183,31 +182,32 @@ intptr_t Session::vst_callback (
 		timeinfo->nanoSeconds = g_get_monotonic_time () * 1000;
 
 		if (plug && session) {
+			TempoMap::SharedPtr tmap (TempoMap::fetch());
 			samplepos_t now = plug->transport_sample();
 
 			timeinfo->samplePos = now;
 			timeinfo->sampleRate = session->sample_rate();
 
 			if (value & (kVstTempoValid)) {
-				const Tempo& t (tmap->metric_at (now).tempo());
+				const Tempo& t (tmap->metric_at (timepos_t (now)).tempo());
 				timeinfo->tempo = t.quarter_notes_per_minute ();
 				newflags |= (kVstTempoValid);
 			}
 			if (value & (kVstTimeSigValid)) {
-				const Meter& ms (tmap->metric_at (now).meter());
+				const Meter& ms (tmap->metric_at (timepos_t (now)).meter());
 				timeinfo->timeSigNumerator = ms.divisions_per_bar ();
 				timeinfo->timeSigDenominator = ms.note_value ();
 				newflags |= (kVstTimeSigValid);
 			}
 			if ((value & (kVstPpqPosValid)) || (value & (kVstBarsValid))) {
-				Temporal::BBT_Time bbt;
+				Temporal::BBT_Argument bbt;
 
 				try {
 					bbt = tmap->bbt_at (timepos_t (now));
 					bbt.beats = 1;
 					bbt.ticks = 0;
 					/* exact quarter note */
-					double ppqBar = DoubleableBeats (tmap->quarters_at (bbt)).to_double ();
+					double ppqBar = DoubleableBeats (tmap->quarters_at (BBT_Argument (bbt))).to_double ();
 					/* quarter note at sample position (not rounded to note subdivision) */
 					double ppqPos = DoubleableBeats (tmap->quarters_at_sample (now)).to_double();
 					if (value & (kVstPpqPosValid)) {
@@ -280,7 +280,7 @@ intptr_t Session::vst_callback (
 
 		} else {
 			timeinfo->samplePos = 0;
-			timeinfo->sampleRate = AudioEngine::instance()->sample_rate();
+			timeinfo->sampleRate = TEMPORAL_SAMPLE_RATE;
 		}
 
 		if ((timeinfo->flags & (kVstTransportPlaying | kVstTransportRecording | kVstTransportCycleActive))
@@ -316,7 +316,8 @@ intptr_t Session::vst_callback (
 		SHOW_CALLBACK ("audioMasterTempoAt");
 		// returns tempo (in bpm * 10000) at sample sample location passed in <value>
 		if (session) {
-			const Tempo& t (tmap->metric_at (value).tempo());
+			TempoMap::SharedPtr tmap (TempoMap::fetch());
+			const Tempo& t (tmap->metric_at (timepos_t (value)).tempo());
 			return t.quarter_notes_per_minute() * 1000;
 		} else {
 			return 0;
@@ -520,7 +521,7 @@ intptr_t Session::vst_callback (
 		SHOW_CALLBACK ("audioMasterBeginEdit");
 		// begin of automation session (when mouse down), parameter index in <index>
 		if (plug && plug->plugin_insert ()) {
-			boost::shared_ptr<AutomationControl> ac = plug->plugin_insert ()->automation_control (Evoral::Parameter (PluginAutomation, 0, index));
+			std::shared_ptr<AutomationControl> ac = plug->plugin_insert ()->automation_control (Evoral::Parameter (PluginAutomation, 0, index));
 			if (ac) {
 				ac->start_touch (timepos_t (ac->session().transport_sample()));
 			}
@@ -531,7 +532,7 @@ intptr_t Session::vst_callback (
 		SHOW_CALLBACK ("audioMasterEndEdit");
 		// end of automation session (when mouse up),     parameter index in <index>
 		if (plug && plug->plugin_insert ()) {
-			boost::shared_ptr<AutomationControl> ac = plug->plugin_insert ()->automation_control (Evoral::Parameter (PluginAutomation, 0, index));
+			std::shared_ptr<AutomationControl> ac = plug->plugin_insert ()->automation_control (Evoral::Parameter (PluginAutomation, 0, index));
 			if (ac) {
 				ac->stop_touch (timepos_t (ac->session().transport_sample()));
 			}

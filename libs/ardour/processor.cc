@@ -58,9 +58,9 @@ namespace ARDOUR { class Session; }
 // Always saved as Processor, but may be IOProcessor or Send in legacy sessions
 const string Processor::state_node_name = "Processor";
 
-Processor::Processor(Session& session, const string& name, Temporal::TimeDomain td)
+Processor::Processor(Session& session, const string& name, Temporal::TimeDomainProvider const & tdp)
 	: SessionObject(session, name)
-	, Automatable (session, td)
+	, Automatable (session, tdp)
 	, _pending_active(false)
 	, _active(false)
 	, _next_ab_is_active(false)
@@ -82,7 +82,7 @@ Processor::Processor(Session& session, const string& name, Temporal::TimeDomain 
 Processor::Processor (const Processor& other)
 	: Evoral::ControlSet (other)
 	, SessionObject (other.session(), other.name())
-	, Automatable (other.session(), other.time_domain())
+	, Automatable (other.session(), other)
 	, Latent (other)
 	, _pending_active(other._pending_active)
 	, _active(other._active)
@@ -108,7 +108,7 @@ Processor::~Processor ()
 }
 
 XMLNode&
-Processor::get_state (void)
+Processor::get_state () const
 {
 	return state ();
 }
@@ -128,7 +128,7 @@ Processor::get_state (void)
 */
 
 XMLNode&
-Processor::state ()
+Processor::state () const
 {
 	XMLNode* node = new XMLNode (state_node_name);
 

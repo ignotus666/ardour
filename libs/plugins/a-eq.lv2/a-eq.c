@@ -35,7 +35,11 @@
 #define isfinite_local isfinite
 #endif
 
-#include "lv2/lv2plug.in/ns/lv2core/lv2.h"
+#ifdef HAVE_LV2_1_18_6
+#include <lv2/core/lv2.h>
+#else
+#include <lv2/lv2plug.in/ns/lv2core/lv2.h>
+#endif
 
 #ifdef LV2_EXTENDED
 #include <cairo/cairo.h>
@@ -455,6 +459,7 @@ run(LV2_Handle instance, uint32_t n_samples)
 #endif
 }
 
+#ifdef LV2_EXTENDED
 static double
 calc_peq(Aeq* self, int i, double omega) {
 	double complex H = 0.0;
@@ -513,7 +518,6 @@ calc_highshelf(Aeq* self, double omega) {
 	return cabs(H);
 }
 
-#ifdef LV2_EXTENDED
 static float
 eq_curve (Aeq* self, float f) {
 	double response = 1.0;

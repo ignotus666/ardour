@@ -50,6 +50,9 @@ MidiPortManager::~MidiPortManager ()
 	if (_midi_clock_output_port) {
 		AudioEngine::instance()->unregister_port (_midi_clock_output_port);
 	}
+	if (_trigger_input_port) {
+		AudioEngine::instance()->unregister_port (_midi_clock_output_port);
+	}
 
 }
 
@@ -69,29 +72,33 @@ MidiPortManager::create_ports ()
 	_scene_out = AudioEngine::instance()->register_output_port (DataType::MIDI, X_("Scene out"), true);
 
 	_vkbd_out = AudioEngine::instance()->register_output_port (DataType::MIDI, X_("x-virtual-keyboard"), true, IsTerminal);
-	boost::dynamic_pointer_cast<AsyncMIDIPort>(_vkbd_out)->set_flush_at_cycle_start (true);
+	std::dynamic_pointer_cast<AsyncMIDIPort>(_vkbd_out)->set_flush_at_cycle_start (true);
 
 	/* Now register ports used to send positional sync data (MTC and MIDI Clock) */
 
-	boost::shared_ptr<ARDOUR::Port> p;
+	std::shared_ptr<ARDOUR::Port> p;
 
 	p = AudioEngine::instance()->register_output_port (DataType::MIDI, X_("MTC out"));
-	_mtc_output_port= boost::dynamic_pointer_cast<MidiPort> (p);
+	_mtc_output_port= std::dynamic_pointer_cast<MidiPort> (p);
 
 	p = AudioEngine::instance()->register_output_port (DataType::MIDI, X_("MIDI Clock out"), false, TransportGenerator);
-	_midi_clock_output_port= boost::dynamic_pointer_cast<MidiPort> (p);
+	_midi_clock_output_port= std::dynamic_pointer_cast<MidiPort> (p);
+
+	p = AudioEngine::instance()->register_input_port (DataType::MIDI, X_("Cue Control in"));
+	_trigger_input_port= std::dynamic_pointer_cast<MidiPort> (p);
 }
 
 void
 MidiPortManager::set_midi_port_states (const XMLNodeList&nodes)
 {
 	XMLProperty const * prop;
-	typedef map<std::string,boost::shared_ptr<Port> > PortMap;
+	typedef map<std::string,std::shared_ptr<Port> > PortMap;
 	PortMap ports;
 	const int version = 0;
 
 	ports.insert (make_pair (_mtc_output_port->name(), _mtc_output_port));
 	ports.insert (make_pair (_midi_clock_output_port->name(), _midi_clock_output_port));
+	ports.insert (make_pair (_trigger_input_port->name(), _trigger_input_port));
 	ports.insert (make_pair (_mmc_in->name(), _mmc_in));
 	ports.insert (make_pair (_mmc_out->name(), _mmc_out));
 	ports.insert (make_pair (_vkbd_out->name(), _vkbd_out));
@@ -115,12 +122,13 @@ MidiPortManager::set_midi_port_states (const XMLNodeList&nodes)
 list<XMLNode*>
 MidiPortManager::get_midi_port_states () const
 {
-	typedef map<std::string,boost::shared_ptr<Port> > PortMap;
+	typedef map<std::string,std::shared_ptr<Port> > PortMap;
 	PortMap ports;
 	list<XMLNode*> s;
 
 	ports.insert (make_pair (_mtc_output_port->name(), _mtc_output_port));
 	ports.insert (make_pair (_midi_clock_output_port->name(), _midi_clock_output_port));
+	ports.insert (make_pair (_trigger_input_port->name(), _trigger_input_port));
 	ports.insert (make_pair (_mmc_in->name(), _mmc_in));
 	ports.insert (make_pair (_mmc_out->name(), _mmc_out));
 	ports.insert (make_pair (_vkbd_out->name(), _vkbd_out));
@@ -134,20 +142,21 @@ MidiPortManager::get_midi_port_states () const
 	return s;
 }
 
-boost::shared_ptr<AsyncMIDIPort>
+std::shared_ptr<AsyncMIDIPort>
 MidiPortManager::vkbd_output_port () const
 {
-	return boost::dynamic_pointer_cast<AsyncMIDIPort> (_vkbd_out);
+	return std::dynamic_pointer_cast<AsyncMIDIPort> (_vkbd_out);
 }
 
 void
 MidiPortManager::set_public_latency (bool playback)
 {
-	typedef std::list<boost::shared_ptr<Port> > PortList;
+	typedef std::list<std::shared_ptr<Port> > PortList;
 	PortList pl;
 
 	pl.push_back (_mtc_output_port);
 	pl.push_back (_midi_clock_output_port);
+	pl.push_back (_trigger_input_port);
 	pl.push_back (_mmc_in);
 	pl.push_back (_mmc_out);
 	pl.push_back (_vkbd_out);

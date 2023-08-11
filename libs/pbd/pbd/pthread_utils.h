@@ -58,7 +58,7 @@
 # define PBD_RT_PRI_MIDI pbd_pthread_priority (THREAD_MIDI)
 # define PBD_RT_PRI_PROC pbd_pthread_priority (THREAD_PROC)
 
-LIBPBD_API int  pthread_create_and_store (std::string name, pthread_t  *thread, void * (*start_routine)(void *), void * arg);
+LIBPBD_API int  pthread_create_and_store (std::string name, pthread_t  *thread, void * (*start_routine)(void *), void * arg, uint32_t stacklimit = 0x80000 /*512kB*/);
 LIBPBD_API void pthread_cancel_one (pthread_t thread);
 LIBPBD_API void pthread_cancel_all ();
 LIBPBD_API void pthread_kill_all (int signum);
@@ -93,6 +93,26 @@ LIBPBD_API bool pbd_mach_set_realtime_policy (pthread_t thread_id, double period
 namespace PBD {
 	LIBPBD_API extern void notify_event_loops_about_thread_creation (pthread_t, const std::string&, int requests = 256);
 	LIBPBD_API extern PBD::Signal3<void,pthread_t,std::string,uint32_t> ThreadCreatedWithRequestSize;
+
+	class LIBPBD_API Thread {
+		public:
+		static Thread* create (boost::function<void ()> const&, std::string const& name = "");
+		static Thread* self ();
+		void join ();
+		bool caller_is_self () const;
+
+		private:
+		Thread ();
+		Thread (boost::function<void ()> const&, std::string const& name = "");
+		Thread (Thread const&); /* precent copy-construction */
+
+		static void* _run (void*);
+
+		pthread_t                _t;
+		std::string              _name;
+		boost::function<void ()> _slot;
+		bool                     _joinable;
+	};
 }
 
 /* pthread-w32 does not support realtime scheduling

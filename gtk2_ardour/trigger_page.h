@@ -38,15 +38,17 @@
 #include "midi_region_operations_box.h"
 #include "midi_region_properties_box.h"
 #include "midi_trigger_properties_box.h"
+#include "route_processor_selection.h"
 #include "slot_properties_box.h"
 #include "trigger_clip_picker.h"
 #include "trigger_region_list.h"
+#include "trigger_route_list.h"
 #include "trigger_source_list.h"
 #include "trigger_master.h"
 
 class TriggerStrip;
 
-class TriggerPage : public ArdourWidgets::Tabbable, public ARDOUR::SessionHandlePtr, public PBD::ScopedConnectionList
+class TriggerPage : public ArdourWidgets::Tabbable, public ARDOUR::SessionHandlePtr, public PBD::ScopedConnectionList, public AxisViewProvider
 {
 public:
 	TriggerPage ();
@@ -54,10 +56,12 @@ public:
 
 	void set_session (ARDOUR::Session*);
 
-	XMLNode& get_state ();
+	XMLNode& get_state () const;
 	int      set_state (const XMLNode&, int /* version */);
 
 	Gtk::Window* use_own_window (bool and_fill_it);
+
+	RouteProcessorSelection& selection() { return _selection; }
 
 private:
 	void load_bindings ();
@@ -70,18 +74,27 @@ private:
 	void add_routes (ARDOUR::RouteList&);
 	void remove_route (TriggerStrip*);
 
+	void clear_selected_slot ();
+
 	void redisplay_track_list ();
 	void pi_property_changed (PBD::PropertyChange const&);
-	void stripable_property_changed (PBD::PropertyChange const&, boost::weak_ptr<ARDOUR::Stripable>);
+	void stripable_property_changed (PBD::PropertyChange const&, std::weak_ptr<ARDOUR::Stripable>);
+
+	void rec_state_changed ();
+	void rec_state_clicked ();
 
 	void add_sidebar_page (std::string const&, Gtk::Widget&);
 
+	bool strip_button_release_event (GdkEventButton*, TriggerStrip*);
 	bool no_strip_button_event (GdkEventButton*);
 	bool no_strip_drag_motion (Glib::RefPtr<Gdk::DragContext> const&, int, int, guint);
 	void no_strip_drag_data_received (Glib::RefPtr<Gdk::DragContext> const&, int, int, Gtk::SelectionData const&, guint, guint);
 
 	bool idle_drop_paths (std::vector<std::string>);
 	void drop_paths_part_two (std::vector<std::string>);
+
+	AxisView* axis_view_by_stripable (std::shared_ptr<ARDOUR::Stripable>) const;
+	AxisView* axis_view_by_control (std::shared_ptr<ARDOUR::AutomationControl>) const;
 
 	void                      selection_changed ();
 	PBD::ScopedConnectionList editor_connections;
@@ -93,7 +106,6 @@ private:
 	Gtkmm2ext::Bindings* bindings;
 	Gtk::VBox            _content;
 
-	ArdourWidgets::VPane _pane;
 	ArdourWidgets::HPane _pane_upper;
 	Gtk::HBox            _strip_group_box;
 	Gtk::ScrolledWindow  _strip_scroller;
@@ -107,6 +119,7 @@ private:
 	TriggerClipPicker    _trigger_clip_picker;
 	TriggerSourceList    _trigger_source_list;
 	TriggerRegionList    _trigger_region_list;
+	TriggerRouteList     _trigger_route_list;
 
 	CueBoxWidget       _cue_box;
 	FittedCanvasWidget _master_widget;
@@ -125,6 +138,7 @@ private:
 	MidiClipEditorBox        _midi_trim_box;
 #endif
 
+	RouteProcessorSelection  _selection;
 	std::list<TriggerStrip*> _strips;
 	sigc::connection         _fast_screen_update_connection;
 };

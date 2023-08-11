@@ -25,12 +25,12 @@ using namespace ARDOUR;
 using namespace ArdourSurface::FP_NAMESPACE;
 
 static ControlProtocol*
-new_faderport2_midi_protocol (ControlProtocolDescriptor* /*descriptor*/, Session* s)
+new_faderport2_midi_protocol (Session* s)
 {
 	FaderPort8* fp;
 
 	try {
-		fp =  new FaderPort8 (*s);
+		fp = new FaderPort8 (*s);
 	} catch (failed_constructor& err) {
 		return 0;
 	}
@@ -44,37 +44,31 @@ new_faderport2_midi_protocol (ControlProtocolDescriptor* /*descriptor*/, Session
 }
 
 static void
-delete_faderport2_midi_protocol (ControlProtocolDescriptor* /*descriptor*/, ControlProtocol* cp)
+delete_faderport2_midi_protocol (ControlProtocol* cp)
 {
 	delete cp;
 }
 
 static bool
-probe_faderport2_midi_protocol (ControlProtocolDescriptor* /*descriptor*/)
+probe_faderport2_midi_protocol ()
 {
-	return FaderPort8::probe ();
-}
-
-static void*
-faderport2_request_buffer_factory (uint32_t num_requests)
-{
-	return FaderPort8::request_factory (num_requests);
+	std::string i, o;
+	return FaderPort8::probe (i, o);
 }
 
 static ControlProtocolDescriptor faderport2_midi_descriptor = {
-	/*name :              */    "PreSonus FaderPort2",
-	/*id :                */    "uri://ardour.org/surfaces/faderport2:0",
-	/*ptr :               */    0,
-	/*module :            */    0,
-	/*mandatory :         */    0,
-	/*supports_feedback : */    true,
-	/*probe :             */    probe_faderport2_midi_protocol,
-	/*initialize :        */    new_faderport2_midi_protocol,
-	/*destroy :           */    delete_faderport2_midi_protocol,
-	/*request_buffer_factory */ faderport2_request_buffer_factory
+	/* name       */ "PreSonus FaderPort2",
+	/* id         */ "uri://ardour.org/surfaces/faderport2:0",
+	/* module     */ 0,
+	/* available  */ 0,
+	/* probe_port */ probe_faderport2_midi_protocol,
+	/* match usb  */ 0,
+	/* initialize */ new_faderport2_midi_protocol,
+	/* destroy    */ delete_faderport2_midi_protocol,
 };
 
 extern "C" ARDOURSURFACE_API
-ControlProtocolDescriptor* protocol_descriptor () {
+ControlProtocolDescriptor* protocol_descriptor ()
+{
 	return &faderport2_midi_descriptor;
 }

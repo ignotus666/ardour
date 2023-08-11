@@ -3,7 +3,7 @@
  * Copyright (C) 2008-2009 David Robillard <d@drobilla.net>
  * Copyright (C) 2008-2011 Carl Hetherington <carl@carlh.net>
  * Copyright (C) 1998-2015 Paul Davis <paul@linuxaudiosystems.com>
- * Copyright (C) 2014-2015 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2014-2022 Robin Gareus <robin@gareus.org>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,40 +20,44 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+#include <cassert>
+#include <cstdio>
 #include <cstdlib>
 #include <vector>
-#include <cstdlib>
-#include <cassert>
 
+#include "pbd/compose.h"
+#include "pbd/debug.h"
+#include "pbd/error.h"
 #include "pbd/pool.h"
 #include "pbd/pthread_utils.h"
-#include "pbd/error.h"
-#include "pbd/debug.h"
-#include "pbd/compose.h"
+#include "pbd/stacktrace.h"
 
 using namespace std;
 using namespace PBD;
 
-Pool::Pool (string n, unsigned long item_size, unsigned long nitems)
+Pool::Pool (string n, unsigned long item_size, unsigned long nitems, PoolDumpCallback cb)
 	: free_list (nitems)
 	, _name (n)
+	, _dump (cb)
 #ifndef NDEBUG
 	, max_usage (0)
 #endif
 {
 	_name = n;
+	/* adjust to actual size (power-of-two) */
+	nitems = free_list.bufsize ();
 
 	/* since some overloaded ::operator new() might use this,
 	   its important that we use a "lower level" allocator to
 	   get more space.
 	*/
 
-	block = malloc (nitems * item_size);
+	_block = malloc (nitems * item_size);
 
-	void **ptrlist = (void **) malloc (sizeof (void *)  * nitems);
+	void** ptrlist = (void**)calloc (nitems, sizeof (void*));
 
 	for (unsigned long i = 0; i < nitems; i++) {
-		ptrlist[i] = static_cast<void *> (static_cast<char*>(block) + (i * item_size));
+		ptrlist[i] = static_cast<void*> (static_cast<char*> (_block) + (i * item_size));
 	}
 
 	free_list.write (ptrlist, nitems);
@@ -62,17 +66,17 @@ Pool::Pool (string n, unsigned long item_size, unsigned long nitems)
 
 Pool::~Pool ()
 {
-	DEBUG_TRACE (DEBUG::Pool, string_compose ("Pool: '%1' max: %2 / %3\n", name(), max_usage, total()));
-	free (block);
+	DEBUG_TRACE (DEBUG::Pool, string_compose ("Pool: '%1' max: %2 / %3\n", name (), max_usage, total ()));
+	free (_block);
 }
 
 /** Allocate an item's worth of memory in the Pool by taking one from the free list.
  *  @return Pointer to free item.
  */
-void *
+void*
 Pool::alloc ()
 {
-	void *ptr;
+	void* ptr;
 
 #ifndef NDEBUG
 	if (used () > max_usage) {
@@ -81,8 +85,17 @@ Pool::alloc ()
 #endif
 
 	if (free_list.read (&ptr, 1) < 1) {
+		PBD::stacktrace (std::cerr, 20);
+		if (_dump) {
+			std::cout << "RingBuffer write-idx: " << free_list.get_write_idx () << " read-idx: " <<  free_list.get_read_idx () << '\n';
+			void** _block = free_list.buffer ();
+			for (size_t i = 0; i < free_list.bufsize (); ++i) {
+				_dump (i, _block[i]);
+			}
+		}
+
 		fatal << "CRITICAL: " << _name << " POOL OUT OF MEMORY - RECOMPILE WITH LARGER SIZE!!" << endmsg;
-		abort(); /*NOTREACHED*/
+		abort (); /*NOTREACHED*/
 		return 0;
 	} else {
 		return ptr;
@@ -91,7 +104,7 @@ Pool::alloc ()
 
 /** Release an item's memory by writing its location to the free list */
 void
-Pool::release (void *ptr)
+Pool::release (void* ptr)
 {
 	free_list.write (&ptr, 1);
 }
@@ -119,10 +132,8 @@ SingleAllocMultiReleasePool::~SingleAllocMultiReleasePool ()
 void*
 MultiAllocSingleReleasePool::alloc ()
 {
-	void *ptr;
 	Glib::Threads::Mutex::Lock guard (m_lock);
-	ptr = Pool::alloc ();
-	return ptr;
+	return Pool::alloc ();
 }
 
 void
@@ -156,7 +167,7 @@ free_per_thread_pool (void* ptr)
 	CrossThreadPool* cp = static_cast<CrossThreadPool*> (ptr);
 	assert (cp);
 
-	if (cp->empty()) {
+	if (cp->empty ()) {
 		/* This CrossThreadPool is already empty, and the thread is finishing so nothing
 		 * more can be added to it.  We can just delete the pool.
 		 */
@@ -166,7 +177,7 @@ free_per_thread_pool (void* ptr)
 		 * which another thread may yet read, so we can't delete the pool just yet.
 		 * Put it in the trash and hope someone deals with it at some stage.
 		 */
-		cp->parent()->add_to_trash (cp);
+		cp->parent ()->add_to_trash (cp);
 	}
 }
 
@@ -182,9 +193,9 @@ PerThreadPool::PerThreadPool ()
  *  @param nitems Number of items in the pool.
  */
 void
-PerThreadPool::create_per_thread_pool (string n, unsigned long isize, unsigned long nitems)
+PerThreadPool::create_per_thread_pool (string n, unsigned long isize, unsigned long nitems, PoolDumpCallback cb)
 {
-	_key.set (new CrossThreadPool (n, isize, nitems, this));
+	_key.set (new CrossThreadPool (n, isize, nitems, this, cb));
 }
 
 /** @return True if CrossThreadPool for the current thread exists,
@@ -193,13 +204,12 @@ PerThreadPool::create_per_thread_pool (string n, unsigned long isize, unsigned l
 bool
 PerThreadPool::has_per_thread_pool ()
 {
-	CrossThreadPool* p = _key.get();
+	CrossThreadPool* p = _key.get ();
 	if (p) {
 		return true;
 	}
 	return false;
 }
-
 
 /** @return CrossThreadPool for the current thread, which must previously have been created by
  *  calling create_per_thread_pool in the current thread.
@@ -207,10 +217,10 @@ PerThreadPool::has_per_thread_pool ()
 CrossThreadPool*
 PerThreadPool::per_thread_pool (bool must_exist)
 {
-	CrossThreadPool* p = _key.get();
+	CrossThreadPool* p = _key.get ();
 	if (!p && must_exist) {
-		fatal << "programming error: no per-thread pool \"" << _name << "\" for thread " << pthread_name() << endmsg;
-		abort(); /*NOTREACHED*/
+		fatal << "programming error: no per-thread pool \"" << _name << "\" for thread " << pthread_name () << endmsg;
+		abort (); /*NOTREACHED*/
 	}
 	return p;
 }
@@ -229,7 +239,7 @@ PerThreadPool::add_to_trash (CrossThreadPool* p)
 	Glib::Threads::Mutex::Lock lm (_trash_mutex);
 
 	if (!_trash) {
-		warning << "Pool " << p->name() << " has no trash collector; a memory leak has therefore occurred" << endmsg;
+		warning << "Pool " << p->name () << " has no trash collector; a memory leak has therefore occurred" << endmsg;
 		return;
 	}
 
@@ -240,16 +250,15 @@ PerThreadPool::add_to_trash (CrossThreadPool* p)
 	_trash->write (&p, 1);
 }
 
-CrossThreadPool::CrossThreadPool  (string n, unsigned long isize, unsigned long nitems, PerThreadPool* p)
-	: Pool (n, isize, nitems)
+CrossThreadPool::CrossThreadPool (string n, unsigned long isize, unsigned long nitems, PerThreadPool* p, PoolDumpCallback cb)
+	: Pool (n, isize, nitems, cb)
 	, pending (nitems)
 	, _parent (p)
 {
-
 }
 
 void
-CrossThreadPool::flush_pending_with_ev (void *ptr)
+CrossThreadPool::flush_pending_with_ev (void* ptr)
 {
 	push (ptr);
 	flush_pending ();
@@ -259,19 +268,19 @@ void
 CrossThreadPool::flush_pending ()
 {
 	void* ptr;
-	bool did_release = false;
+	bool  did_release = false;
 
-	DEBUG_TRACE (DEBUG::Pool, string_compose ("%1 %2 has %3 pending free entries waiting, status size %4 free %5 used %6\n", pthread_name(), name(), pending.read_space(),
-	                                          total(), available(), used()));
+	DEBUG_TRACE (DEBUG::Pool, string_compose ("%1 %2 has %3 pending free entries waiting, status size %4 free %5 used %6\n", pthread_name (), name (), pending.read_space (),
+	                                          total (), available (), used ()));
 
 	while (pending.read (&ptr, 1) == 1) {
-		DEBUG_TRACE (DEBUG::Pool, string_compose ("%1 %2 pushes back a pending free list entry before allocating\n", pthread_name(), name()));
+		DEBUG_TRACE (DEBUG::Pool, string_compose ("%1 %2 pushes back a pending free list entry before allocating\n", pthread_name (), name ()));
 		free_list.write (&ptr, 1);
 		did_release = true;
 	}
 
 	if (did_release) {
-		DEBUG_TRACE (DEBUG::Pool, string_compose ("Pool size: %1 free %2 used %3 pending now %4\n", total(), available(), used(), pending_size()));
+		DEBUG_TRACE (DEBUG::Pool, string_compose ("Pool size: %1 free %2 used %3 pending now %4\n", total (), available (), used (), pending_size ()));
 	}
 }
 
@@ -294,6 +303,5 @@ CrossThreadPool::push (void* t)
 bool
 CrossThreadPool::empty ()
 {
-	return (free_list.write_space() == pending.read_space());
+	return (free_list.write_space () == pending.read_space ());
 }
-

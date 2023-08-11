@@ -69,7 +69,7 @@ StepButton::compute_bounding_box () const
 
 	/* Item::bounding_box() will add children */
 
-	bb_clean ();
+	set_bbox_clean ();
 }
 
 #define CORNER_RADIUS 5
@@ -107,7 +107,7 @@ StepButton::set_size (double w, double h)
 	width = w;
 	height = h;
 
-	_bounding_box_dirty = true;
+	set_bbox_dirty ();
 
 	create_patterns ();
 

@@ -43,7 +43,6 @@
 #include "trigger_master.h"
 #include "trigger_ui.h"
 #include "ui_config.h"
-#include "utils.h"
 
 #include "pbd/i18n.h"
 
@@ -89,7 +88,7 @@ Loopster::render (ArdourCanvas::Rect const& area, Cairo::RefPtr<Cairo::Context> 
 	}
 
 	context->set_identity_matrix ();
-	context->translate (self.x0, self.y0 - 0.5);
+	context->translate (self.x0, self.y0);
 
 	float size = _rect.height ();
 
@@ -114,73 +113,6 @@ Loopster::render (ArdourCanvas::Rect const& area, Cairo::RefPtr<Cairo::Context> 
 	context->set_identity_matrix ();
 }
 
-class PassThru : public ArdourCanvas::Rectangle
-{
-public:
-	PassThru (ArdourCanvas::Item* canvas);
-
-	void render (ArdourCanvas::Rect const& area, Cairo::RefPtr<Cairo::Context> context) const;
-	void set_enabled (bool e);
-
-private:
-	bool _enabled;
-};
-
-PassThru::PassThru (Item* parent)
-	: ArdourCanvas::Rectangle (parent)
-	, _enabled (false)
-{
-}
-
-void
-PassThru::set_enabled (bool e)
-{
-	if (e != _enabled) {
-		_enabled = e;
-		redraw ();
-	}
-}
-
-void
-PassThru::render (ArdourCanvas::Rect const& area, Cairo::RefPtr<Cairo::Context> context) const
-{
-	/* Note that item_to_window() already takes _position into account (as
-	 * part of item_to_canvas()
-	 */
-	ArdourCanvas::Rect       self (item_to_window (_rect));
-	ArdourCanvas::Rect const draw = self.intersection (area);
-
-	if (!draw) {
-		return;
-	}
-
-	context->set_identity_matrix ();
-	context->translate (self.x0, self.y0 - 0.5);
-
-	float size = _rect.height ();
-
-	const double scale = UIConfiguration::instance ().get_ui_scale ();
-
-	if (_enabled) {
-		/* outer white circle */
-		set_source_rgba (context, rgba_to_color (1, 1, 1, 1));
-		context->arc (size / 2, size / 2, size / 2 - 3 * scale, 0, 2 * M_PI);
-		context->fill ();
-
-		/* black circle */
-		set_source_rgba (context, rgba_to_color (0, 0, 0, 1));
-		context->arc (size / 2, size / 2, size / 2 - 5 * scale, 0, 2 * M_PI);
-		context->fill ();
-
-		/* inner white circle */
-		set_source_rgba (context, rgba_to_color (1, 1, 1, 1));
-		context->arc (size / 2, size / 2, size / 2 - 7 * scale, 0, 2 * M_PI);
-		context->fill ();
-	}
-
-	context->set_identity_matrix ();
-}
-
 TriggerMaster::TriggerMaster (Item* parent)
 	: ArdourCanvas::Rectangle (parent)
 	, _context_menu (0)
@@ -192,12 +124,9 @@ TriggerMaster::TriggerMaster (Item* parent)
 
 	Event.connect (sigc::mem_fun (*this, &TriggerMaster::event_handler));
 
-	name_text = new Text (this);
-	name_text->set ("");
-	name_text->set_ignore_events (false);
-
 	_loopster = new Loopster (this);
-	_passthru = new PassThru (this);
+
+	set_tooltip (_("Click to stop all clips in this track\nRight-click to select properties for all clips in this track"));
 
 #if 0 /* XXX trigger changes */
 	_triggerbox->PropertyChanged.connect (_trigger_prop_connection, MISSING_INVALIDATOR, boost::bind (&TriggerMaster::prop_change, this, _1), gui_context());
@@ -224,7 +153,7 @@ TriggerMaster::~TriggerMaster ()
 }
 
 void
-TriggerMaster::set_triggerbox (boost::shared_ptr<ARDOUR::TriggerBox> t)
+TriggerMaster::set_triggerbox (std::shared_ptr<ARDOUR::TriggerBox> t)
 {
 	_triggerbox = t;
 }
@@ -254,6 +183,51 @@ TriggerMaster::render (ArdourCanvas::Rect const& area, Cairo::RefPtr<Cairo::Cont
 	}
 
 	render_children (area, context);
+
+	Glib::RefPtr<Pango::Layout> layout = Pango::Layout::create (context);
+
+	/* MIDI triggers get a 'note' symbol */
+	if (_triggerbox && _triggerbox->data_type () == ARDOUR::DataType::MIDI) {
+		int font_size = 14 * scale;
+		char font_name[128];
+		snprintf (font_name, sizeof (font_name), "ArdourSans %d", font_size);
+		Pango::FontDescription pfd (font_name);
+		layout->set_font_description (pfd);
+		layout->set_text (u8"\u266b");
+		int tw, th;
+		layout->get_pixel_size (tw, th);
+		context->move_to (width / 2, height / 2);
+		context->rel_move_to (-tw / 2, -2*scale -th / 2);
+		Gtkmm2ext::set_source_rgba (context, UIConfiguration::instance ().color ("neutral:foreground"));
+		layout->show_in_cairo_context (context);
+	}
+
+	int font_size = 8 * scale;
+	char font_name[128];
+	snprintf (font_name, sizeof (font_name), "ArdourSans %d", font_size);
+	Pango::FontDescription pfd (font_name);
+
+	if (play_text != "") {
+		layout->set_font_description (pfd);
+		layout->set_text (play_text);
+		int tw, th;
+		layout->get_pixel_size (tw, th);
+		context->move_to ( height + 4*scale, height / 2);  //left side, but make room for loopster
+		context->rel_move_to ( 0, -1*scale -th / 2);  //vertically centered text
+		Gtkmm2ext::set_source_rgba (context, UIConfiguration::instance ().color ("neutral:foreground"));
+		layout->show_in_cairo_context (context);
+	}
+
+	if (loop_text != "") {
+		layout->set_font_description (pfd);
+		layout->set_text (loop_text);
+		int tw, th;
+		layout->get_pixel_size (tw, th);
+		context->move_to ( width-4*scale, height / 2);  //right side
+		context->rel_move_to ( -tw, -1*scale -th / 2);  //right justified, vertically centered text
+		Gtkmm2ext::set_source_rgba (context, UIConfiguration::instance ().color ("neutral:foreground"));
+		layout->show_in_cairo_context (context);
+	}
 
 	if (true) {
 		/* drop-shadow at top */
@@ -293,15 +267,10 @@ TriggerMaster::event_handler (GdkEvent* ev)
 				} else {
 					_triggerbox->stop_all_quantized ();
 				}
-
-
-
-				return true;
 			}
 			break;
 		case GDK_ENTER_NOTIFY:
 			if (ev->crossing.detail != GDK_NOTIFY_INFERIOR) {
-				name_text->set_color (UIConfiguration::instance ().color ("neutral:foregroundest"));
 				set_fill_color (HSV (fill_color ()).lighter (0.15).color ());
 			}
 			redraw ();
@@ -316,13 +285,12 @@ TriggerMaster::event_handler (GdkEvent* ev)
 			switch (ev->button.button) {
 				case 3:
 					context_menu ();
-					return true;
 			}
 		default:
 			break;
 	}
 
-	return false;
+	return true;
 }
 
 void
@@ -344,12 +312,8 @@ TriggerMaster::context_menu ()
 	fitems.push_back (MenuElem (TriggerUI::follow_action_to_string(FollowAction (FollowAction::None)), sigc::bind (sigc::mem_fun (*this, &TriggerMaster::set_all_follow_action), FollowAction (FollowAction::None))));
 	fitems.push_back (MenuElem (TriggerUI::follow_action_to_string(FollowAction (FollowAction::Stop)), sigc::bind (sigc::mem_fun (*this, &TriggerMaster::set_all_follow_action), FollowAction (FollowAction::Stop))));
 	fitems.push_back (MenuElem (TriggerUI::follow_action_to_string(FollowAction (FollowAction::Again)), sigc::bind (sigc::mem_fun (*this, &TriggerMaster::set_all_follow_action), FollowAction (FollowAction::Again))));
-	fitems.push_back (MenuElem (TriggerUI::follow_action_to_string(FollowAction (FollowAction::PrevTrigger)), sigc::bind (sigc::mem_fun (*this, &TriggerMaster::set_all_follow_action), FollowAction (FollowAction::PrevTrigger))));
-	fitems.push_back (MenuElem (TriggerUI::follow_action_to_string(FollowAction (FollowAction::NextTrigger)), sigc::bind (sigc::mem_fun (*this, &TriggerMaster::set_all_follow_action), FollowAction (FollowAction::NextTrigger))));
 	fitems.push_back (MenuElem (TriggerUI::follow_action_to_string(FollowAction (FollowAction::ForwardTrigger)), sigc::bind (sigc::mem_fun (*this, &TriggerMaster::set_all_follow_action), FollowAction (FollowAction::ForwardTrigger))));
 	fitems.push_back (MenuElem (TriggerUI::follow_action_to_string(FollowAction (FollowAction::ReverseTrigger)), sigc::bind (sigc::mem_fun (*this, &TriggerMaster::set_all_follow_action), FollowAction (FollowAction::ReverseTrigger))));
-	fitems.push_back (MenuElem (TriggerUI::follow_action_to_string(FollowAction (FollowAction::AnyTrigger)), sigc::bind (sigc::mem_fun (*this, &TriggerMaster::set_all_follow_action), FollowAction (FollowAction::AnyTrigger))));
-	fitems.push_back (MenuElem (TriggerUI::follow_action_to_string(FollowAction (FollowAction::OtherTrigger)), sigc::bind (sigc::mem_fun (*this, &TriggerMaster::set_all_follow_action), FollowAction (FollowAction::OtherTrigger))));
 
 	Menu*     launch_menu = manage (new Menu);
 	MenuList& litems      = launch_menu->items ();
@@ -386,17 +350,6 @@ TriggerMaster::context_menu ()
 	b = BBT_Offset (-1, 0, 0);
 	qitems.push_back (MenuElem (TriggerUI::quantize_length_to_string (b), sigc::bind (sigc::mem_fun (*this, &TriggerMaster::set_all_quantization), b)));
 
-	Menu*     load_menu = manage (new Menu);
-	MenuList& loitems (load_menu->items ());
-
-	items.push_back (CheckMenuElem (_("Toggle Monitor Thru"), sigc::mem_fun (*this, &TriggerMaster::toggle_thru)));
-	if (_triggerbox->pass_thru ()) {
-		_ignore_menu_action = true;
-		dynamic_cast<Gtk::CheckMenuItem*> (&items.back ())->set_active (true);
-		_ignore_menu_action = false;
-	}
-
-	items.push_back (MenuElem (_("Enable/Disable..."), sigc::mem_fun (*this, &TriggerMaster::maybe_update))); // TODO
 	items.push_back (MenuElem (_("Set All Follow Actions..."), *follow_menu));
 	items.push_back (MenuElem (_("Set All Launch Styles..."), *launch_menu));
 	items.push_back (MenuElem (_("Set All Quantizations..."), *quant_menu));
@@ -409,16 +362,6 @@ TriggerMaster::context_menu ()
 }
 
 void
-TriggerMaster::toggle_thru ()
-{
-	if (_ignore_menu_action) {
-		return;
-	}
-
-	_triggerbox->set_pass_thru (!_triggerbox->pass_thru ());
-}
-
-void
 TriggerMaster::clear_all_triggers ()
 {
 	_triggerbox->clear_all_triggers();
@@ -427,21 +370,21 @@ TriggerMaster::clear_all_triggers ()
 void
 TriggerMaster::set_all_colors ()
 {
-	_color_dialog.get_colorsel()->set_has_opacity_control (false);
-	_color_dialog.get_colorsel()->set_has_palette (true);
+	_color_dialog.get_color_selection()->set_has_opacity_control (false);
+	_color_dialog.get_color_selection()->set_has_palette (true);
 	_color_dialog.get_ok_button()->signal_clicked().connect (sigc::bind (sigc::mem_fun (_color_dialog, &Gtk::Dialog::response), Gtk::RESPONSE_ACCEPT));
 	_color_dialog.get_cancel_button()->signal_clicked().connect (sigc::bind (sigc::mem_fun (_color_dialog, &Gtk::Dialog::response), Gtk::RESPONSE_CANCEL));
 
-	Gdk::Color c = ARDOUR_UI_UTILS::gdk_color_from_rgba(0xBEBEBEFF);
+	Gdk::Color c = Gtkmm2ext::gdk_color_from_rgba(0xBEBEBEFF);
 
-	_color_dialog.get_colorsel()->set_previous_color (c);
-	_color_dialog.get_colorsel()->set_current_color (c);
+	_color_dialog.get_color_selection()->set_previous_color (c);
+	_color_dialog.get_color_selection()->set_current_color (c);
 
 	switch (_color_dialog.run()) {
 		case Gtk::RESPONSE_ACCEPT: {
-			c = _color_dialog.get_colorsel()->get_current_color();
-			color_t ct = ARDOUR_UI_UTILS::gdk_color_to_rgba(c);
-			for (int n = 0; n < default_triggers_per_box; n++) {
+			c = _color_dialog.get_color_selection()->get_current_color();
+			color_t ct = Gtkmm2ext::gdk_color_to_rgba(c);
+			for (int n = 0; n < TriggerBox::default_triggers_per_box; n++) {
 				_triggerbox->trigger (n)->set_color(ct);
 			}
 		} break;
@@ -488,66 +431,73 @@ TriggerMaster::_size_allocate (ArdourCanvas::Rect const& alloc)
 	const double scale = UIConfiguration::instance ().get_ui_scale ();
 	_poly_margin       = 3. * scale;
 
-	const Distance width  = _rect.width ();
 	const Distance height = _rect.height ();
 
-	_poly_size = height - (_poly_margin * 2);
-
-	float tleft  = _poly_size + (_poly_margin * 3);
-	float twidth = width - _poly_size - (_poly_margin * 3);
-
-	ArdourCanvas::Rect text_alloc (tleft, 0, twidth, height); // testing
-	name_text->size_allocate (text_alloc);
-	name_text->set_position (Duple (tleft, 1. * scale));
-	name_text->clamp_width (twidth);
-
 	_loopster->set (ArdourCanvas::Rect (0, 0, height, height));
-	_passthru->set (ArdourCanvas::Rect (width - height, 0, width, height));
-
-	/* font scale may have changed. uiconfig 'embeds' the ui-scale in the font */
-	name_text->set_font_description (UIConfiguration::instance ().get_NormalFont ());
 }
 
 void
-TriggerMaster::prop_change (PropertyChange const& change)
+TriggerMaster::prop_change (PropertyChange const& what_changed)
 {
 	if (!_triggerbox) {
 		return;
 	}
 
-	_passthru->set_enabled (_triggerbox->pass_thru ());
+	/* currently, TriggerBox generates a continuous stream of ::name and ::running messages
+	 TODO: I'd prefer a discrete message when currently_playing, follow_count, or loop_count has changed
+	 Until then, we will cache our prior settings and only redraw when something actually changes */
+	std::string old_play = play_text;
+	std::string old_loop = loop_text;
+	bool old_vis = _loopster->visible();
 
-	std::string text;
+	/* for debugging */
+	/* for (auto & c : what_changed) { std::cout << g_quark_to_string (c) << std::endl; } */
 
-	ARDOUR::TriggerPtr trigger = _triggerbox->currently_playing ();
-	if (!trigger) {
-		name_text->set (text);
-		_loopster->hide ();
-		return;
+	if (what_changed.contains (ARDOUR::Properties::running)) {
+
+		ARDOUR::TriggerPtr trigger = _triggerbox->currently_playing ();
+		if (!trigger) {
+			play_text = X_("");
+			loop_text = X_("");
+			_loopster->hide ();
+		} else {
+
+			play_text = cue_marker_name (trigger->index ());
+
+			int fc = trigger->follow_count ();
+			int lc = trigger->loop_count ();
+			std::string text;
+			if (fc > 1) {
+				text = string_compose (X_("%1/%2"), lc+1, fc);
+			} else if (lc > 1) {
+				text = string_compose (X_("%1"), lc+1);  /* TODO: currently loop-count never updates unless follow_count is in use. */
+			}
+			loop_text = text;
+
+			if (trigger->active ()) {
+				double f = trigger->position_as_fraction ();
+				_loopster->set_fraction (f); /*this sometimes triggers a redraw of the loopster widget (only). */
+				_loopster->show ();
+			} else {
+				_loopster->hide ();
+			}
+		}
 	}
 
-	text = string_compose ("%1", (char)('A' + trigger->index ())); // XXX not translatable
-
-	if (trigger->follow_count () > 1) {
-		text.append (string_compose (X_(" %1/%2"), trigger->loop_count ()+1, trigger->follow_count ()));
+	/* only trigger a redraw if a display value actually changes */
+	if((_loopster->visible() != old_vis)
+		|| (play_text != old_play)
+		|| (loop_text != old_loop))
+	{
+		redraw();
 	}
 
-	name_text->set (text);
-
-	if (trigger->active ()) {
-		double f = trigger->position_as_fraction ();
-		_loopster->set_fraction (f);
-		_loopster->show ();
-	} else {
-		_loopster->hide ();
-	}
 }
 
 void
 TriggerMaster::set_default_colors ()
 {
 	set_fill_color (HSV (UIConfiguration::instance ().color ("theme:bg")).darker (0.5).color ());
-	name_text->set_color (UIConfiguration::instance ().color ("neutral:foreground"));
 }
 
 void
@@ -568,8 +518,10 @@ CueMaster::CueMaster (Item* parent)
 
 	Event.connect (sigc::mem_fun (*this, &CueMaster::event_handler));
 
+	set_tooltip (_("Click to stop all clips\nRight-click to select properties for all clips in the grid"));
+
 	stop_shape = new ArdourCanvas::Polygon (this);
-	stop_shape->set_outline (true);
+	stop_shape->set_outline (false);
 	stop_shape->set_fill (true);
 	stop_shape->name = X_("stopbutton");
 	stop_shape->set_ignore_events (true);
@@ -598,7 +550,6 @@ CueMaster::render (ArdourCanvas::Rect const& area, Cairo::RefPtr<Cairo::Context>
 	}
 
 	float width  = _rect.width ();
-	float height = _rect.height ();
 
 	const double scale = UIConfiguration::instance ().get_ui_scale ();
 
@@ -628,9 +579,9 @@ CueMaster::event_handler (GdkEvent* ev)
 		case GDK_BUTTON_PRESS:
 			if (ev->button.button == 1) {
 				if (Keyboard::modifier_state_equals (ev->button.state, Keyboard::PrimaryModifier)) {
-					_session->stop_all_triggers (true);  //stop 'now'
+					_session->trigger_stop_all (true);  //stop 'now'
 				} else {
-					_session->stop_all_triggers (false);  //stop quantized (bar end)
+					_session->trigger_stop_all (false);  //stop quantized (bar end)
 				}
 				return true;
 			}
@@ -644,7 +595,6 @@ CueMaster::event_handler (GdkEvent* ev)
 			break;
 		case GDK_ENTER_NOTIFY:
 			if (ev->crossing.detail != GDK_NOTIFY_INFERIOR) {
-				stop_shape->set_outline_color (UIConfiguration::instance ().color ("neutral:foreground"));
 				stop_shape->set_fill_color (UIConfiguration::instance ().color ("neutral:foreground"));
 				set_fill_color (HSV (fill_color ()).lighter (0.25).color ());
 			}
@@ -672,9 +622,8 @@ CueMaster::_size_allocate (ArdourCanvas::Rect const& alloc)
 	Rectangle::_size_allocate (alloc);
 
 	const double scale = UIConfiguration::instance ().get_ui_scale ();
-	_poly_margin       = 2. * scale;
+	_poly_margin       = 2 * scale;
 
-	const Distance width  = _rect.width ();
 	const Distance height = _rect.height ();
 
 	_poly_size = height - (_poly_margin * 2);
@@ -685,17 +634,13 @@ CueMaster::_size_allocate (ArdourCanvas::Rect const& alloc)
 	p.push_back (Duple (_poly_size, _poly_size));
 	p.push_back (Duple (_poly_size, _poly_margin));
 	stop_shape->set (p);
-
-	float tleft  = _poly_size + (_poly_margin * 3);
-	float twidth = width - _poly_size - (_poly_margin * 3);
 }
 
 void
 CueMaster::set_default_colors ()
 {
 	set_fill_color (HSV (UIConfiguration::instance ().color ("theme:bg")).darker (0.5).color ());
-	stop_shape->set_outline_color (UIConfiguration::instance ().color ("neutral:foreground"));
-	stop_shape->set_fill_color (fill_color());
+	stop_shape->set_fill_color (UIConfiguration::instance ().color ("location marker"));
 }
 
 void
@@ -725,12 +670,8 @@ CueMaster::context_menu ()
 	fitems.push_back (MenuElem (TriggerUI::follow_action_to_string(FollowAction (FollowAction::None)), sigc::bind (sigc::mem_fun (*this, &CueMaster::set_all_follow_action), FollowAction (FollowAction::None))));
 	fitems.push_back (MenuElem (TriggerUI::follow_action_to_string(FollowAction (FollowAction::Stop)), sigc::bind (sigc::mem_fun (*this, &CueMaster::set_all_follow_action), FollowAction (FollowAction::Stop))));
 	fitems.push_back (MenuElem (TriggerUI::follow_action_to_string(FollowAction (FollowAction::Again)), sigc::bind (sigc::mem_fun (*this, &CueMaster::set_all_follow_action), FollowAction (FollowAction::Again))));
-	fitems.push_back (MenuElem (TriggerUI::follow_action_to_string(FollowAction (FollowAction::PrevTrigger)), sigc::bind (sigc::mem_fun (*this, &CueMaster::set_all_follow_action), FollowAction (FollowAction::PrevTrigger))));
-	fitems.push_back (MenuElem (TriggerUI::follow_action_to_string(FollowAction (FollowAction::NextTrigger)), sigc::bind (sigc::mem_fun (*this, &CueMaster::set_all_follow_action), FollowAction (FollowAction::NextTrigger))));
 	fitems.push_back (MenuElem (TriggerUI::follow_action_to_string(FollowAction (FollowAction::ForwardTrigger)), sigc::bind (sigc::mem_fun (*this, &CueMaster::set_all_follow_action), FollowAction (FollowAction::ForwardTrigger))));
 	fitems.push_back (MenuElem (TriggerUI::follow_action_to_string(FollowAction (FollowAction::ReverseTrigger)), sigc::bind (sigc::mem_fun (*this, &CueMaster::set_all_follow_action), FollowAction (FollowAction::ReverseTrigger))));
-	fitems.push_back (MenuElem (TriggerUI::follow_action_to_string(FollowAction (FollowAction::AnyTrigger)), sigc::bind (sigc::mem_fun (*this, &CueMaster::set_all_follow_action), FollowAction (FollowAction::AnyTrigger))));
-	fitems.push_back (MenuElem (TriggerUI::follow_action_to_string(FollowAction (FollowAction::OtherTrigger)), sigc::bind (sigc::mem_fun (*this, &CueMaster::set_all_follow_action), FollowAction (FollowAction::OtherTrigger))));
 
 	Menu*     launch_menu = manage (new Menu);
 	MenuList& litems      = launch_menu->items ();
@@ -767,9 +708,6 @@ CueMaster::context_menu ()
 	b = BBT_Offset (-1, 0, 0);
 	qitems.push_back (MenuElem (TriggerUI::quantize_length_to_string (b), sigc::bind (sigc::mem_fun (*this, &CueMaster::set_all_quantization), b)));
 
-	Menu*     load_menu = manage (new Menu);
-	MenuList& loitems (load_menu->items ());
-
 //	items.push_back (CheckMenuElem (_("Toggle Monitor Thru"), sigc::mem_fun (*this, &CueMaster::toggle_thru)));
 //	if (_triggerbox->pass_thru ()) {
 //		_ignore_menu_action = true;
@@ -789,10 +727,9 @@ CueMaster::context_menu ()
 void
 CueMaster::get_boxen (TriggerBoxList &boxlist)
 {
-	boost::shared_ptr<RouteList> rl = _session->get_routes();
-	for (RouteList::iterator r = rl->begin(); r != rl->end(); ++r) {
-		boost::shared_ptr<Route> route = *r;
-		boost::shared_ptr<TriggerBox> box = route->triggerbox();
+	std::shared_ptr<RouteList const> rl = _session->get_routes();
+	for (auto const& route : *rl) {
+		std::shared_ptr<TriggerBox> box = route->triggerbox();
 #warning @Ben disambiguate processor *active* vs *visibility*
 		if (box /*&& box.active*/) {
 			boxlist.push_back(box);

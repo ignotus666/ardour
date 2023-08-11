@@ -34,9 +34,9 @@
 #include "widgets/ardour_knob.h"
 #include "widgets/ardour_display.h"
 
+#include "io_button.h"
 #include "level_meter.h"
 #include "route_ui.h"
-#include "monitor_selector.h"
 
 #include "processor_box.h"
 #include "processor_selection.h"
@@ -99,21 +99,12 @@ private:
 	ArdourWidgets::ArdourDisplay*  solo_boost_display;
 	ArdourWidgets::ArdourDisplay*  solo_cut_display;
 
-	std::list<boost::shared_ptr<ARDOUR::Bundle> > output_menu_bundles;
-	Gtk::Menu output_menu;
-	MonitorSelectorWindow *_output_selector;
-	ArdourWidgets::ArdourButton* output_button;
-
-	void maybe_add_bundle_to_output_menu (boost::shared_ptr<ARDOUR::Bundle>, ARDOUR::BundleList const &);
-	void bundle_output_chosen (boost::shared_ptr<ARDOUR::Bundle>);
-	void update_output_display ();
-	void disconnect_output ();
-	void edit_output_configuration ();
+	IOButton _output_button;
 
 	void populate_buttons ();
 	void map_state ();
 
-	boost::shared_ptr<ARDOUR::MonitorProcessor> _monitor;
+	std::shared_ptr<ARDOUR::MonitorProcessor> _monitor;
 
 	Glib::RefPtr<Gtk::ActionGroup> monitor_actions;
 	Glib::RefPtr<Gtk::ActionGroup> solo_actions;
@@ -132,8 +123,6 @@ private:
 	void dim_level_changed ();
 	void solo_boost_changed ();
 	void gain_value_changed ();
-	gint output_press (GdkEventButton *);
-	gint output_release (GdkEventButton *);
 
 	ArdourWidgets::ArdourButton solo_in_place_button;
 	ArdourWidgets::ArdourButton afl_button;
@@ -173,16 +162,13 @@ private:
 	void assign_controllables ();
 	void unassign_controllables ();
 
-	void port_connected_or_disconnected (boost::weak_ptr<ARDOUR::Port>, boost::weak_ptr<ARDOUR::Port>);
-	void port_pretty_name_changed (std::string);
-
 	void update_processor_box ();
 
 	void route_property_changed (const PBD::PropertyChange&) {}
 
 	ProcessorBox* insert_box;
 	ProcessorSelection _rr_selection;
-	void help_count_processors (boost::weak_ptr<ARDOUR::Processor> p, uint32_t* cnt) const;
+	void help_count_processors (std::weak_ptr<ARDOUR::Processor> p, uint32_t* cnt) const;
 	uint32_t count_processors ();
 
 	void processors_changed (ARDOUR::RouteProcessorChange);

@@ -19,49 +19,30 @@
 #ifndef _ardour_rt_tasklist_h_
 #define _ardour_rt_tasklist_h_
 
-#include <list>
 #include <boost/function.hpp>
-
-#include "pbd/semutils.h"
-#include "pbd/g_atomic_compat.h"
+#include <vector>
 
 #include "ardour/libardour_visibility.h"
-#include "ardour/types.h"
-#include "ardour/audio_backend.h"
-#include "ardour/session_handle.h"
+#include "ardour/rt_task.h"
 
-namespace ARDOUR {
+namespace ARDOUR
+{
+class Graph;
 
 class LIBARDOUR_API RTTaskList
 {
 public:
-	RTTaskList ();
-	~RTTaskList ();
-
-	// TODO use dedicated allocator of a boost::intrusive::list
-	typedef std::list<boost::function<void ()> > TaskList;
+	RTTaskList (std::shared_ptr<Graph>);
 
 	/** process tasks in list in parallel, wait for them to complete */
-	void process (TaskList const&);
+	void process ();
+	void push_back (boost::function<void ()> fn);
+
+	std::vector<RTTask> const& tasks () const { return _tasks; }
 
 private:
-	GATOMIC_QUAL gint      _threads_active;
-	std::vector<pthread_t> _threads;
-
-	void reset_thread_list ();
-	void drop_threads ();
-
-	void process_tasklist ();
-
-	static void* _thread_run (void *arg);
-	void run ();
-
-	Glib::Threads::Mutex _process_mutex;
-	Glib::Threads::Mutex _tasklist_mutex;
-	PBD::Semaphore _task_run_sem;
-	PBD::Semaphore _task_end_sem;
-
-	TaskList _tasklist;
+	std::vector<RTTask>      _tasks;
+	std::shared_ptr<Graph> _graph;
 };
 
 } // namespace ARDOUR

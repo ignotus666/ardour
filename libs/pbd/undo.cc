@@ -30,6 +30,7 @@
 
 using namespace std;
 using namespace sigc;
+using namespace PBD;
 
 UndoTransaction::UndoTransaction ()
 	: _clearing (false)
@@ -141,14 +142,14 @@ UndoTransaction::redo ()
 }
 
 XMLNode&
-UndoTransaction::get_state ()
+UndoTransaction::get_state () const
 {
 	XMLNode* node = new XMLNode ("UndoTransaction");
 	node->set_property ("tv-sec", (int64_t)_timestamp.tv_sec);
 	node->set_property ("tv-usec", (int64_t)_timestamp.tv_usec);
 	node->set_property ("name", _name);
 
-	list<Command*>::iterator it;
+	list<Command*>::const_iterator it;
 	for (it = actions.begin (); it != actions.end (); it++) {
 		node->add_child_nocopy ((*it)->get_state ());
 	}

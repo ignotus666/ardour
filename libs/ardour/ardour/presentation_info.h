@@ -24,12 +24,12 @@
 #include <iostream>
 #include <string>
 
-#include <stdint.h>
+#include <atomic>
+#include <cstdint>
 
 #include "pbd/signals.h"
 #include "pbd/stateful.h"
 #include "pbd/properties.h"
-#include "pbd/g_atomic_compat.h"
 
 #include "ardour/libardour_visibility.h"
 
@@ -235,7 +235,7 @@ class LIBARDOUR_API PresentationInfo : public PBD::Stateful
 	}
 
 	int set_state (XMLNode const&, int);
-	XMLNode& get_state ();
+	XMLNode& get_state () const;
 
 	bool operator==(PresentationInfo const& other) {
 		return (_order == other.order()) && (_flags == other.flags());
@@ -287,13 +287,15 @@ class LIBARDOUR_API PresentationInfo : public PBD::Stateful
 
 	static PBD::PropertyChange _pending_static_changes;
 	static Glib::Threads::Mutex static_signal_lock;
-	static GATOMIC_QUAL gint   _change_signal_suspended;
+	static std::atomic<int>   _change_signal_suspended;
 
 	static int selection_counter;
 };
 
 }
 
+namespace std {
 std::ostream& operator<<(std::ostream& o, ARDOUR::PresentationInfo const& rid);
+}
 
 #endif /* __libardour_presentation_info_h__ */

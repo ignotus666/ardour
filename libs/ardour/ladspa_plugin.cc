@@ -45,6 +45,10 @@
 #include <lrdf.h>
 #endif
 
+#include <glibmm/miscutils.h>
+#include <glibmm/fileutils.h>
+#include <glibmm/convert.h>
+
 #include "pbd/compose.h"
 #include "pbd/error.h"
 #include "pbd/locale_guard.h"
@@ -54,6 +58,7 @@
 #include "ardour/ladspa_plugin.h"
 #include "ardour/buffer_set.h"
 #include "ardour/audio_buffer.h"
+#include "ardour/filesystem_paths.h"
 
 #include "pbd/stl_delete.h"
 
@@ -183,6 +188,7 @@ LadspaPlugin::_default_value (uint32_t port) const
 	bool bounds_given = false;
 	bool sr_scaling = false;
 	bool earlier_hint = false;
+	bool logarithmic = LADSPA_IS_HINT_LOGARITHMIC (prh[port].HintDescriptor);
 
 	/* defaults - case 1 */
 
@@ -194,17 +200,29 @@ LadspaPlugin::_default_value (uint32_t port) const
 		}
 
 		else if (LADSPA_IS_HINT_DEFAULT_LOW(prh[port].HintDescriptor)) {
-			ret = prh[port].LowerBound * 0.75f + prh[port].UpperBound * 0.25f;
+			if (logarithmic && prh[port].LowerBound * prh[port].UpperBound > 0) {
+				ret = exp (log(prh[port].LowerBound) * 0.75f + log (prh[port].UpperBound) * 0.25f);
+			} else {
+				ret = prh[port].LowerBound * 0.75f + prh[port].UpperBound * 0.25f;
+			}
 			bounds_given = true;
 			sr_scaling = true;
 		}
 		else if (LADSPA_IS_HINT_DEFAULT_MIDDLE(prh[port].HintDescriptor)) {
-			ret = prh[port].LowerBound * 0.5f + prh[port].UpperBound * 0.5f;
+			if (logarithmic && prh[port].LowerBound * prh[port].UpperBound > 0) {
+				ret = exp (log(prh[port].LowerBound) * 0.5f + log (prh[port].UpperBound) * 0.5f);
+			} else {
+				ret = prh[port].LowerBound * 0.5f + prh[port].UpperBound * 0.5f;
+			}
 			bounds_given = true;
 			sr_scaling = true;
 		}
 		else if (LADSPA_IS_HINT_DEFAULT_HIGH(prh[port].HintDescriptor)) {
-			ret = prh[port].LowerBound * 0.25f + prh[port].UpperBound * 0.75f;
+			if (logarithmic && prh[port].LowerBound * prh[port].UpperBound > 0) {
+				ret = exp (log(prh[port].LowerBound) * 0.25f + log (prh[port].UpperBound) * 0.75f);
+			} else {
+				ret = prh[port].LowerBound * 0.25f + prh[port].UpperBound * 0.75f;
+			}
 			bounds_given = true;
 			sr_scaling = true;
 		}
@@ -484,7 +502,7 @@ LadspaPlugin::get_parameter_descriptor (uint32_t which, ParameterDescriptor& des
 		if (LADSPA_IS_HINT_TOGGLED (prh.HintDescriptor)) {
 			desc.upper = 1;
 		} else {
-			desc.upper = 4; /* completely arbitrary */
+			desc.upper = 1; /* completely arbitrary, although a range 0..1 makes some sense */
 		}
 	}
 
@@ -611,10 +629,10 @@ LadspaPlugin::parameter_is_input (uint32_t param) const
 	return LADSPA_IS_PORT_INPUT(port_descriptor (param));
 }
 
-boost::shared_ptr<ScalePoints>
+std::shared_ptr<ScalePoints>
 LadspaPlugin::get_scale_points(uint32_t port_index) const
 {
-	boost::shared_ptr<ScalePoints> ret;
+	std::shared_ptr<ScalePoints> ret;
 #ifdef HAVE_LRDF
 	const uint32_t id     = atol(unique_id().c_str());
 	lrdf_defaults* points = lrdf_get_scale_values(id, port_index);
@@ -623,7 +641,7 @@ LadspaPlugin::get_scale_points(uint32_t port_index) const
 		return ret;
 	}
 
-	ret = boost::shared_ptr<ScalePoints>(new ScalePoints());
+	ret = std::shared_ptr<ScalePoints>(new ScalePoints());
 
 	for (uint32_t i = 0; i < points->count; ++i) {
 		ret->insert(make_pair(points->items[i].label,
@@ -720,12 +738,15 @@ LadspaPluginInfo::get_presets (bool /*user_only*/) const
 
 	if (set_uris) {
 		for (uint32_t i = 0; i < (uint32_t) set_uris->count; ++i) {
+			// TODO somehow mark factory presets as such..
 			if (char* label = lrdf_get_label (set_uris->items[i])) {
 				p.push_back (Plugin::PresetRecord (set_uris->items[i], label));
 			}
 		}
 		lrdf_free_uris(set_uris);
 	}
+
+	std::sort (p.begin (), p.end ());
 #endif
 	return p;
 }
@@ -796,7 +817,8 @@ lrdf_remove_preset (const char* /*source*/, const char *setting_uri)
 	char setting_uri_copy[64];
 	char buf[64];
 
-	strncpy(setting_uri_copy, setting_uri, sizeof(setting_uri_copy));
+	strncpy(setting_uri_copy, setting_uri, sizeof(setting_uri_copy) - 1);
+	setting_uri_copy[sizeof (setting_uri_copy) - 1] = '\0';
 
 	p.subject = setting_uri_copy;
 	strncpy(buf, LADSPA_BASE "hasPortValue", sizeof(buf));
@@ -830,60 +852,51 @@ void
 LadspaPlugin::do_remove_preset (string name)
 {
 #ifdef HAVE_LRDF
-	string const envvar = preset_envvar ();
-	if (envvar.empty()) {
-		warning << _("Could not locate HOME.  Preset not removed.") << endmsg;
-		return;
-	}
-
 	Plugin::PresetRecord const * p = preset_by_label (name);
 	if (!p) {
 		return;
 	}
 
-	string const source = preset_source (envvar);
+	string const source = preset_source ();
 	lrdf_remove_preset (source.c_str(), p->uri.c_str ());
 
-	write_preset_file (envvar);
+	write_preset_file ();
 #endif
 }
 
 string
-LadspaPlugin::preset_envvar () const
+LadspaPlugin::preset_source () const
 {
-	char* envvar;
-	if ((envvar = getenv ("HOME")) == 0) {
-		return "";
-	}
-
-	return envvar;
-}
-
-string
-LadspaPlugin::preset_source (string envvar) const
-{
-	return string_compose ("file:%1/.ladspa/rdf/ardour-presets.n3", envvar);
+	string const domain = "ladspa";
+#ifdef PLATFORM_WINDOWS
+	string path = Glib::build_filename (ARDOUR::user_cache_directory (), domain, "rdf", "ardour-presets.n3");
+#else
+	string path = Glib::build_filename (Glib::get_home_dir (), "." + domain, "rdf", "ardour-presets.n3");
+#endif
+	return Glib::filename_to_uri (path);
 }
 
 bool
-LadspaPlugin::write_preset_file (string envvar)
+LadspaPlugin::write_preset_file ()
 {
 #ifdef HAVE_LRDF
-	string path = string_compose("%1/.ladspa", envvar);
-	if (g_mkdir_with_parents (path.c_str(), 0775)) {
-		warning << string_compose(_("Could not create %1.  Preset not saved. (%2)"), path, strerror(errno)) << endmsg;
+
+#ifndef PLATFORM_WINDOWS
+	if (Glib::get_home_dir ().empty ()) {
+		warning << _("Could not locate HOME. Preset file not written.") << endmsg;
+		return false;
+	}
+#endif
+
+	string const source   = preset_source ();
+	string const filename = Glib::filename_from_uri (source);
+
+	if (g_mkdir_with_parents (Glib::path_get_dirname (filename).c_str(), 0775)) {
+		warning << string_compose(_("Could not create %1.  Preset not saved. (%2)"), source, strerror(errno)) << endmsg;
 		return false;
 	}
 
-	path += "/rdf";
-	if (g_mkdir_with_parents (path.c_str(), 0775)) {
-		warning << string_compose(_("Could not create %1.  Preset not saved. (%2)"), path, strerror(errno)) << endmsg;
-		return false;
-	}
-
-	string const source = preset_source (envvar);
-
-	if (lrdf_export_by_source (source.c_str(), source.substr(5).c_str())) {
+	if (lrdf_export_by_source (source.c_str(), filename.c_str())) {
 		warning << string_compose(_("Error saving presets file %1."), source) << endmsg;
 		return false;
 	}
@@ -926,19 +939,13 @@ LadspaPlugin::do_save_preset (string name)
 		portvalues[i].value = get_parameter (input_parameter_pids[i]);
 	}
 
-	string const envvar = preset_envvar ();
-	if (envvar.empty()) {
-		warning << _("Could not locate HOME.  Preset not saved.") << endmsg;
-		return "";
-	}
-
-	string const source = preset_source (envvar);
+	string const source = preset_source ();
 
 	char* uri_char = lrdf_add_preset (source.c_str(), name.c_str(), id, &defaults);
 	string uri (uri_char);
 	free (uri_char);
 
-	if (!write_preset_file (envvar)) {
+	if (!write_preset_file ()) {
 		return "";
 	}
 

@@ -21,9 +21,6 @@
 #include <sys/mman.h>
 #include <sys/time.h>
 
-#include <mach/thread_policy.h>
-#include <mach/thread_act.h>
-
 #undef nil
 
 #include <glibmm.h>
@@ -34,6 +31,8 @@
 #include "pbd/error.h"
 #include "pbd/file_utils.h"
 #include "pbd/pthread_utils.h"
+
+#include "ardour/debug.h"
 #include "ardour/filesystem_paths.h"
 #include "ardour/port_manager.h"
 #include "pbd/i18n.h"
@@ -59,6 +58,12 @@ static void error_callback_ptr (void *arg)
 {
 	CoreAudioBackend *d = static_cast<CoreAudioBackend*> (arg);
 	d->error_callback();
+}
+
+static void halted_callback_ptr (void *arg)
+{
+	CoreAudioBackend *d = static_cast<CoreAudioBackend*> (arg);
+	d->halted_callback();
 }
 
 static void xrun_callback_ptr (void *arg)
@@ -100,13 +105,15 @@ CoreAudioBackend::CoreAudioBackend (AudioEngine& e, AudioBackendInfo& info)
 	, _last_process_start (0)
 	, _input_audio_device("")
 	, _output_audio_device("")
-	, _midi_driver_option(get_standard_device_name(DeviceNone))
+	, _midi_driver_option(_("CoreMidi"))
 	, _samplerate (48000)
 	, _samples_per_period (1024)
 	, _n_inputs (0)
 	, _n_outputs (0)
 	, _systemic_audio_input_latency (0)
 	, _systemic_audio_output_latency (0)
+	, _hw_audio_input_latency (0)
+	, _hw_audio_output_latency (0)
 	, _dsp_load (0)
 	, _processed_samples (0)
 {
@@ -443,24 +450,6 @@ CoreAudioBackend::systemic_output_latency () const
 	return _systemic_audio_output_latency;
 }
 
-uint32_t
-CoreAudioBackend::systemic_hw_input_latency () const
-{
-	if (name_to_id (_input_audio_device) != UINT32_MAX) {
-		return _pcmio->get_latency(name_to_id(_input_audio_device, Input), true);
-	}
-	return 0;
-}
-
-uint32_t
-CoreAudioBackend::systemic_hw_output_latency () const
-{
-	if (name_to_id (_output_audio_device) != UINT32_MAX) {
-		return _pcmio->get_latency(name_to_id(_output_audio_device, Output), false);
-	}
-	return 0;
-}
-
 /* MIDI */
 
 std::vector<std::string>
@@ -545,6 +534,7 @@ CoreAudioBackend::_start (bool for_latency_measurement)
 	_last_process_start = 0;
 
 	_pcmio->set_error_callback (error_callback_ptr, this);
+	_pcmio->set_halted_callback (halted_callback_ptr, this);
 	_pcmio->set_buffer_size_callback (buffer_size_callback_ptr, this);
 	_pcmio->set_sample_rate_callback (sample_rate_callback_ptr, this);
 
@@ -636,11 +626,21 @@ CoreAudioBackend::_start (bool for_latency_measurement)
 		PBD::warning << _("CoreAudioBackend: sample rate does not match.") << endmsg;
 	}
 
+	_hw_audio_input_latency = _hw_audio_output_latency = 0;
+
+	if (device1 != UINT32_MAX) {
+		_hw_audio_input_latency = _pcmio->get_latency(device1, true);
+	}
+
+	if (device2 != UINT32_MAX) {
+		_hw_audio_output_latency = _pcmio->get_latency(device2, false);
+	}
+
 	_measure_latency = for_latency_measurement;
 
 	_preinit = true;
 	_run = true;
-	g_atomic_int_set (&_port_change_flag, 0);
+	_port_change_flag.store (0);
 
 	if (_midi_driver_option == _("CoreMidi")) {
 		_midiio->set_enabled(true);
@@ -697,9 +697,8 @@ CoreAudioBackend::_start (bool for_latency_measurement)
 
 	engine.reconnect_ports ();
 
-	// force  an initial registration_callback() & latency re-compute
-	g_atomic_int_set (&_port_change_flag, 1);
-	pre_process ();
+	// force an initial registration_callback() & latency re-compute
+	_port_change_flag.store (1);
 
 	_dsp_load_calc.reset ();
 	// all systems go.
@@ -833,9 +832,44 @@ void *
 CoreAudioBackend::coreaudio_process_thread (void *arg)
 {
 	ThreadData* td = reinterpret_cast<ThreadData*> (arg);
+
+	if (pbd_mach_set_realtime_policy (pthread_self (), td->period_ns, false)) {
+		DEBUG_TRACE (PBD::DEBUG::BackendThreads, "AudioEngine: process thread failed to set mach realtime policy.\n");
+	}
+
+#if MAC_OS_X_VERSION_MAX_ALLOWED >= 110000
+	if (td->_joined_workgroup) {
+		/* have WG */
+		int res = os_workgroup_join (td->_workgroup, &td->_join_token);
+		switch (res) {
+			case 0:
+				DEBUG_TRACE (PBD::DEBUG::BackendThreads, "AudioEngine: process thread joined AUHAL workgroup.");
+				break;
+			case EALREADY:
+				DEBUG_TRACE (PBD::DEBUG::BackendThreads, "AudioEngine: process thread is already in a workgroup.");
+				td->_joined_workgroup = false;
+				break;
+			case EINVAL:
+				DEBUG_TRACE (PBD::DEBUG::BackendThreads, "AudioEngine: invalid workgroup for process thread.");
+				td->_joined_workgroup = false;
+				break;
+			default:
+				td->_joined_workgroup = false;
+				DEBUG_TRACE (PBD::DEBUG::BackendThreads, "AudioEngine: process thread failed to join AUHAL workgroup.");
+				break;
+		}
+	}
+#endif
+
 	boost::function<void ()> f = td->f;
-	delete td;
 	f ();
+
+#if MAC_OS_X_VERSION_MAX_ALLOWED >= 110000
+	if (td->_joined_workgroup) {
+		os_workgroup_leave (td->_workgroup, &td->_join_token);
+	}
+#endif
+	delete td;
 	return 0;
 }
 
@@ -843,7 +877,15 @@ int
 CoreAudioBackend::create_process_thread (boost::function<void()> func)
 {
 	pthread_t   thread_id;
-	ThreadData* td = new ThreadData (this, func, PBD_RT_STACKSIZE_PROC);
+	ThreadData* td = new ThreadData (this, func, PBD_RT_STACKSIZE_PROC, 1e9 * _samples_per_period / _samplerate);
+
+#if MAC_OS_X_VERSION_MAX_ALLOWED >= 110000
+	if (_pcmio->workgroup (td->_workgroup)) {
+		td->_joined_workgroup = true;
+	} else {
+		td->_joined_workgroup = false;
+	}
+#endif
 
 	if (pbd_realtime_pthread_create (PBD_SCHED_FIFO, PBD_RT_PRI_PROC, PBD_RT_STACKSIZE_PROC,
 	                              &thread_id, coreaudio_process_thread, td)) {
@@ -852,10 +894,6 @@ CoreAudioBackend::create_process_thread (boost::function<void()> func)
 			return -1;
 		}
 		PBD::warning << _("AudioEngine: process thread failed to acquire realtime permissions.") << endmsg;
-	}
-
-	if (pbd_mach_set_realtime_policy (thread_id, 1e9 * _samples_per_period / _samplerate, false)) {
-		PBD::warning << _("AudioEngine: process thread failed to set mach realtime policy.") << endmsg;
 	}
 
 	_threads.push_back (thread_id);
@@ -947,7 +985,7 @@ CoreAudioBackend::register_system_audio_ports()
 		PortPtr p = add_port(std::string(tmp), DataType::AUDIO, static_cast<PortFlags>(IsOutput | IsPhysical | IsTerminal));
 		if (!p) return -1;
 		set_latency_range (p, false, lr);
-		BackendPortPtr cp = boost::dynamic_pointer_cast<BackendPort>(p);
+		BackendPortPtr cp = std::dynamic_pointer_cast<BackendPort>(p);
 		cp->set_hw_port_name (_pcmio->cached_port_name(i, true));
 		_system_inputs.push_back(cp);
 	}
@@ -959,7 +997,7 @@ CoreAudioBackend::register_system_audio_ports()
 		PortPtr p = add_port(std::string(tmp), DataType::AUDIO, static_cast<PortFlags>(IsInput | IsPhysical | IsTerminal));
 		if (!p) return -1;
 		set_latency_range (p, true, lr);
-		BackendPortPtr cp = boost::dynamic_pointer_cast<BackendPort>(p);
+		BackendPortPtr cp = std::dynamic_pointer_cast<BackendPort>(p);
 		cp->set_hw_port_name (_pcmio->cached_port_name(i, false));
 		_system_outputs.push_back(cp);
 	}
@@ -988,7 +1026,7 @@ CoreAudioBackend::coremidi_rediscover()
 #ifndef NDEBUG
 			printf("unregister MIDI Output: %s\n", (*it)->name().c_str());
 #endif
-			g_atomic_int_set (&_port_change_flag, 1);
+			_port_change_flag.store (1);
 			unregister_port((*it));
 			it = _system_midi_out.erase(it);
 		}
@@ -1008,7 +1046,7 @@ CoreAudioBackend::coremidi_rediscover()
 #ifndef NDEBUG
 			printf("unregister MIDI Input: %s\n", (*it)->name().c_str());
 #endif
-			g_atomic_int_set (&_port_change_flag, 1);
+			_port_change_flag.store (1);
 			unregister_port((*it));
 			it = _system_midi_in.erase(it);
 		}
@@ -1029,12 +1067,12 @@ CoreAudioBackend::coremidi_rediscover()
 			continue;
 		}
 		LatencyRange lr;
-		lr.min = lr.max = _samples_per_period; // TODO add per-port midi-systemic latency
+		lr.min = lr.max = 0; // TODO add per-port midi-systemic latency
 		set_latency_range (p, false, lr);
-		BackendPortPtr pp = boost::dynamic_pointer_cast<BackendPort>(p);
+		BackendPortPtr pp = std::dynamic_pointer_cast<BackendPort>(p);
 		pp->set_hw_port_name(_midiio->port_name(i, true));
 		_system_midi_in.push_back(pp);
-		g_atomic_int_set (&_port_change_flag, 1);
+		_port_change_flag.store (1);
 	}
 
 	for (size_t i = 0; i < _midiio->n_midi_outputs(); ++i) {
@@ -1052,14 +1090,13 @@ CoreAudioBackend::coremidi_rediscover()
 			continue;
 		}
 		LatencyRange lr;
-		lr.min = lr.max = _samples_per_period; // TODO add per-port midi-systemic latency
+		lr.min = lr.max = 0; // TODO add per-port midi-systemic latency
 		set_latency_range (p, false, lr);
-		BackendPortPtr pp = boost::dynamic_pointer_cast<BackendPort>(p);
+		BackendPortPtr pp = std::dynamic_pointer_cast<BackendPort>(p);
 		pp->set_hw_port_name(_midiio->port_name(i, false));
 		_system_midi_out.push_back(pp);
-		g_atomic_int_set (&_port_change_flag, 1);
+		_port_change_flag.store (1);
 	}
-
 
 	assert(_system_midi_out.size() == _midiio->n_midi_outputs());
 	assert(_system_midi_in.size() == _midiio->n_midi_inputs());
@@ -1177,9 +1214,9 @@ CoreAudioBackend::monitoring_input (PortEngine::PortHandle)
 void
 CoreAudioBackend::set_latency_range (PortEngine::PortHandle port_handle, bool for_playback, LatencyRange latency_range)
 {
-	boost::shared_ptr<BackendPort> port = boost::dynamic_pointer_cast<BackendPort> (port_handle);
+	std::shared_ptr<BackendPort> port = std::dynamic_pointer_cast<BackendPort> (port_handle);
 	if (!valid_port (port)) {
-		PBD::warning << _("BackendPort::set_latency_range (): invalid port.") << endmsg;
+		DEBUG_TRACE (PBD::DEBUG::BackendPorts, "BackendPort::set_latency_range (): invalid port.");
 		return;
 	}
 	port->set_latency_range (latency_range, for_playback);
@@ -1188,24 +1225,35 @@ CoreAudioBackend::set_latency_range (PortEngine::PortHandle port_handle, bool fo
 LatencyRange
 CoreAudioBackend::get_latency_range (PortEngine::PortHandle port_handle, bool for_playback)
 {
-	boost::shared_ptr<BackendPort> port = boost::dynamic_pointer_cast<BackendPort> (port_handle);
+	std::shared_ptr<BackendPort> port = std::dynamic_pointer_cast<BackendPort> (port_handle);
 	LatencyRange r;
 	if (!valid_port (port)) {
-		PBD::warning << _("BackendPort::get_latency_range (): invalid port.") << endmsg;
+		DEBUG_TRACE (PBD::DEBUG::BackendPorts, "BackendPort::get_latency_range (): invalid port.");
 		r.min = 0;
 		r.max = 0;
 		return r;
 	}
 
 	r = port->latency_range (for_playback);
-	if (port->is_physical() && port->is_terminal() && port->type() == DataType::AUDIO) {
-		if (port->is_input() && for_playback) {
-			r.min += _samples_per_period;
-			r.max += _samples_per_period;
-		}
-		if (port->is_output() && !for_playback) {
-			r.min += _samples_per_period;
-			r.max += _samples_per_period;
+	if (port->is_physical() && port->is_terminal()) {
+		if (port->type() == DataType::AUDIO) {
+			if (port->is_input() && for_playback) {
+				r.min += _samples_per_period + _hw_audio_input_latency;
+				r.max += _samples_per_period + _hw_audio_input_latency;
+			}
+			if (port->is_output() && !for_playback) {
+				r.min += _samples_per_period + _hw_audio_output_latency;
+				r.max += _samples_per_period + _hw_audio_output_latency;
+			}
+		} else {
+			if (port->is_input() && for_playback) {
+				//r.min += _samples_per_period;
+				//r.max += _samples_per_period;
+			}
+			if (port->is_output() && !for_playback) {
+				r.min += _samples_per_period;
+				r.max += _samples_per_period;
+			}
 		}
 	}
 	return r;
@@ -1216,10 +1264,8 @@ CoreAudioBackend::get_latency_range (PortEngine::PortHandle port_handle, bool fo
 void*
 CoreAudioBackend::get_buffer (PortEngine::PortHandle port_handle, pframes_t nframes)
 {
-	boost::shared_ptr<BackendPort> port = boost::dynamic_pointer_cast<BackendPort> (port_handle);
+	std::shared_ptr<BackendPort> port = std::dynamic_pointer_cast<BackendPort> (port_handle);
 	assert (port);
-	assert (valid_port (port));
-	if (!port || !valid_port (port)) return NULL; // XXX remove me
 	return port->get_buffer (nframes);
 }
 
@@ -1229,7 +1275,8 @@ CoreAudioBackend::pre_process ()
 	bool connections_changed = false;
 	bool ports_changed = false;
 	if (!pthread_mutex_trylock (&_port_callback_mutex)) {
-		if (g_atomic_int_compare_and_exchange (&_port_change_flag, 1, 0)) {
+		int canderef (1);
+		if (_port_change_flag.compare_exchange_strong (canderef, 0)) {
 			ports_changed = true;
 		}
 		if (!_port_connection_queue.empty ()) {
@@ -1260,7 +1307,7 @@ void
 CoreAudioBackend::reset_midi_parsers ()
 {
 	for (std::vector<BackendPortPtr>::const_iterator it = _system_midi_in.begin (); it != _system_midi_in.end (); ++it) {
-		boost::shared_ptr<CoreMidiPort> port = boost::dynamic_pointer_cast<CoreMidiPort>(*it);
+		std::shared_ptr<CoreMidiPort> port = std::dynamic_pointer_cast<CoreMidiPort>(*it);
 		if (port) {
 			port->reset_parser ();
 		}
@@ -1403,15 +1450,16 @@ CoreAudioBackend::process_callback (const uint32_t n_samples, const uint64_t hos
 	/* port-connection change */
 	pre_process();
 
-	// cycle-length in usec
-	const double nominal_time = 1e6 * n_samples / _samplerate;
-
 	clock1 = g_get_monotonic_time();
+
+	//_midiio->start_cycle (AudioGetCurrentHostTime (), 1e9 * n_samples / _samplerate);
+	_midiio->start_cycle (host_time, 1e9 * n_samples / _samplerate);
+	_last_process_start = host_time;
 
 	/* get midi */
 	i=0;
 	for (std::vector<BackendPortPtr>::const_iterator it = _system_midi_in.begin (); it != _system_midi_in.end (); ++it, ++i) {
-		boost::shared_ptr<CoreMidiPort> port = boost::dynamic_pointer_cast<CoreMidiPort> (*it);
+		std::shared_ptr<CoreMidiPort> port = std::dynamic_pointer_cast<CoreMidiPort> (*it);
 		if (!port) {
 			continue;
 		}
@@ -1421,7 +1469,7 @@ CoreAudioBackend::process_callback (const uint32_t n_samples, const uint64_t hos
 
 		port->clear_events ();
 
-		while (_midiio->recv_event (i, nominal_time, time_ns, data, size)) {
+		while (_midiio->recv_event (i, time_ns, data, size)) {
 			pframes_t time = floor((float) time_ns * _samplerate * 1e-9);
 			assert (time < n_samples);
 			port->parse_events (time, data, size);
@@ -1440,9 +1488,6 @@ CoreAudioBackend::process_callback (const uint32_t n_samples, const uint64_t hos
 		memset ((*it)->get_buffer (n_samples), 0, n_samples * sizeof (Sample));
 	}
 
-	_midiio->start_cycle();
-	_last_process_start = host_time;
-
 	if (engine.process_callback (n_samples)) {
 		fprintf(stderr, "ENGINE PROCESS ERROR\n");
 		//_pcmio->pcm_stop ();
@@ -1459,9 +1504,9 @@ CoreAudioBackend::process_callback (const uint32_t n_samples, const uint64_t hos
 	/* queue outgoing midi */
 	i = 0;
 	for (std::vector<BackendPortPtr>::const_iterator it = _system_midi_out.begin (); it != _system_midi_out.end (); ++it, ++i) {
-		const CoreMidiBuffer *src = boost::dynamic_pointer_cast<CoreMidiPort>(*it)->const_buffer();
+		const CoreMidiBuffer *src = std::dynamic_pointer_cast<CoreMidiPort>(*it)->const_buffer();
 		for (CoreMidiBuffer::const_iterator mit = src->begin (); mit != src->end (); ++mit) {
-			_midiio->send_event (i, mit->timestamp (), mit->data (), mit->size ());
+			_midiio->send_event (i, mit->timestamp () * 1e9 / _samplerate , mit->data (), mit->size ());
 		}
 	}
 
@@ -1484,14 +1529,29 @@ CoreAudioBackend::process_callback (const uint32_t n_samples, const uint64_t hos
 }
 
 void
-CoreAudioBackend::error_callback ()
+CoreAudioBackend::unset_callbacks ()
 {
 	_pcmio->set_error_callback (NULL, NULL);
+	_pcmio->set_halted_callback (NULL, NULL);
 	_pcmio->set_sample_rate_callback (NULL, NULL);
 	_pcmio->set_xrun_callback (NULL, NULL);
 	_midiio->set_port_changed_callback(NULL, NULL);
+}
+
+void
+CoreAudioBackend::error_callback ()
+{
+	unset_callbacks ();
 	engine.halted_callback("CoreAudio Process aborted.");
 	_active_ca = false;
+}
+
+void
+CoreAudioBackend::halted_callback ()
+{
+	unset_callbacks ();
+	engine.halted_callback("Audio device was disconnected or shut down.");
+	stop ();
 }
 
 void
@@ -1509,6 +1569,7 @@ CoreAudioBackend::buffer_size_callback ()
 	}
 	_samples_per_period = bs;
 	engine.buffer_size_change (_samples_per_period);
+	engine.update_latencies ();
 }
 
 void
@@ -1520,10 +1581,7 @@ CoreAudioBackend::sample_rate_callback ()
 #endif
 		return;
 	}
-	_pcmio->set_error_callback (NULL, NULL);
-	_pcmio->set_sample_rate_callback (NULL, NULL);
-	_pcmio->set_xrun_callback (NULL, NULL);
-	_midiio->set_port_changed_callback(NULL, NULL);
+	unset_callbacks ();
 	engine.halted_callback("Sample Rate Changed.");
 	stop();
 }
@@ -1537,9 +1595,9 @@ CoreAudioBackend::hw_changed_callback ()
 
 /******************************************************************************/
 
-static boost::shared_ptr<CoreAudioBackend> _instance;
+static std::shared_ptr<CoreAudioBackend> _instance;
 
-static boost::shared_ptr<AudioBackend> backend_factory (AudioEngine& e);
+static std::shared_ptr<AudioBackend> backend_factory (AudioEngine& e);
 static int instantiate (const std::string& arg1, const std::string& /* arg2 */);
 static int deinstantiate ();
 static bool already_configured ();
@@ -1554,7 +1612,7 @@ static ARDOUR::AudioBackendInfo _descriptor = {
 	available
 };
 
-static boost::shared_ptr<AudioBackend>
+static std::shared_ptr<AudioBackend>
 backend_factory (AudioEngine& e)
 {
 	if (!_instance) {
@@ -1617,11 +1675,11 @@ CoreAudioPort::get_buffer (pframes_t n_samples)
 		if (it == connections.end ()) {
 			memset (_buffer, 0, n_samples * sizeof (Sample));
 		} else {
-			boost::shared_ptr<const CoreAudioPort> source = boost::dynamic_pointer_cast<const CoreAudioPort>(*it);
+			std::shared_ptr<const CoreAudioPort> source = std::dynamic_pointer_cast<const CoreAudioPort>(*it);
 			assert (source && source->is_output ());
 			memcpy (_buffer, source->const_buffer (), n_samples * sizeof (Sample));
 			while (++it != connections.end ()) {
-				source = boost::dynamic_pointer_cast<const CoreAudioPort>(*it);
+				source = std::dynamic_pointer_cast<const CoreAudioPort>(*it);
 				assert (source && source->is_output ());
 				Sample* dst = buffer ();
 				const Sample* src = source->const_buffer ();
@@ -1670,7 +1728,7 @@ void* CoreMidiPort::get_buffer (pframes_t /* nframes */)
 		for (std::set<BackendPortPtr>::const_iterator i = connections.begin ();
 		     i != connections.end ();
 		     ++i) {
-			const CoreMidiBuffer * src = boost::dynamic_pointer_cast<const CoreMidiPort>(*i)->const_buffer ();
+			const CoreMidiBuffer * src = std::dynamic_pointer_cast<const CoreMidiPort>(*i)->const_buffer ();
 			for (CoreMidiBuffer::const_iterator it = src->begin (); it != src->end (); ++it) {
 				(_buffer[_bufperiod]).push_back (*it);
 			}

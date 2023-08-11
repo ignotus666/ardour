@@ -27,10 +27,9 @@
 #define __ardour_gtk_automation_time_axis_h__
 
 #include <list>
+#include <memory>
 #include <string>
 #include <utility>
-
-#include <boost/shared_ptr.hpp>
 
 #include "ardour/types.h"
 #include "ardour/automatable.h"
@@ -65,9 +64,9 @@ class AutomationTimeAxisView : public TimeAxisView
 {
 public:
 	AutomationTimeAxisView (ARDOUR::Session*,
-	                        boost::shared_ptr<ARDOUR::Stripable>,
-	                        boost::shared_ptr<ARDOUR::Automatable>,
-	                        boost::shared_ptr<ARDOUR::AutomationControl>,
+	                        std::shared_ptr<ARDOUR::Stripable>,
+	                        std::shared_ptr<ARDOUR::Automatable>,
+	                        std::shared_ptr<ARDOUR::AutomationControl>,
 	                        Evoral::Parameter,
 	                        PublicEditor&,
 	                        TimeAxisView& parent,
@@ -78,13 +77,13 @@ public:
 
 	~AutomationTimeAxisView();
 
-	virtual void set_height (uint32_t, TrackHeightMode m = OnlySelf);
+	virtual void set_height (uint32_t, TrackHeightMode m = OnlySelf, bool from_idle = false);
 	void set_samples_per_pixel (double);
 	std::string name() const { return _name; }
 	Gdk::Color color () const;
 	void update_name_from_param ();
 
-	boost::shared_ptr<ARDOUR::Stripable> stripable() const;
+	std::shared_ptr<ARDOUR::Stripable> stripable() const;
 	ARDOUR::PresentationInfo const & presentation_info () const;
 
 	void add_automation_event (GdkEvent *, Temporal::timepos_t const &, double, bool with_guard_points);
@@ -92,10 +91,12 @@ public:
 	void clear_lines ();
 
 	/** @return Our AutomationLine, if this view has one, or 0 if it uses AutomationRegionViews */
-	boost::shared_ptr<AutomationLine> line() { return _line; }
+	std::shared_ptr<AutomationLine> line() { return _line; }
 
 	/** @return All AutomationLines associated with this view */
-	std::list<boost::shared_ptr<AutomationLine> > lines () const;
+	std::list<std::shared_ptr<AutomationLine> > lines () const;
+
+	AutomationStreamView* automation_view() const { return _view; }
 
 	void set_selected_points (PointSelection&);
 	void get_selectables (Temporal::timepos_t const &, Temporal::timepos_t const &, double top, double bot, std::list<Selectable *>&, bool within = false);
@@ -114,19 +115,19 @@ public:
 	std::string state_id() const;
 	static bool parse_state_id (std::string const &, PBD::ID &, bool &, Evoral::Parameter &);
 
-	boost::shared_ptr<ARDOUR::AutomationControl> control() const   { return _control; }
-	boost::shared_ptr<AutomationController>      controller() const { return _controller; }
+	std::shared_ptr<ARDOUR::AutomationControl> control() const   { return _control; }
+	std::shared_ptr<AutomationController>      controller() const { return _controller; }
 	Evoral::Parameter parameter () const {
 		return _parameter;
 	}
 
-	ArdourCanvas::Item* base_item () const {
-		return _base_rect;
+	ArdourCanvas::Rectangle& base_item () const {
+		return *_base_rect;
 	}
 
 	bool has_automation () const;
 
-	boost::shared_ptr<ARDOUR::Stripable> parent_stripable () {
+	std::shared_ptr<ARDOUR::Stripable> parent_stripable () {
 		return _stripable;
 	}
 
@@ -134,23 +135,37 @@ public:
 		return _show_regions;
 	}
 
+	void set_automation_state (ARDOUR::AutoState);
+
+	enum VelocityMode {
+		VelocityModeLollipops,
+		VelocityModeLine
+	};
+
+	VelocityMode velocity_mode () const { return _velocity_mode; }
+	void set_velocity_mode (VelocityMode, bool force = false);
+
+	void set_selected_regionviews (RegionSelection&);
+
+	void merge_drawn_line (Evoral::ControlList::OrderedPoints&, bool thin);
+
 protected:
 	/* Note that for MIDI controller "automation" (in regions), all of these
 	 * may be set.  In this case, _automatable is likely _route so the
 	 * controller will send immediate events out the route's MIDI port. */
 
 	/** parent strip */
-	boost::shared_ptr<ARDOUR::Stripable> _stripable;
+	std::shared_ptr<ARDOUR::Stripable> _stripable;
 	/** control */
-	boost::shared_ptr<ARDOUR::AutomationControl> _control;
+	std::shared_ptr<ARDOUR::AutomationControl> _control;
 	/** control owner; may be _stripable, something else (e.g. a pan control), or NULL */
-	boost::shared_ptr<ARDOUR::Automatable> _automatable;
+	std::shared_ptr<ARDOUR::Automatable> _automatable;
 	/** controller owner */
-	boost::shared_ptr<AutomationController> _controller;
+	std::shared_ptr<AutomationController> _controller;
 	Evoral::Parameter _parameter;
 
 	ArdourCanvas::Rectangle* _base_rect;
-	boost::shared_ptr<AutomationLine> _line;
+	std::shared_ptr<AutomationLine> _line;
 
 	std::string _name;
 
@@ -177,7 +192,7 @@ protected:
 
 	bool _show_regions;
 
-	void add_line (boost::shared_ptr<AutomationLine>);
+	void add_line (std::shared_ptr<AutomationLine>);
 
 	void clear_clicked ();
 	void hide_clicked ();
@@ -190,7 +205,6 @@ protected:
 	bool paste_one (Temporal::timepos_t const &, unsigned, float times, const Selection&, ItemCounts& counts, bool greedy=false);
 	void route_going_away ();
 
-	void set_automation_state (ARDOUR::AutoState);
 	bool ignore_state_request;
 	bool ignore_mode_request;
 
@@ -199,6 +213,7 @@ protected:
 	void automation_state_changed ();
 
 	void set_interpolation (ARDOUR::AutomationList::InterpolationStyle);
+
 	void interpolation_changed (ARDOUR::AutomationList::InterpolationStyle);
 
 	PBD::ScopedConnectionList _list_connections;
@@ -214,6 +229,12 @@ protected:
 	static bool have_name_font;
 
 	std::string automation_state_off_string () const;
+
+	virtual void add_contents (bool show_regions);
+
+	VelocityMode _velocity_mode;
+
+	bool show_automation_controls () const;
 
 private:
 	int set_state_2X (const XMLNode &, int);

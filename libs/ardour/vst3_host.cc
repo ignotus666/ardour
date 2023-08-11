@@ -20,11 +20,9 @@
 #include <algorithm>
 #include <ctype.h>
 
-#if (__cplusplus >= 201103L)
-#include <boost/make_unique.hpp>
-#endif
-
 #include "ardour/vst3_host.h"
+
+#include "pbd/atomic.h"
 
 #ifndef VST3_SCANNER_APP
 #include "ardour/debug.h"
@@ -121,24 +119,24 @@ Steinberg::utf8_to_tchar (Vst::TChar* rv, std::string const& s, size_t l)
 
 RefObject::RefObject ()
 {
-	g_atomic_int_set (&_cnt, 1);
+	_cnt.store (1);
 }
 
 uint32
 RefObject::addRef ()
 {
-	g_atomic_int_inc (&_cnt);
-	return g_atomic_int_get (&_cnt);
+	_cnt.fetch_add (1);
+	return _cnt.load ();
 }
 
 uint32
 RefObject::release ()
 {
-	if (g_atomic_int_dec_and_test (&_cnt)) {
+	if (PBD::atomic_dec_and_test (_cnt)) {
 		delete this;
 		return 0;
 	}
-	return g_atomic_int_get (&_cnt);
+	return _cnt.load ();
 }
 
 /* ****************************************************************************/
@@ -459,11 +457,7 @@ PlugInterfaceSupport::addPlugInterfaceSupported (const TUID id)
 
 HostApplication::HostApplication ()
 {
-#if (__cplusplus >= 201103L)
-	_plug_interface_support = boost::make_unique<PlugInterfaceSupport> ();
-#else
 	_plug_interface_support.reset (new PlugInterfaceSupport);
-#endif
 }
 
 tresult
@@ -585,13 +579,18 @@ Vst3ParameterChanges::addParameterData (Vst::ParamID const& pid, int32& index)
 		}
 	}
 
-	if (_used_queue_count < (int32)_queue.size ()) {
-		index = _used_queue_count++;
-		_queue[index].setParameterId (pid);
-		return &_queue[index];
+	/* some plugins (e.g. Roland JD-800) have zero controls
+	 * (set_n_params (0)) but MIDI controls (which are not accounted for).
+	 * So we grow the list as needed. NB. It is not rt-safe to do so, but it
+	 * only happens once initially.
+	 */
+	if (_used_queue_count >= (int32)_queue.size ()) {
+		_queue.resize (_used_queue_count + 1);
 	}
-	index = 0;
-	return 0;
+
+	index = _used_queue_count++;
+	_queue[index].setParameterId (pid);
+	return &_queue[index];
 }
 
 /* ****************************************************************************/

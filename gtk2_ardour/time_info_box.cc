@@ -166,7 +166,7 @@ TimeInfoBox::clock_button_release_event (GdkEventButton* ev, AudioClock* src)
 
 	if (ev->button == 1) {
 		if (!src->off()) {
-			_session->request_locate (src->current_time ().samples());
+			_session->request_locate (src->last_when ().samples());
 		}
 		return true;
 	}
@@ -243,7 +243,7 @@ TimeInfoBox::region_selection_changed ()
 	selection_length->set_off (false);
 	selection_start->set (s);
 	selection_end->set (e);
-	selection_length->set_duration (timecnt_t (e), false, timecnt_t (s));
+	selection_length->set_duration (s.distance (e).increment(), true);
 }
 
 void
@@ -273,8 +273,7 @@ TimeInfoBox::selection_changed ()
 					selection_end->set_off (false);
 					selection_length->set_off (false);
 					selection_start->set (selection.time.start_time());
-					selection_end->set (selection.time.end_time());
-					selection_length->set_is_duration (true, selection.time.start_time());
+					selection_end->set (selection.time.end_time().decrement());
 					selection_length->set_duration (selection.time.start_time().distance (selection.time.end_time()));
 				} else {
 					selection_start->set_off (true);
@@ -284,8 +283,8 @@ TimeInfoBox::selection_changed ()
 			} else {
 				s = timepos_t::max (selection.points.front()->line().the_list()->time_domain());
 				e = timepos_t::zero (s.time_domain());
-				for (PointSelection::iterator i = selection.points.begin(); i != selection.points.end(); ++i) {
-					timepos_t const p = (*i)->line().session_position ((*i)->model ());
+				for (auto const & pt : selection.points) {
+					const timepos_t p = pt->line().session_position ((*pt->model ())->when);
 					s = min (s, p);
 					e = max (e, p);
 				}
@@ -293,20 +292,19 @@ TimeInfoBox::selection_changed ()
 				selection_end->set_off (false);
 				selection_length->set_off (false);
 				selection_start->set (s);
-				selection_end->set (e);
-				selection_length->set_is_duration (true, s);
-				selection_length->set (e, false, timecnt_t (s));
+				selection_end->set (e.decrement());
+				selection_length->set_duration (s.distance (e), false);
 			}
 		} else {
 			/* this is more efficient than tracking changes per region in large selections */
-			std::set<boost::shared_ptr<ARDOUR::Playlist> > playlists;
+			PlaylistSet playlists;
 			for (RegionSelection::iterator s = selection.regions.begin(); s != selection.regions.end(); ++s) {
-				boost::shared_ptr<Playlist> pl = (*s)->region()->playlist();
+				std::shared_ptr<Playlist> pl = (*s)->region()->playlist();
 				if (pl) {
 					playlists.insert (pl);
 				}
 			}
-			for (std::set<boost::shared_ptr<ARDOUR::Playlist> >::iterator ps = playlists.begin(); ps != playlists.end(); ++ps) {
+			for (PlaylistSet::iterator ps = playlists.begin(); ps != playlists.end(); ++ps) {
 				(*ps)->ContentsChanged.connect (region_property_connections, invalidator (*this),
 								boost::bind (&TimeInfoBox::region_selection_changed, this), gui_context());
 			}
@@ -326,9 +324,8 @@ TimeInfoBox::selection_changed ()
 				selection_end->set_off (false);
 				selection_length->set_off (false);
 				selection_start->set (s);
-				selection_end->set (e);
-				selection_length->set_is_duration (true, s);
-				selection_length->set (e, false, timecnt_t (s));
+				selection_end->set (e.decrement());
+				selection_length->set_duration(s.distance (e));
 			} else {
 				selection_start->set_off (true);
 				selection_end->set_off (true);
@@ -339,9 +336,8 @@ TimeInfoBox::selection_changed ()
 			selection_end->set_off (false);
 			selection_length->set_off (false);
 			selection_start->set (selection.time.start_time());
-			selection_end->set (selection.time.end_time());
-			selection_length->set_is_duration (true, selection.time.start_time());
-			selection_length->set_duration (selection.time.start_time().distance (selection.time.end_time()));
+			selection_end->set (selection.time.end_time().decrement());
+			selection_length->set_duration (selection.time.length());
 		}
 		break;
 

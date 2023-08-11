@@ -17,11 +17,10 @@ import copy
 top = '.'
 out = 'build'
 
-from waflib import TaskGen
 @TaskGen.extension('.m')
 def m_hook(self, node):
-	"""Alias .m files to be compiled the same as .c files, gcc will do the right thing."""
-	return self.create_compiled_task('c', node)
+    """Alias .m files to be compiled the same as .c files, gcc will do the right thing."""
+    return self.create_compiled_task('c', node)
 
 path_prefix = 'gtk2_ardour/'
 
@@ -64,7 +63,7 @@ gtk2_ardour_sources = [
         'automation_streamview.cc',
         'automation_time_axis.cc',
         'axis_view.cc',
-   # 'beatbox_gui.cc',
+        # 'beatbox_gui.cc',
         'bbt_marker_dialog.cc',
         'big_clock_window.cc',
         'big_transport_window.cc',
@@ -143,6 +142,7 @@ gtk2_ardour_sources = [
         'instrument_selector.cc',
         'interthread_progress_window.cc',
         'io_button.cc',
+        'io_plugin_window.cc',
         'io_selector.cc',
         'hit.cc',
         'keyboard.cc',
@@ -150,6 +150,7 @@ gtk2_ardour_sources = [
         'latency_gui.cc',
         'led.cc',
         'level_meter.cc',
+        'library_download_dialog.cc',
         'location_ui.cc',
         'loudness_dialog.cc',
         'loudness_settings.cc',
@@ -188,7 +189,6 @@ gtk2_ardour_sources = [
         'meter_strip.cc',
         'meter_patterns.cc',
         'monitor_section.cc',
-        'monitor_selector.cc',
         'mono_panner.cc',
         'mono_panner_editor.cc',
         'mouse_cursors.cc',
@@ -258,6 +258,7 @@ gtk2_ardour_sources = [
         'rhythm_ferret.cc',
         'route_group_dialog.cc',
         'route_group_menu.cc',
+        'route_list_base.cc',
         'route_params_ui.cc',
         'route_processor_selection.cc',
         'route_time_axis.cc',
@@ -279,6 +280,7 @@ gtk2_ardour_sources = [
         'session_option_editor.cc',
         'sfdb_ui.cc',
         'shuttle_control.cc',
+        'simple_export_dialog.cc',
         'slot_properties_box.cc',
         'source_list_base.cc',
         'soundcloud_export_selector.cc',
@@ -298,6 +300,7 @@ gtk2_ardour_sources = [
         'tempo_curve.cc',
         'tempo_dialog.cc',
         'grid_lines.cc',
+        'tempo_map_change.cc',
         'time_axis_view.cc',
         'time_axis_view_item.cc',
         'time_fx_dialog.cc',
@@ -313,8 +316,10 @@ gtk2_ardour_sources = [
         'transport_masters_dialog.cc',
         'transpose_dialog.cc',
         'trigger_clip_picker.cc',
+        'trigger_jump_dialog.cc',
         'trigger_page.cc',
         'trigger_region_list.cc',
+        'trigger_route_list.cc',
         'trigger_source_list.cc',
         'trigger_strip.cc',
         'trigger_master.cc',
@@ -328,7 +333,7 @@ gtk2_ardour_sources = [
         'virtual_keyboard_window.cc',
         'visibility_group.cc',
         'window_manager.cc',
-# video-timeline related sources:
+        # video-timeline related sources:
         'video_image_frame.cc',
         'add_video_dialog.cc',
         'editor_videotimeline.cc',
@@ -337,10 +342,10 @@ gtk2_ardour_sources = [
         'video_monitor.cc',
         'transcode_ffmpeg.cc',
         'transcode_video_dialog.cc',
+        'velocity_ghost_region.cc',
         'video_server_dialog.cc',
         'utils_videotl.cc',
-        'export_video_dialog.cc',
-        'export_video_infobox.cc'
+        'export_video_dialog.cc'
 ]
 
 def enoify (major, minor):
@@ -423,6 +428,14 @@ def enoify (major, minor):
             return "\\n\\\"The Shutov Assembly\\\"" # 1992
         if minor == 5:
             return "\\n\\\"Neroli\\\"" # 1993
+        if minor == 6:
+            return "\\n\\\"Spinner\\\"" # 1995
+        if minor == 7:
+            return "\\n\\\"The Drop\\\"" # 1997
+        if minor == 8:
+            return "\\n\\\"Tracks and Traces\\\"" # 1997
+        if minor == 9:
+            return "\\n\\\"Music for White Cube\\\"" # 1997
     return "\\\"\\\""
 
 def options(opt):
@@ -430,8 +443,6 @@ def options(opt):
 
 def configure(conf):
     conf.load('misc')
-    conf.load('compiler_cxx')
-    autowaf.configure(conf)
 
     # TODO: Insert a sanity check for on OS X to ensure CoreAudio is present
 
@@ -458,15 +469,20 @@ def configure(conf):
                     conf.env.append_value(var, ['-isystem', d])
 
     if sys.platform == 'darwin':
-        conf.check(
-                msg              ='Checking for Cocoa live resizing constants',
-                fragment         = '#include <AppKit/NSWindow.h>\n int main(void) { (void) NSWindowWillStartLiveResizeNotification; return 0; }\n',
-                define_name      = 'HAVE_COCOA_LIVE_RESIZING',
-                uselib_store     = 'COCOA_LIVE_RESIZING',
-                compiler         = 'cc',
-                compile_filename = 'test.m',
-                execute          = True,
-                mandatory        = False)
+        if conf.env['build_target'] in ['bigsur', 'monterey']:
+            # we cannot execute test code when x-compiling ARM on Intel,
+            # besides, NSWindowWillStartLiveResizeNotification is definitely available
+            conf.define('HAVE_COCOA_LIVE_RESIZING', 1)
+        else:
+            conf.check(
+                    msg              ='Checking for Cocoa live resizing constants',
+                    fragment         = '#include <AppKit/NSWindow.h>\n int main(void) { (void) NSWindowWillStartLiveResizeNotification; return 0; }\n',
+                    define_name      = 'HAVE_COCOA_LIVE_RESIZING',
+                    uselib_store     = 'COCOA_LIVE_RESIZING',
+                    compiler         = 'cc',
+                    compile_filename = 'test.m',
+                    execute          = True,
+                    mandatory        = False)
 
     conf.write_config_header('gtk2ardour-config.h', remove=False)
 
@@ -475,11 +491,7 @@ def configure(conf):
     conf.define('CODENAME', enoify(int(conf.env['MAJOR']), int(conf.env['MINOR'])))
     conf.env['define_key'] = ['VERSIONSTRING', 'CODENAME' ]
     conf.write_config_header('gtk2ardour-version.h')
-    conf.env['define_key'] = bak;
-
-    # Boost headers
-    autowaf.check_header(conf, 'cxx', 'boost/shared_ptr.hpp')
-    autowaf.check_header(conf, 'cxx', 'boost/weak_ptr.hpp')
+    conf.env['define_key'] = bak
 
 def _doPyp(infileName, deps = False):
     outStr = ''
@@ -493,7 +505,6 @@ def _doPyp(infileName, deps = False):
     inLines = fd.readlines()
     if fd != sys.stdin:
         fd.close()
-
 
     for line in inLines:
         bits = re_spaces.split(line)
@@ -521,7 +532,6 @@ def include_processor(task):
     fdOut = open (outfileName, "w")
     fdOut.write (_doPyp(infileName))
     fdOut.close ()
-
 
 def build_color_scheme(path, prefix):
     f = open (path, 'r')
@@ -574,6 +584,9 @@ def build(bld):
         obj.linkflags = ''
         obj.uselib       = 'UUID FLAC FONTCONFIG GLIBMM GTHREAD GTK OGG CURL DL GTKMM CANVAS FFTW3F LO TAGLIB XML LILV RUBBERBAND AUBIO LRDF ARCHIVE VAMPSDK VAMPHOSTSDK'
         obj.source += [ 'luadoc.cc', 'bundle_env_linux.cc' ]
+        obj.use += [ 'X11' ]
+        if bld.is_defined('HAVE_USB'):
+            obj.uselib += ' USB'
         if bld.is_defined('HAVE_SUIL'):
             obj.source += [ 'lv2_plugin_ui.cc' ]
             obj.use += [ 'SUIL' ]
@@ -581,7 +594,6 @@ def build(bld):
             obj.source += [ 'vst_plugin_ui.cc' ]
             obj.source += [ 'linux_vst_gui_support.cc', 'lxvst_plugin_ui.cc' ]
             obj.defines += [ 'LXVST_SUPPORT' ]
-            obj.use += [ 'X11' ]
 
         if bld.is_defined('VST3_SUPPORT'):
             obj.source += [ 'vst3_plugin_ui.cc' ]
@@ -622,7 +634,6 @@ def build(bld):
 #        # obj.source += [ 'canvas_test.cc', ]
 #        obj.source += [ 'toolbar_test.cc', 'enums.cc']
 
-
     # executable version of the GTK GUI
     if bld.env['build_target'] == 'mingw':
         obj = bld (features = 'cxx c cxxprogram winres')
@@ -662,6 +673,8 @@ def build(bld):
     obj.linkflags    = ''
     obj.uselib       = 'UUID FLAC FONTCONFIG GLIBMM GTHREAD GTK OGG CURL DL GTKMM CANVAS FFTW3F LO TAGLIB XML LILV RUBBERBAND AUBIO LRDF ARCHIVE VAMPSDK VAMPHOSTSDK'
 
+    if bld.is_defined('HAVE_USB'):
+        obj.uselib += ' USB'
     if sys.platform == 'darwin':
         obj.uselib += ' AUDIOUNITS OSX '
         obj.use    += ' libappleutility'
@@ -671,6 +684,7 @@ def build(bld):
         obj.source += [ 'windows_icon.rc' ]
     else:
         obj.source += [ 'bundle_env_linux.cc' ]
+        obj.use += [ 'X11' ]
 
     obj.includes += ['../libs']
     obj.includes += ['../libs/vst3']
@@ -696,7 +710,6 @@ def build(bld):
     if bld.is_defined('LXVST_SUPPORT'):
         obj.source += [ 'linux_vst_gui_support.cc', 'lxvst_plugin_ui.cc' ]
         obj.defines += [ 'LXVST_SUPPORT' ]
-        obj.use += [ 'X11' ]
 
     if bld.is_defined('MACVST_SUPPORT'):
         obj.source += [ 'mac_vst_plugin_ui.mm' ]
@@ -820,8 +833,8 @@ def build(bld):
 
     # @FONT_SIZE_XXXX@
     for sizename,points in iter(font_sizes.items()):
-            key = "_".join (['FONT_SIZE',sizename])
-            font_subst_dict[key] = points
+        key = "_".join (['FONT_SIZE',sizename])
+        font_subst_dict[key] = points
 
     # various font names, eg @BOLD_MONOSPACE@
     for font_sym,text in iter(font_names.items()):
@@ -869,7 +882,7 @@ def build(bld):
 
     # always build all versions of the menu definitions
     # so that we can try them out with different program builds.
-    for program in [ 'ardour', 'trx' ]:
+    for program in [ 'ardour']:
         obj = bld(features = 'command-output')
         obj.command = 'cpp'
         obj.command_is_external = True
@@ -915,12 +928,13 @@ def build(bld):
         bld.install_files (os.path.join (bld.env['PREFIX'], 'share/appdata'), obj.target)
 
         # install desktop icon files
-        bld.install_as('${PREFIX}/share/icons/hicolor/16x16/apps/ardour6.png', 'resources/Ardour-icon_16px.png')
-        bld.install_as('${PREFIX}/share/icons/hicolor/22x22/apps/ardour6.png', 'resources/Ardour-icon_22px.png')
-        bld.install_as('${PREFIX}/share/icons/hicolor/32x32/apps/ardour6.png', 'resources/Ardour-icon_32px.png')
-        bld.install_as('${PREFIX}/share/icons/hicolor/48x48/apps/ardour6.png', 'resources/Ardour-icon_48px.png')
-        bld.install_as('${PREFIX}/share/icons/hicolor/256x256/apps/ardour6.png', 'resources/Ardour-icon_256px.png')
-        bld.install_as('${PREFIX}/share/icons/hicolor/512x512/apps/ardour6.png', 'resources/Ardour-icon_512px.png')
+        icon_file_name = str (bld.env['lwrcase_dirname']) + '.png'
+        bld.install_as('${PREFIX}/share/icons/hicolor/16x16/apps/' + icon_file_name, 'resources/Ardour-icon_16px.png')
+        bld.install_as('${PREFIX}/share/icons/hicolor/22x22/apps/'+ icon_file_name, 'resources/Ardour-icon_22px.png')
+        bld.install_as('${PREFIX}/share/icons/hicolor/32x32/apps/'+ icon_file_name, 'resources/Ardour-icon_32px.png')
+        bld.install_as('${PREFIX}/share/icons/hicolor/48x48/apps/'+ icon_file_name, 'resources/Ardour-icon_48px.png')
+        bld.install_as('${PREFIX}/share/icons/hicolor/256x256/apps/'+ icon_file_name, 'resources/Ardour-icon_256px.png')
+        bld.install_as('${PREFIX}/share/icons/hicolor/512x512/apps/'+ icon_file_name, 'resources/Ardour-icon_512px.png')
 
     # Keybindings
 
@@ -931,7 +945,7 @@ def build(bld):
     for b in [ 'ardour' ] :
         obj = bld(
             target = b + '.keys',
-            source = [ b + '.keys.in', 'mixer.bindings', 'processor_box.bindings', 'step_editing.bindings', 'monitor.bindings', 'trigger.bindings', 'clip_editor.bindings' ],
+            source = [ b + '.keys.in', 'mixer.bindings', 'processor_box.bindings', 'step_editing.bindings', 'monitor.bindings', 'trigger.bindings' ],
             rule = a_rule
             )
         obj.install_path = bld.env['CONFDIR']
@@ -955,7 +969,7 @@ def build(bld):
     bld.install_files(bld.env['CONFDIR'], 'default_ui_config')
     # Color Themes. Find each color file for this program only
     # and install
-    bld.install_files (os.path.join(bld.env['DATADIR'], 'themes'), bld.path.ant_glob ('themes/*-' + pgmname.lower() + '.colors'));
+    bld.install_files (os.path.join(bld.env['DATADIR'], 'themes'), bld.path.ant_glob ('themes/*-' + pgmname.lower() + '.colors'))
 
     # Default export stuff
     bld.install_files(os.path.join(bld.env['CONFDIR'], 'export'), bld.path.ant_glob('export/*.format'))
@@ -969,28 +983,28 @@ def build(bld):
                             mo)
 
 def i18n(bld):
-        I18N_PACKAGE = 'gtk2_ardour' + bld.env['MAJOR']
-        autowaf.build_i18n(bld, top, 'gtk2_ardour', I18N_PACKAGE, gtk2_ardour_sources,
-                           'Paul Davis')
-        appdata_i18n_pot(bld)
-        appdata_i18n_po(bld)
+    I18N_PACKAGE = 'gtk2_ardour' + bld.env['MAJOR']
+    autowaf.build_i18n(bld, top, 'gtk2_ardour', I18N_PACKAGE, gtk2_ardour_sources,
+                       'Paul Davis')
+    appdata_i18n_pot(bld)
+    appdata_i18n_po(bld)
 
 def i18n_pot(bld):
-        I18N_PACKAGE = 'gtk2_ardour' + bld.env['MAJOR']
-        autowaf.build_i18n_pot(bld, top, 'gtk2_ardour', I18N_PACKAGE, gtk2_ardour_sources,
-                               'Paul Davis')
-        appdata_i18n_pot(bld)
+    I18N_PACKAGE = 'gtk2_ardour' + bld.env['MAJOR']
+    autowaf.build_i18n_pot(bld, top, 'gtk2_ardour', I18N_PACKAGE, gtk2_ardour_sources,
+                           'Paul Davis')
+    appdata_i18n_pot(bld)
 
 def i18n_po(bld):
-        I18N_PACKAGE = 'gtk2_ardour' + bld.env['MAJOR']
-        autowaf.build_i18n_po(bld, top, 'gtk2_ardour', I18N_PACKAGE, gtk2_ardour_sources,
-                              'Paul Davis')
-        appdata_i18n_po(bld)
+    I18N_PACKAGE = 'gtk2_ardour' + bld.env['MAJOR']
+    autowaf.build_i18n_po(bld, top, 'gtk2_ardour', I18N_PACKAGE, gtk2_ardour_sources,
+                          'Paul Davis')
+    appdata_i18n_po(bld)
 
 def i18n_mo(bld):
-        I18N_PACKAGE = 'gtk2_ardour' + bld.env['MAJOR']
-        autowaf.build_i18n_mo(bld, top, 'gtk2_ardour', I18N_PACKAGE, gtk2_ardour_sources,
-                              'Paul Davis')
+    I18N_PACKAGE = 'gtk2_ardour' + bld.env['MAJOR']
+    autowaf.build_i18n_mo(bld, top, 'gtk2_ardour', I18N_PACKAGE, gtk2_ardour_sources,
+                          'Paul Davis')
 
 def appdata_i18n_pot(bld):
     potfile = os.path.join(bld.top_dir, 'gtk2_ardour', 'appdata',
@@ -1002,9 +1016,9 @@ def appdata_i18n_pot(bld):
                 'ardour.appdata.xml.in.in')
         Logs.info('Updating ' + potfile)
         try:
-                subprocess.call(('itstool', '-i', itsfile, '-o', potfile, adsource))
+            subprocess.call(('itstool', '-i', itsfile, '-o', potfile, adsource))
         except:
-                print ('Error processing appdata pot file - ignored')
+            print ('Error processing appdata pot file - ignored')
     elif bld.cmd == 'clean' and os.path.exists(potfile):
         Logs.info('Removing Ardour appdata pot file')
         os.remove(potfile)

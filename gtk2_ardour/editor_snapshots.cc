@@ -48,12 +48,12 @@ using namespace Gtk;
 using namespace ARDOUR;
 using namespace ARDOUR_UI_UTILS;
 
-EditorSnapshots::EditorSnapshots (Editor* e)
-	: EditorComponent (e)
+EditorSnapshots::EditorSnapshots ()
 {
 	_snapshot_model = ListStore::create (_columns);
 	_snapshot_display.set_model (_snapshot_model);
-	_snapshot_display.append_column (_("Snapshot (click to load)"), _columns.visible_name);
+	_snapshot_display.append_column ("", _columns.current_active);
+	_snapshot_display.append_column (_("Snapshot (dbl-click to load)"), _columns.visible_name);
 	_snapshot_display.append_column (_("Modified Date"), _columns.time_formatted);
 	_snapshot_display.set_size_request (75, -1);
 	_snapshot_display.set_headers_visible (true);
@@ -61,7 +61,6 @@ EditorSnapshots::EditorSnapshots (Editor* e)
 	_scroller.add (_snapshot_display);
 	_scroller.set_policy (Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
 
-	_snapshot_display.get_selection()->signal_changed().connect (sigc::mem_fun(*this, &EditorSnapshots::selection_changed));
 	_snapshot_display.signal_button_press_event().connect (sigc::mem_fun (*this, &EditorSnapshots::button_press), false);
 }
 
@@ -71,31 +70,6 @@ EditorSnapshots::set_session (Session* s)
 	SessionHandlePtr::set_session (s);
 
 	redisplay ();
-}
-
-/* A new snapshot has been selected. */
-void
-EditorSnapshots::selection_changed ()
-{
-	if (_snapshot_display.get_selection()->count_selected_rows() == 0) {
-		return;
-	}
-
-	TreeModel::iterator i = _snapshot_display.get_selection()->get_selected();
-
-	std::string snap_name = (*i)[_columns.real_name];
-
-	if (snap_name.length() == 0) {
-		return;
-	}
-
-	if (_session->snap_name() == snap_name) {
-		return;
-	}
-
-	_snapshot_display.set_sensitive (false);
-	ARDOUR_UI::instance()->load_session (_session->path(), string (snap_name));
-	_snapshot_display.set_sensitive (true);
 }
 
 bool
@@ -116,6 +90,44 @@ EditorSnapshots::button_press (GdkEventButton* ev)
 			popup_context_menu (ev->button, ev->time, row[_columns.real_name]);
 		}
 		return true;
+	} else if (ev->type == GDK_2BUTTON_PRESS) {
+		Gtk::TreeModel::Path path;
+		Gtk::TreeViewColumn* col;
+		int cx;
+		int cy;
+		string snap_name;
+		_snapshot_display.get_path_at_pos ((int) ev->x, (int) ev->y, path, col, cx, cy);
+		Gtk::TreeModel::iterator iter = _snapshot_model->get_iter (path);
+		if (iter) {
+			Gtk::TreeModel::Row row = *iter;
+			snap_name = row[_columns.real_name];
+		}
+
+		if (snap_name.length() == 0) {
+			return false;
+		}
+
+		if (_session->snap_name() == snap_name) {
+			return false;
+		}
+
+		ArdourDialog confirm (_("Load Snapshot?"), true);
+		Gtk::Label* m = Gtk::manage (new Gtk::Label (string_compose ("%1\n%2", _("Do you want to load this snapshot?"), snap_name)));
+		confirm.get_vbox()->pack_start (*m, true, true);
+		confirm.add_button (Gtk::Stock::CANCEL, Gtk::RESPONSE_CANCEL);
+		confirm.add_button (_("Yes, Load It"), Gtk::RESPONSE_ACCEPT);
+		confirm.show_all ();
+		switch (confirm.run()) {
+			case RESPONSE_ACCEPT:
+				break;
+			default:
+				return false;
+		}
+
+		_snapshot_display.set_sensitive (false);
+		ARDOUR_UI::instance()->load_session (_session->path(), string (snap_name));
+		_snapshot_display.set_sensitive (true);
+		return true;
 	}
 	return false;
 }
@@ -134,10 +146,9 @@ EditorSnapshots::popup_context_menu (int button, int32_t time, std::string snaps
 	MenuList& items (_menu.items());
 	items.clear ();
 
-	const bool modification_allowed = (_session->snap_name() != snapshot_name && _session->name() != snapshot_name);
+	const bool modification_allowed = (_session->snap_name() != snapshot_name && _session->name() != snapshot_name && _snapshot_model->children().size () > 1);
 
 	add_item_with_sensitivity (items, MenuElem (_("Remove"), sigc::bind (sigc::mem_fun (*this, &EditorSnapshots::remove), snapshot_name)), modification_allowed);
-
 	add_item_with_sensitivity (items, MenuElem (_("Rename..."), sigc::bind (sigc::mem_fun (*this, &EditorSnapshots::rename), snapshot_name)), modification_allowed);
 
 	_menu.popup (button, time);
@@ -191,16 +202,11 @@ EditorSnapshots::redisplay ()
 		return;
 	}
 
-	vector<std::string> state_file_paths;
+	vector<string> state_file_names = _session->possible_states ();
 
-	get_state_files_in_directory (_session->session_directory().root_path(),
-	                              state_file_paths);
-
-	if (state_file_paths.empty()) {
+	if (state_file_names.empty()) {
 		return;
 	}
-
-	vector<string> state_file_names (get_file_names_no_extension(state_file_paths));
 
 	_snapshot_model->clear ();
 
@@ -226,6 +232,11 @@ EditorSnapshots::redisplay ()
 		g_stat (s.c_str(), &gsb);
 		Glib::DateTime gdt(Glib::DateTime::create_now_local (gsb.st_mtime));
 
+		if (_session->snap_name() == display_name) {
+			row[_columns.current_active] = u8"\u25B6"; // BLACK RIGHT-POINTING TRIANGLE
+		} else {
+			row[_columns.current_active] = "";
+		}
 		row[_columns.visible_name] = display_name;
 		row[_columns.real_name] = statename;
 		row[_columns.time_formatted] = gdt.format ("%F %H:%M");

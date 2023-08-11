@@ -23,9 +23,6 @@ def options(opt):
 
 def configure(conf):
     conf.load('misc')
-    conf.load('compiler_cxx')
-    autowaf.configure(conf)
-
 
 def build(bld):
 
@@ -58,6 +55,9 @@ def build(bld):
 
     if bld.is_defined('HAVE_SUIL'):
         obj.uselib += ' SUIL'
+
+    if bld.is_defined('HAVE_USB'):
+        obj.uselib += ' USB'
 
     if sys.platform == 'darwin':
         obj.uselib += ' AUDIOUNITS OSX'

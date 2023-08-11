@@ -20,21 +20,12 @@
 #ifndef _pbd_mpc_queue_h_
 #define _pbd_mpc_queue_h_
 
-#if defined(__cplusplus) && __cplusplus >= 201103L
-# define MPMC_USE_STD_ATOMIC 1
-#endif
-
 #include <cassert>
 #include <stdint.h>
+#include <stdlib.h>
 
-#ifdef MPMC_USE_STD_ATOMIC
 # include <atomic>
 # define MPMC_QUEUE_TYPE std::atomic<size_t>
-#else
-# include <glib.h>
-# include "pbd/g_atomic_compat.h"
-# define MPMC_QUEUE_TYPE GATOMIC_QUAL guint
-#endif
 
 namespace PBD {
 
@@ -57,6 +48,10 @@ public:
 	~MPMCQueue ()
 	{
 		delete[] _buffer;
+	}
+
+	size_t capacity () const {
+		return _buffer_mask + 1;
 	}
 
 	static size_t
@@ -84,65 +79,37 @@ public:
 	void
 	clear ()
 	{
-#ifdef MPMC_USE_STD_ATOMIC
 		for (size_t i = 0; i <= _buffer_mask; ++i) {
 			_buffer[i]._sequence.store (i, std::memory_order_relaxed);
 		}
 		_enqueue_pos.store (0, std::memory_order_relaxed);
 		_dequeue_pos.store (0, std::memory_order_relaxed);
-#else
-		for (size_t i = 0; i <= _buffer_mask; ++i) {
-			g_atomic_int_set (&_buffer[i]._sequence, i);
-		}
-		g_atomic_int_set (&_enqueue_pos, 0);
-		g_atomic_int_set (&_dequeue_pos, 0);
-#endif
 	}
 
 	bool
 	push_back (T const& data)
 	{
 		cell_t* cell;
-#ifdef MPMC_USE_STD_ATOMIC
 		size_t pos = _enqueue_pos.load (std::memory_order_relaxed);
-#else
-		guint pos = g_atomic_int_get (&_enqueue_pos);
-#endif
+
 		for (;;) {
 			cell = &_buffer[pos & _buffer_mask];
-#ifdef MPMC_USE_STD_ATOMIC
 			size_t seq = cell->_sequence.load (std::memory_order_acquire);
-#else
-			guint seq = g_atomic_int_get (&cell->_sequence);
-#endif
 			intptr_t dif = (intptr_t)seq - (intptr_t)pos;
 			if (dif == 0) {
-#ifdef MPMC_USE_STD_ATOMIC
 				if (_enqueue_pos.compare_exchange_weak (pos, pos + 1, std::memory_order_relaxed))
-#else
-				if (g_atomic_int_compare_and_exchange (&_enqueue_pos, pos, pos + 1))
-#endif
 				{
 					break;
 				}
 			} else if (dif < 0) {
-				assert (0);
 				return false;
 			} else {
-#ifdef MPMC_USE_STD_ATOMIC
 				pos = _enqueue_pos.load (std::memory_order_relaxed);
-#else
-				pos = g_atomic_int_get (&_enqueue_pos);
-#endif
 			}
 		}
 
 		cell->_data = data;
-#ifdef MPMC_USE_STD_ATOMIC
 		cell->_sequence.store (pos + 1, std::memory_order_release);
-#else
-		g_atomic_int_set (&cell->_sequence, pos + 1);
-#endif
 
 		return true;
 	}
@@ -151,45 +118,26 @@ public:
 	pop_front (T& data)
 	{
 		cell_t* cell;
-#ifdef MPMC_USE_STD_ATOMIC
 		size_t pos = _dequeue_pos.load (std::memory_order_relaxed);
-#else
-		guint pos = g_atomic_int_get (&_dequeue_pos);
-#endif
+
 		for (;;) {
 			cell = &_buffer[pos & _buffer_mask];
-#ifdef MPMC_USE_STD_ATOMIC
 			size_t seq = cell->_sequence.load (std::memory_order_acquire);
-#else
-			guint seq = g_atomic_int_get (&cell->_sequence);
-#endif
 			intptr_t dif = (intptr_t)seq - (intptr_t) (pos + 1);
 			if (dif == 0) {
-#ifdef MPMC_USE_STD_ATOMIC
 				if (_dequeue_pos.compare_exchange_weak (pos, pos + 1, std::memory_order_relaxed))
-#else
-				if (g_atomic_int_compare_and_exchange (&_dequeue_pos, pos, pos + 1))
-#endif
 				{
 					break;
 				}
 			} else if (dif < 0) {
 				return false;
 			} else {
-#ifdef MPMC_USE_STD_ATOMIC
 				pos = _dequeue_pos.load (std::memory_order_relaxed);
-#else
-				pos = g_atomic_int_get (&_dequeue_pos);
-#endif
 			}
 		}
 
 		data = cell->_data;
-#ifdef MPMC_USE_STD_ATOMIC
 		cell->_sequence.store (pos + _buffer_mask + 1, std::memory_order_release);
-#else
-		g_atomic_int_set (&cell->_sequence, pos + _buffer_mask + 1);
-#endif
 		return true;
 	}
 
@@ -211,7 +159,6 @@ private:
 
 } // namespace PBD
 
-#undef MPMC_USE_STD_ATOMIC
 #undef MPMC_QUEUE_TYPE
 
 #endif

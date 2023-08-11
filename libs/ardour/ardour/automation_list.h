@@ -23,7 +23,8 @@
 #ifndef __ardour_automation_event_h__
 #define __ardour_automation_event_h__
 
-#include <stdint.h>
+#include <atomic>
+#include <cstdint>
 #include <cstdlib>
 #include <list>
 #include <cmath>
@@ -37,7 +38,6 @@
 #include "pbd/xml++.h"
 #include "pbd/statefuldestructible.h"
 #include "pbd/properties.h"
-#include "pbd/g_atomic_compat.h"
 
 #include "ardour/ardour.h"
 
@@ -50,11 +50,11 @@ class BeatsSamplesConverter;
 class LIBARDOUR_API AutomationListProperty : public PBD::SharedStatefulProperty<AutomationList>
 {
 public:
-	AutomationListProperty (PBD::PropertyDescriptor<boost::shared_ptr<AutomationList> > d, Ptr p)
+	AutomationListProperty (PBD::PropertyDescriptor<std::shared_ptr<AutomationList> > d, Ptr p)
 		: PBD::SharedStatefulProperty<AutomationList> (d.property_id, p)
 	{}
 
-	AutomationListProperty (PBD::PropertyDescriptor<boost::shared_ptr<AutomationList> > d, Ptr o, Ptr c)
+	AutomationListProperty (PBD::PropertyDescriptor<std::shared_ptr<AutomationList> > d, Ptr o, Ptr c)
 		: PBD::SharedStatefulProperty<AutomationList> (d.property_id, o, c)
 	{}
 
@@ -73,16 +73,16 @@ private:
 class LIBARDOUR_API AutomationList : public Evoral::ControlList, public PBD::StatefulDestructible
 {
 public:
-	AutomationList (const Evoral::Parameter& id, const Evoral::ParameterDescriptor& desc, Temporal::TimeDomain);
-	AutomationList (const Evoral::Parameter& id, Temporal::TimeDomain);
+	AutomationList (const Evoral::Parameter& id, const Evoral::ParameterDescriptor& desc, Temporal::TimeDomainProvider const &);
+	AutomationList (const Evoral::Parameter& id, Temporal::TimeDomainProvider const &);
 	AutomationList (const XMLNode&, Evoral::Parameter id);
 	AutomationList (const AutomationList&);
 	AutomationList (const AutomationList&, timepos_t const & start, timepos_t const & end);
 	~AutomationList();
 
-	virtual boost::shared_ptr<ControlList> create(const Evoral::Parameter&           id,
+	virtual std::shared_ptr<ControlList> create(const Evoral::Parameter&           id,
 	                                              const Evoral::ParameterDescriptor& desc,
-	                                              Temporal::TimeDomain);
+	                                              Temporal::TimeDomainProvider const &);
 
 	AutomationList& operator= (const AutomationList&);
 
@@ -109,14 +109,14 @@ public:
 	void start_touch (timepos_t const & when);
 	void stop_touch (timepos_t const &  when);
 
-	bool touching () const { return g_atomic_int_get (const_cast<GATOMIC_QUAL gint*>(&_touching)) != 0; }
+	bool touching () const { return _touching.load() != 0; }
 	bool writing () const { return _state == Write; }
 	bool touch_enabled () const { return _state & (Touch | Latch); }
 
-	XMLNode& get_state ();
+	XMLNode& get_state () const;
 	int set_state (const XMLNode &, int version);
 
-	Command* memento_command (XMLNode* before, XMLNode* after);
+	PBD::Command* memento_command (XMLNode* before, XMLNode* after);
 
 	bool operator!= (const AutomationList &) const;
 
@@ -130,13 +130,13 @@ private:
 	void create_curve_if_necessary ();
 	int deserialize_events (const XMLNode&);
 
-	XMLNode& state (bool save_auto_state, bool need_lock);
-	XMLNode& serialize_events (bool need_lock);
+	XMLNode& state (bool save_auto_state, bool need_lock) const;
+	XMLNode& serialize_events (bool need_lock) const;
 
 	void maybe_signal_changed ();
 
 	AutoState         _state;
-	GATOMIC_QUAL gint _touching;
+	std::atomic<int> _touching;
 
 	PBD::ScopedConnection _writepass_connection;
 

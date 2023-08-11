@@ -20,8 +20,41 @@
 #include <cassert>
 
 #include "temporal/bbt_time.h"
+#include "temporal/bbt_argument.h"
 
 using namespace Temporal;
+
+int64_t
+BBT_Time::as_integer () const
+{
+	/* up to 256 beats in a bar, 4095 ticks in a beat,
+	   and whatever is left for bars (a lot!)
+	*/
+	return (((int64_t) bars)<<20)|(beats<<12)|ticks;
+}
+
+BBT_Time
+BBT_Time::from_integer (int64_t v)
+{
+	int32_t B = v>>20;
+	int32_t b = (v>>12) & 0xff;
+	int32_t t= v & 0xfff;
+	return BBT_Time (B, b, t);
+}
+
+BBT_Time
+BBT_Time::round_up_to_bar() const
+{
+	if (ticks == 0 && beats == 1) {
+		return *this;
+	}
+	BBT_Time b = round_up_to_beat ();
+	if (b.beats > 1) {
+		b.bars += 1;
+		b.beats = 1;
+	}
+	return b;
+}
 
 BBT_Offset::BBT_Offset (double dbeats)
 {
@@ -33,8 +66,8 @@ BBT_Offset::BBT_Offset (double dbeats)
 	assert (dbeats >= 0);
 
 	bars = 0;
-	beats = lrint (floor (dbeats));
-	ticks = lrint (floor (Temporal::ticks_per_beat * fmod (dbeats, 1.0)));
+	beats = (int32_t) lrint (floor (dbeats));
+	ticks = (int32_t) lrint (floor (Temporal::ticks_per_beat * fmod (dbeats, 1.0)));
 }
 
 std::ostream&
@@ -84,3 +117,13 @@ std::operator>>(std::istream& i, Temporal::BBT_Time& bbt)
 
 	return i;
 }
+
+/* define this here to avoid adding another .cc file for just this operator */
+
+std::ostream&
+std::operator<< (std::ostream& o, Temporal::BBT_Argument const & bbt)
+{
+	o << '@' << bbt.reference() << ':' << bbt.bars << '|' << bbt.beats << '|' << bbt.ticks;
+	return o;
+}
+

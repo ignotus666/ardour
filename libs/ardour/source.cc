@@ -67,7 +67,7 @@ Source::Source (Session& s, DataType type, const string& name, Flag flags)
 	, _have_natural_position (false)
 	, _level (0)
 {
-	g_atomic_int_set (&_use_count, 0);
+	_use_count.store (0);
 	_analysed = false;
 	_timestamp = 0;
 
@@ -82,7 +82,7 @@ Source::Source (Session& s, const XMLNode& node)
 	, _have_natural_position (false)
 	, _level (0)
 {
-	g_atomic_int_set (&_use_count, 0);
+	_use_count.store (0);
 	_analysed = false;
 	_timestamp = 0;
 
@@ -96,6 +96,7 @@ Source::Source (Session& s, const XMLNode& node)
 Source::~Source ()
 {
 	DEBUG_TRACE (DEBUG::Destruction, string_compose ("Source %1 destructor %2\n", _name, this));
+	assert (!used ());
 }
 
 void
@@ -107,14 +108,14 @@ Source::fix_writable_flags ()
 }
 
 XMLNode&
-Source::get_state ()
+Source::get_state () const
 {
 	XMLNode *node = new XMLNode (X_("Source"));
 
 	node->set_property (X_("name"), name());
 	node->set_property (X_("take-id"), take_id());
 	node->set_property (X_("type"), _type);
-	node->set_property (X_(X_("flags")), _flags);
+	node->set_property (X_("flags"), _flags);
 	node->set_property (X_("id"), id());
 
 	if (_timestamp != 0) {
@@ -368,10 +369,6 @@ Source::get_transients_path () const
 	vector<string> parts;
 	string s;
 
-	/* old sessions may not have the analysis directory */
-
-	_session.ensure_subdirs ();
-
 	s = _session.analysis_dir ();
 	parts.push_back (s);
 
@@ -419,7 +416,12 @@ Source::set_natural_position (timepos_t const & pos)
 {
 	_natural_position = pos;
 	_have_natural_position = true;
-	_length.set_position (pos);
+}
+
+timecnt_t
+Source::time_since_capture_start (timepos_t const & pos)
+{
+	return _natural_position.distance (pos);
 }
 
 void
@@ -439,34 +441,36 @@ Source::set_allow_remove_if_empty (bool yn)
 void
 Source::inc_use_count ()
 {
-    g_atomic_int_inc (&_use_count);
+	_use_count.fetch_add (1);
 }
 
 void
 Source::dec_use_count ()
 {
 #ifndef NDEBUG
-        gint oldval = g_atomic_int_add (&_use_count, -1);
-        if (oldval <= 0) {
-                cerr << "Bad use dec for " << name() << endl;
-                abort ();
-        }
-        assert (oldval > 0);
-#else
-        g_atomic_int_add (&_use_count, -1);
-#endif
-
-	try {
-		boost::shared_ptr<Source> sptr = shared_from_this();
-	} catch (...) {
-		/* no shared_ptr available, relax; */
+	int oldval = _use_count.fetch_sub (1);
+	if (oldval <= 0) {
+		cerr << "Bad use dec for " << name() << endl;
 	}
+	assert (oldval > 0);
+#else
+	_use_count.fetch_sub (1);
+#endif
 }
 
 bool
 Source::writable () const
 {
         return (_flags & Writable) && _session.writable();
+}
+
+void
+Source::set_captured_marks (CueMarkers const &marks)
+{
+	for (auto mark : marks) {
+		std::cerr << "adding " << mark.text() << " at " << mark.position() << "\n";
+		add_cue_marker(mark);
+	}
 }
 
 bool
@@ -533,14 +537,14 @@ Source::clear_cue_markers ()
 bool
 Source::empty () const
 {
-	return _length == timecnt_t();
+	return _length == timepos_t ();
 }
 
 bool
 Source::get_segment_descriptor (TimelineRange const & range, SegmentDescriptor& segment)
 {
 	/* Note: since we disallow overlapping segments, any overlap between
-	   the @param range and an existing segment counts as a match.
+	   the @p range and an existing segment counts as a match.
 	*/
 
 	for (auto const & sd : segment_descriptors) {

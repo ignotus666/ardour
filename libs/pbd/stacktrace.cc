@@ -49,7 +49,7 @@ PBD::trace_twb ()
 #include <execinfo.h>
 
 void
-PBD::stacktrace (std::ostream& out, int levels, int start)
+PBD::stacktrace (std::ostream& out, int levels, size_t start)
 {
 	void *array[200];
 	size_t size;
@@ -59,7 +59,10 @@ PBD::stacktrace (std::ostream& out, int levels, int start)
 	size = backtrace (array, 200);
 
 	if (size && size >= start) {
-		strings = backtrace_symbols (array, size);
+		if (start == 0) {
+			out << "-- Stacktrace Thread: " << pthread_name () << std::endl;
+		}
+		strings = backtrace_symbols (array, (int) size);
 
 		if (strings) {
 
@@ -89,7 +92,7 @@ extern "C" {
 #endif
 
 void
-PBD::stacktrace (std::ostream& out, int levels, int start)
+PBD::stacktrace (std::ostream& out, int levels, size_t start)
 {
 	void*          stack[62]; // does not support more then 62 levels of stacktrace
 	unsigned short frames;
@@ -122,7 +125,7 @@ PBD::stacktrace (std::ostream& out, int levels, int start)
 #else
 
 void
-PBD::stacktrace (std::ostream& out, int, int)
+PBD::stacktrace (std::ostream& out, int, size_t)
 {
 	out << "stack tracing is not enabled on this platform" << std::endl;
 }

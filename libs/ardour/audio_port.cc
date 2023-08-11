@@ -42,7 +42,7 @@ AudioPort::AudioPort (const std::string& name, PortFlags flags)
 	, _data (0)
 {
 	assert (name.find_first_of (':') == string::npos);
-	_src.setup (_resampler_quality);
+	_src.setup (resampler_quality ());
 	_src.set_rrfilt (10);
 }
 
@@ -69,7 +69,6 @@ AudioPort::cycle_start (pframes_t nframes)
 		_buffer->prepare ();
 	} else if (!externally_connected ()) {
 		/* ardour internal port, just silence input, don't resample */
-		// TODO reset resampler only once
 		_src.reset ();
 		memset (_data, 0, _cycle_nframes * sizeof (float));
 	} else {
@@ -90,6 +89,7 @@ AudioPort::cycle_start (pframes_t nframes)
 void
 AudioPort::cycle_end (pframes_t nframes)
 {
+	Port::cycle_end (nframes);
 	if (sends_output() && !_buffer->written() && _port_handle) {
 		if (!_buffer->data (0)) {
 			get_audio_buffer (nframes);
@@ -125,6 +125,35 @@ AudioPort::cycle_end (pframes_t nframes)
 void
 AudioPort::cycle_split ()
 {
+}
+
+void
+AudioPort::flush_buffers (pframes_t nframes)
+{
+	if (!sends_output() || !_port_handle || !in_cycle ()) {
+		return;
+	}
+	if (!externally_connected () || !internally_connected ()) {
+		return;
+	}
+	/* port is both internally and externnally connected, make
+	 * data available to internal connections which directly use
+	 * port_engine.get_buffer () without resampling.
+	 */
+	copy_vector ((float*)port_engine.get_buffer (_port_handle, nframes), &_data[_global_port_buffer_offset], nframes);
+}
+
+void
+AudioPort::reinit (bool with_ratio)
+{
+	/* must not be called concurrently with processing */
+	if (with_ratio) {
+		/* Note: latency changes with quality, caller
+		 * must take care of updating port latencies */
+		_src.setup (resampler_quality ());
+		_src.set_rrfilt (10);
+	}
+	_src.reset ();
 }
 
 AudioBuffer&

@@ -18,13 +18,9 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
-#include "ardour/rc_configuration.h"
-
 #include "canvas/canvas.h"
 
 #include "editor.h"
-#include "editing.h"
-#include "audio_time_axis.h"
 #include "route_time_axis.h"
 #include "audio_region_view.h"
 #include "selection.h"
@@ -40,7 +36,7 @@ Editor::start_updating_meters ()
 {
 	RouteTimeAxisView* rtv;
 
-	if (contents().is_mapped() && _session) {
+	if (contents().get_mapped() && _session) {
 		for (TrackViewList::iterator i = track_views.begin(); i != track_views.end(); ++i) {
 			if ((rtv = dynamic_cast<RouteTimeAxisView*>(*i)) != 0) {
 				rtv->reset_meter ();
@@ -58,7 +54,7 @@ Editor::stop_updating_meters ()
 
 	meters_running = false;
 
-	if (contents().is_mapped() && _session) {
+	if (contents().get_mapped() && _session) {
 		for (TrackViewList::iterator i = track_views.begin(); i != track_views.end(); ++i) {
 			if ((rtv = dynamic_cast<RouteTimeAxisView*>(*i)) != 0) {
 				rtv->hide_meter ();

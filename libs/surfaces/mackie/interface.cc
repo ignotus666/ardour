@@ -35,7 +35,7 @@ using namespace ArdourSurface;
 using namespace Mackie;
 
 static ControlProtocol*
-new_mackie_protocol (ControlProtocolDescriptor*, Session* s)
+new_mackie_protocol (Session* s)
 {
 	MackieControlProtocol* mcp = 0;
 
@@ -53,7 +53,7 @@ new_mackie_protocol (ControlProtocolDescriptor*, Session* s)
 }
 
 static void
-delete_mackie_protocol (ControlProtocolDescriptor*, ControlProtocol* cp)
+delete_mackie_protocol (ControlProtocol* cp)
 {
 	try
 	{
@@ -65,40 +65,16 @@ delete_mackie_protocol (ControlProtocolDescriptor*, ControlProtocol* cp)
 	}
 }
 
-/**
-	This is called on startup to check whether the lib should be loaded.
-
-	So anything that can be changed in the UI should not be used here to
-	prevent loading of the lib.
-*/
-static bool
-probe_mackie_protocol (ControlProtocolDescriptor*)
-{
-	return MackieControlProtocol::probe();
-}
-
-static void*
-mackie_request_buffer_factory (uint32_t num_requests)
-{
-	return MackieControlProtocol::request_factory (num_requests);
-}
-
 // Field names commented out by JE - 06-01-2010
 static ControlProtocolDescriptor mackie_descriptor = {
-	/*name :              */   "Mackie",
-	/*id :                */   "uri://ardour.org/surfaces/mackie:0",
-	/*ptr :               */   0,
-	/*module :            */   0,
-	/*mandatory :         */   0,
-	// actually, the surface does support feedback, but all this
-	// flag does is show a submenu on the UI, which is useless for the mackie
-	// because feedback is always on. In any case, who'd want to use the
-	// mcu without the motorised sliders doing their thing?
-	/*supports_feedback : */   false,
-	/*probe :             */   probe_mackie_protocol,
-	/*initialize :        */   new_mackie_protocol,
-	/*destroy :           */   delete_mackie_protocol,
-	/*request_buffer_factory */ mackie_request_buffer_factory
+	/* name       */ "Mackie",
+	/* id         */ "uri://ardour.org/surfaces/mackie:0",
+	/* module     */ 0,
+	/* available  */ 0,
+	/* probe_port */ 0,
+	/* match usb  */ 0,
+	/* initialize */ new_mackie_protocol,
+	/* destroy    */ delete_mackie_protocol,
 };
 
 extern "C" ARDOURSURFACE_API ControlProtocolDescriptor* protocol_descriptor () { return &mackie_descriptor; }

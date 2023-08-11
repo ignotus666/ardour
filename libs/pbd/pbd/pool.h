@@ -2,7 +2,7 @@
  * Copyright (C) 1998-2015 Paul Davis <paul@linuxaudiosystems.com>
  * Copyright (C) 2009-2014 David Robillard <d@drobilla.net>
  * Copyright (C) 2010 Carl Hetherington <carl@carlh.net>
- * Copyright (C) 2015-2017 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2015-2022 Robin Gareus <robin@gareus.org>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,37 +22,55 @@
 #ifndef __qm_pool_h__
 #define __qm_pool_h__
 
-#include <vector>
 #include <string>
+#include <vector>
 
 #include <glibmm/threads.h>
 
 #include "pbd/libpbd_visibility.h"
 #include "pbd/ringbuffer.h"
 
+namespace PBD {
+
+typedef void (*PoolDumpCallback) (size_t, void*);
+
 /** A pool of data items that can be allocated, read from and written to
  *  without system memory allocation or locking.
  */
 class LIBPBD_API Pool
 {
-  public:
-	Pool (std::string name, unsigned long item_size, unsigned long nitems);
+public:
+	Pool (std::string name, unsigned long item_size, unsigned long nitems, PoolDumpCallback cb = NULL);
 	virtual ~Pool ();
 
-	virtual void *alloc ();
-	virtual void release (void *);
+	virtual void* alloc ();
+	virtual void  release (void*);
 
-	std::string name() const { return _name; }
-	guint available() const { return free_list.read_space(); }
-	guint used() const { return free_list.bufsize() - available(); }
-	guint total() const { return free_list.bufsize(); }
+	std::string name () const
+	{
+		return _name;
+	}
+	guint available () const
+	{
+		return free_list.read_space ();
+	}
+	guint used () const
+	{
+		return free_list.bufsize () - available ();
+	}
+	guint total () const
+	{
+		return free_list.bufsize ();
+	}
 
-  protected:
+protected:
 	PBD::RingBuffer<void*> free_list; ///< a list of pointers to free items within block
+
 	std::string _name;
 
-  private:
-	void *block; ///< data storage area
+private:
+	void*            _block; ///< data storage area
+	PoolDumpCallback _dump;  ///< callback to print pool contents
 #ifndef NDEBUG
 	unsigned long max_usage;
 #endif
@@ -60,29 +78,28 @@ class LIBPBD_API Pool
 
 class LIBPBD_API SingleAllocMultiReleasePool : public Pool
 {
-  public:
+public:
 	SingleAllocMultiReleasePool (std::string name, unsigned long item_size, unsigned long nitems);
 	~SingleAllocMultiReleasePool ();
 
-	virtual void *alloc ();
-	virtual void release (void *);
+	virtual void* alloc ();
+	virtual void  release (void*);
 
-  private:
-        Glib::Threads::Mutex m_lock;
+private:
+	Glib::Threads::Mutex m_lock;
 };
-
 
 class LIBPBD_API MultiAllocSingleReleasePool : public Pool
 {
-  public:
+public:
 	MultiAllocSingleReleasePool (std::string name, unsigned long item_size, unsigned long nitems);
 	~MultiAllocSingleReleasePool ();
 
-	virtual void *alloc ();
-	virtual void release (void *);
+	virtual void* alloc ();
+	virtual void  release (void*);
 
-  private:
-        Glib::Threads::Mutex m_lock;
+private:
+	Glib::Threads::Mutex m_lock;
 };
 
 class LIBPBD_API PerThreadPool;
@@ -101,25 +118,29 @@ class LIBPBD_API PerThreadPool;
  */
 class LIBPBD_API CrossThreadPool : public Pool
 {
-  public:
-	CrossThreadPool (std::string n, unsigned long isize, unsigned long nitems, PerThreadPool *);
+public:
+	CrossThreadPool (std::string n, unsigned long isize, unsigned long nitems, PerThreadPool*, PoolDumpCallback);
 
 	void* alloc ();
-	void push (void *);
+	void  push (void*);
 
-	PerThreadPool* parent () const {
+	PerThreadPool* parent () const
+	{
 		return _parent;
 	}
 
-	bool empty ();
-	guint pending_size() const { return pending.read_space(); }
+	bool  empty ();
+	guint pending_size () const
+	{
+		return pending.read_space ();
+	}
 
 	void flush_pending ();
 	void flush_pending_with_ev (void*);
 
-  private:
+private:
 	PBD::RingBuffer<void*> pending;
-	PerThreadPool* _parent;
+	PerThreadPool*         _parent;
 };
 
 /** A class to manage per-thread pools of memory.  One object of this class is instantiated,
@@ -130,21 +151,28 @@ class LIBPBD_API PerThreadPool
 public:
 	PerThreadPool ();
 
-	const Glib::Threads::Private<CrossThreadPool>& key() const { return _key; }
+	const Glib::Threads::Private<CrossThreadPool>& key () const
+	{
+		return _key;
+	}
 
-	void  create_per_thread_pool (std::string name, unsigned long item_size, unsigned long nitems);
+	void create_per_thread_pool (std::string name, unsigned long item_size, unsigned long nitems, PoolDumpCallback cb = NULL);
+
 	CrossThreadPool* per_thread_pool (bool must_exist = true);
+
 	bool has_per_thread_pool ();
 	void set_trash (PBD::RingBuffer<CrossThreadPool*>* t);
-	void add_to_trash (CrossThreadPool *);
+	void add_to_trash (CrossThreadPool*);
 
 private:
 	Glib::Threads::Private<CrossThreadPool> _key;
-	std::string _name;
+	std::string                             _name;
 
 	/** mutex to protect either changes to the _trash variable, or writes to the RingBuffer */
-	Glib::Threads::Mutex _trash_mutex;
+	Glib::Threads::Mutex               _trash_mutex;
 	PBD::RingBuffer<CrossThreadPool*>* _trash;
 };
+
+} // namespace PBD
 
 #endif // __qm_pool_h__

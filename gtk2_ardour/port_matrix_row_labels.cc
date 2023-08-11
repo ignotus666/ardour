@@ -20,12 +20,17 @@
  */
 
 #include <iostream>
-#include <boost/weak_ptr.hpp>
+#include <memory>
+
 #include <cairo.h>
+
 #include "gtkmm2ext/keyboard.h"
+
 #include "ardour/bundle.h"
+
+#include "gtkmm2ext/keyboard.h"
 #include "gtkmm2ext/colors.h"
-#include "utils.h"
+
 #include "port_matrix_row_labels.h"
 #include "port_matrix_column_labels.h"
 #include "port_matrix.h"
@@ -232,7 +237,7 @@ PortMatrixRowLabels::port_name_x () const
 
 void
 PortMatrixRowLabels::render_bundle_name (
-	cairo_t* cr, Gdk::Color fg_colour, Gdk::Color bg_colour, double xoff, double yoff, boost::shared_ptr<ARDOUR::Bundle> b
+	cairo_t* cr, Gdk::Color fg_colour, Gdk::Color bg_colour, double xoff, double yoff, std::shared_ptr<ARDOUR::Bundle> b
 	)
 {
 	double const x = bundle_name_x ();
@@ -250,7 +255,7 @@ PortMatrixRowLabels::render_bundle_name (
 	double const off = (grid_spacing() - ext.height) / 2;
 
 	Gdk::Color textcolor;
-	ARDOUR_UI_UTILS::set_color_from_rgba(textcolor, Gtkmm2ext::contrasting_text_color(ARDOUR_UI_UTILS::gdk_color_to_rgba(bg_colour)));
+	Gtkmm2ext::set_color_from_rgba(textcolor, Gtkmm2ext::contrasting_text_color(Gtkmm2ext::gdk_color_to_rgba(bg_colour)));
 	set_source_rgb (cr, textcolor);
 	cairo_move_to (cr, rint (xoff + x + name_pad()), rint (yoff + name_pad() + off));
 	cairo_show_text (cr, b->name().c_str());
@@ -286,7 +291,7 @@ PortMatrixRowLabels::render_channel_name (
 	double const off = (grid_spacing() - ext.height) / 2;
 
 	Gdk::Color textcolor;
-	ARDOUR_UI_UTILS::set_color_from_rgba(textcolor, Gtkmm2ext::contrasting_text_color(ARDOUR_UI_UTILS::gdk_color_to_rgba(bg_colour)));
+	Gtkmm2ext::set_color_from_rgba(textcolor, Gtkmm2ext::contrasting_text_color(Gtkmm2ext::gdk_color_to_rgba(bg_colour)));
 	set_source_rgb (cr, textcolor);
 	cairo_move_to (cr, rint (port_name_x() + xoff + name_pad()), rint (yoff + name_pad() + off));
 	cairo_show_text (cr, bc.bundle->channel_name(bc.channel).c_str());

@@ -40,7 +40,8 @@
 
 #include "gtkmm2ext/colors.h"
 
-#include "midi_byte_array.h"
+#include "midi_surface/midi_byte_array.h"
+#include "midi_surface/midi_surface.h"
 
 namespace MIDI {
 	class Parser;
@@ -55,18 +56,11 @@ namespace ARDOUR {
 
 namespace ArdourSurface {
 
-struct Push2Request : public BaseUI::BaseRequestObject {
-public:
-	Push2Request () {}
-	~Push2Request () {}
-};
-
 class P2GUI;
 class Push2Layout;
 class Push2Canvas;
 
-class Push2 : public ARDOUR::ControlProtocol
-            , public AbstractUI<Push2Request>
+class Push2 : public MIDISurface
 {
   public:
 	enum ButtonID {
@@ -166,7 +160,7 @@ class Push2 : public ARDOUR::ControlProtocol
 
 		virtual MidiByteArray state_msg() const = 0;
 
-	     protected:
+	protected:
 		uint8_t _extra;
 		uint8_t _color_index;
 		State   _state;
@@ -302,33 +296,117 @@ class Push2 : public ARDOUR::ControlProtocol
 	Push2 (ARDOUR::Session&);
 	~Push2 ();
 
-	static bool probe ();
-	static void* request_factory (uint32_t);
+	static bool available ();
+	static bool match_usb (uint16_t, uint16_t);
+	static bool probe (std::string&, std::string&);
 
-	std::list<boost::shared_ptr<ARDOUR::Bundle> > bundles ();
+	std::string input_port_name () const;
+	std::string output_port_name () const;
 
 	bool has_editor () const { return true; }
 	void* get_gui () const;
 	void  tear_down_gui ();
 
 	int set_active (bool yn);
-	XMLNode& get_state();
+	XMLNode& get_state() const;
 	int set_state (const XMLNode & node, int version);
-
-	PBD::Signal0<void> ConnectionChange;
-
-	boost::shared_ptr<ARDOUR::Port> input_port();
-	boost::shared_ptr<ARDOUR::Port> output_port();
 
 	int pad_note (int row, int col) const;
 	PBD::Signal0<void> PadChange;
 
 	void update_selection_color ();
 
-	void set_pad_scale (int root, int octave, MusicalMode::Type mode, bool inkey);
+	/** The "origin" or "root" of the note grid.
+	 *
+	 * This controls whether the grid is "fixed" in terms of the notes that it
+	 * plays (so changing the scale is effectively just an overlay), or
+	 * "rooted" so the root note of the scale is in the bottom left.
+	 */
+	enum NoteGridOrigin {
+		Fixed,  ///< Bottom left pad is always C, or as close as possible
+		Rooted, ///< Bottom left pad is the scale root
+	};
+
+	/** Interval between vertically adjacent note pads ("layout").
+	 *
+	 * The comments describe the ideal interval that is used in chromatic mode.
+	 * For in-scale mode, they may be slightly adjusted, hence the more general
+	 * enumerator names.
+	 */
+	enum RowInterval {
+		Third,      /// Major third or 4 semitones
+		Fourth,     /// Perfect fourth or 5 semitones
+		Fifth,      /// Perfect fifth or 7 semitones
+		Sequential, /// Sequential from the last row, or 8 semitones
+	};
+
+	/// "Kind" of pad that plays a note
+	enum PadNoteKind { RootNote, InScaleNote, OutOfScaleNote };
+
+	/// Set up a pad to represent a "kind" of note
+	void set_pad_note_kind(Pad& pad, PadNoteKind kind);
+
+	/** Set an "in-key" scale on the pads.
+	 *
+	 * "In-key" mode shows only notes which are in the scale, so every pad is
+	 * in the scale and there are no "spaces".  This provides access to a wide
+	 * range of notes in the scale, but no access to notes outside the scale at
+	 * all.
+	 *
+	 *
+	 * @param root The root note in the lowest octave (at most 11).
+	 *
+	 * @param octave The octave number of the "actual" root (at most 10).
+	 *
+	 * @param mode The active musical mode (scale).
+	 *
+	 * @param ideal_vertical_semitones The ideal interval between rows in
+	 * semitones.  This is an "ideal" because it may not be possible to use
+	 * exactly this interval for every row depending on the scale.  It may be
+	 * bumped up to the next note in the scale if necessary, so with this mode,
+	 * rows are not guaranteed to all have the same vertical interval.
+	 */
+	void set_pad_scale_in_key (int               root,
+	                           int               octave,
+	                           MusicalMode::Type mode,
+	                           NoteGridOrigin    origin,
+	                           int               ideal_vertical_semitones);
+
+	/** Set a "chromatic" scale on the pads.
+	 *
+	 * "Chromatic" mode is chromatic from left to right, and "tuned" to some
+	 * interval from bottom up, like a stringed instrument.  The default
+	 * vertical interval is 5 semitones, or a perfect 4th, like strings on a
+	 * bass guitar.
+	 *
+	 * @param root The root note in the lowest octave (at most 11).
+	 *
+	 * @param octave The octave number of the "actual" root (at most 10).
+	 *
+	 * @param mode The active musical mode (scale).
+	 *
+	 * @param vertical_semitones The interval between rows in semitones.  This
+	 * mode guarantees that the vertical interval for all rows is always
+	 * exactly this.
+	 */
+	void set_pad_scale_chromatic (int               root,
+	                              int               octave,
+	                              MusicalMode::Type mode,
+	                              NoteGridOrigin    origin,
+	                              int               vertical_semitones);
+
+	void set_pad_scale (int               root,
+	                    int               octave,
+	                    MusicalMode::Type mode,
+	                    NoteGridOrigin    origin,
+	                    RowInterval       row_interval,
+	                    bool              inkey);
+
 	PBD::Signal0<void> ScaleChange;
 
 	MusicalMode::Type mode() const { return  _mode; }
+	NoteGridOrigin note_grid_origin() { return _note_grid_origin; }
+	RowInterval row_interval() const { return _row_interval; }
 	int scale_root() const { return _scale_root; }
 	int root_octave() const { return _root_octave; }
 	bool in_key() const { return _in_key; }
@@ -346,12 +424,10 @@ class Push2 : public ARDOUR::ControlProtocol
 
 	ModifierState modifier_state() const { return _modifier_state; }
 
-	boost::shared_ptr<Button> button_by_id (ButtonID);
+	std::shared_ptr<Button> button_by_id (ButtonID);
 	static std::string button_name_by_id (ButtonID);
 
 	void strip_buttons_off ();
-
-	void write (const MidiByteArray&);
 
 	uint8_t get_color_index (Gtkmm2ext::Color rgba);
 	Gtkmm2ext::Color get_color (ColorName);
@@ -360,51 +436,57 @@ class Push2 : public ARDOUR::ControlProtocol
 	void set_pressure_mode (PressureMode);
 	PBD::Signal1<void,PressureMode> PressureModeChange;
 
-	libusb_device_handle* usb_handle() const { return handle; }
+	libusb_device_handle* usb_handle() const { return _handle; }
+
+	bool stop_down () const { return _stop_down; }
+
+	typedef std::map<int,std::shared_ptr<Pad> > PadMap;
+	PadMap const & nn_pad_map() const { return _nn_pad_map; }
+
+	std::shared_ptr<Pad> pad_by_xy (int x, int y);
+	std::shared_ptr<Button> lower_button_by_column (uint32_t col);
 
   private:
-	libusb_device_handle *handle;
-	bool in_use;
-	ModifierState _modifier_state;
-
-	void do_request (Push2Request*);
+	libusb_device_handle* _handle;
+	ModifierState         _modifier_state;
 
 	int begin_using_device ();
 	int stop_using_device ();
 	int device_acquire ();
 	void device_release ();
-	int ports_acquire ();
-	void ports_release ();
 	void run_event_loop ();
 	void stop_event_loop ();
 
 	void relax () {}
 
 	/* map of Buttons by CC */
-	typedef std::map<int,boost::shared_ptr<Button> > CCButtonMap;
-	CCButtonMap cc_button_map;
+	typedef std::map<int,std::shared_ptr<Button> > CCButtonMap;
+	CCButtonMap _cc_button_map;
 	/* map of Buttons by ButtonID */
-	typedef std::map<ButtonID,boost::shared_ptr<Button> > IDButtonMap;
-	IDButtonMap id_button_map;
-	std::set<ButtonID> buttons_down;
-	std::set<ButtonID> consumed;
+	typedef std::map<ButtonID,std::shared_ptr<Button> > IDButtonMap;
+	IDButtonMap _id_button_map;
+	std::set<ButtonID> _buttons_down;
+	std::set<ButtonID> _consumed;
 
 	bool button_long_press_timeout (ButtonID id);
-	void start_press_timeout (boost::shared_ptr<Button>, ButtonID);
+	void start_press_timeout (std::shared_ptr<Button>, ButtonID);
 
 	void init_buttons (bool startup);
-	void init_touch_strip ();
+	void init_touch_strip (bool with_shift);
 
 	/* map of Pads by note number (the "fixed" note number sent by the
 	 * hardware, not the note number generated if the pad is touched)
 	 */
-	typedef std::map<int,boost::shared_ptr<Pad> > NNPadMap;
-	NNPadMap nn_pad_map;
+	PadMap _nn_pad_map;
+
+	/* array of Pads by x,y duple (indexed as (x*8) + y */
+
+	std::vector<std::shared_ptr<Pad> > _xy_pad_map;
 
 	/* map of Pads by note number they generate (their "filtered" value)
 	 */
-	typedef std::multimap<int,boost::shared_ptr<Pad> > FNPadMap;
-	FNPadMap fn_pad_map;
+	typedef std::multimap<int,std::shared_ptr<Pad> > FNPadMap;
+	FNPadMap _fn_pad_map;
 
 	void set_button_color (ButtonID, uint8_t color_index);
 	void set_button_state (ButtonID, LED::State);
@@ -413,29 +495,12 @@ class Push2 : public ARDOUR::ControlProtocol
 
 	void build_maps ();
 
-	// Bundle to represent our input ports
-	boost::shared_ptr<ARDOUR::Bundle> _input_bundle;
-	// Bundle to represent our output ports
-	boost::shared_ptr<ARDOUR::Bundle> _output_bundle;
-
-	MIDI::Port* _input_port;
-	MIDI::Port* _output_port;
-	boost::shared_ptr<ARDOUR::Port> _async_in;
-	boost::shared_ptr<ARDOUR::Port> _async_out;
-
-	void connect_to_parser ();
 	void handle_midi_pitchbend_message (MIDI::Parser&, MIDI::pitchbend_t);
 	void handle_midi_controller_message (MIDI::Parser&, MIDI::EventTwoBytes*);
 	void handle_midi_note_on_message (MIDI::Parser&, MIDI::EventTwoBytes*);
 	void handle_midi_note_off_message (MIDI::Parser&, MIDI::EventTwoBytes*);
 	void handle_midi_sysex (MIDI::Parser&, MIDI::byte *, size_t count);
 
-	bool midi_input_handler (Glib::IOCondition ioc, MIDI::Port* port);
-
-	void thread_init ();
-
-	PBD::ScopedConnectionList session_connections;
-	void connect_session_signals ();
 	void notify_record_state_changed ();
 	void notify_transport_state_changed ();
 	void notify_loop_state_changed ();
@@ -458,6 +523,7 @@ class Push2 : public ARDOUR::ControlProtocol
 	void button_new ();
 	void button_browse ();
 	void button_clip ();
+	void button_session ();
 	void button_undo ();
 	void button_fwd32t ();
 	void button_fwd32 ();
@@ -468,7 +534,9 @@ class Push2 : public ARDOUR::ControlProtocol
 	void button_fwd4t ();
 	void button_fwd4 ();
 	void button_add_track ();
-	void button_stop ();
+	void button_stop_press();
+	void button_stop_release ();
+	void button_stop_long_press ();
 	void button_master ();
 	void button_quantize ();
 	void button_duplicate ();
@@ -516,13 +584,13 @@ class Push2 : public ARDOUR::ControlProtocol
 
 	/* special Stripable */
 
-	boost::shared_ptr<ARDOUR::Stripable> master;
+	std::shared_ptr<ARDOUR::Stripable> _master;
 
-	sigc::connection vblank_connection;
+	sigc::connection _vblank_connection;
 	bool vblank ();
 
 	void splash ();
-	PBD::microseconds_t splash_start;
+	PBD::microseconds_t _splash_start;
 
 	/* the canvas */
 
@@ -533,31 +601,20 @@ class Push2 : public ARDOUR::ControlProtocol
 	mutable Glib::Threads::Mutex layout_lock;
 	Push2Layout* _current_layout;
 	Push2Layout* _previous_layout;
-	Push2Layout* mix_layout;
-	Push2Layout* scale_layout;
-	Push2Layout* track_mix_layout;
-	Push2Layout* splash_layout;
+	Push2Layout* _mix_layout;
+	Push2Layout* _scale_layout;
+	Push2Layout* _track_mix_layout;
+	Push2Layout* _splash_layout;
+	Push2Layout* _cue_layout;
 	void set_current_layout (Push2Layout*);
 
 	bool pad_filter (ARDOUR::MidiBuffer& in, ARDOUR::MidiBuffer& out) const;
 
-	boost::weak_ptr<ARDOUR::MidiTrack> current_pad_target;
-
-	void port_registration_handler ();
-
-	enum ConnectionState {
-		InputConnected = 0x1,
-		OutputConnected = 0x2
-	};
-
-	int connection_state;
-	bool connection_handler (boost::weak_ptr<ARDOUR::Port>, std::string name1, boost::weak_ptr<ARDOUR::Port>, std::string name2, bool yn);
-	PBD::ScopedConnectionList port_connections;
-	void connected ();
+	std::weak_ptr<ARDOUR::MidiTrack> _current_pad_target;
 
 	/* GUI */
 
-	mutable P2GUI* gui;
+	mutable P2GUI* _gui;
 	void build_gui ();
 
 	/* pad mapping */
@@ -565,37 +622,41 @@ class Push2 : public ARDOUR::ControlProtocol
 	void stripable_selection_changed ();
 
 	MusicalMode::Type _mode;
-	int _scale_root;
-	int _root_octave;
-	bool _in_key;
+	NoteGridOrigin    _note_grid_origin;
+	RowInterval       _row_interval;
+	int               _scale_root;
+	int               _root_octave;
+	bool              _in_key;
+	int               _octave_shift;
+	bool              _percussion;
 
-	int octave_shift;
+	void restore_pad_scale ();
 
-	bool percussion;
 	void set_percussive_mode (bool);
 
 	/* color map (device side) */
 
 	typedef std::map<Gtkmm2ext::Color,uint8_t> ColorMap;
 	typedef std::stack<uint8_t> ColorMapFreeList;
-	ColorMap color_map;
-	ColorMapFreeList color_map_free_list;
+	ColorMap _color_map;
+	ColorMapFreeList _color_map_free_list;
 	void build_color_map ();
 
 	/* our own colors */
 
 	typedef std::map<ColorName,Gtkmm2ext::Color> Colors;
-	Colors colors;
+	Colors _colors;
 	void fill_color_table ();
 	void reset_pad_colors ();
 
 	PressureMode _pressure_mode;
 	void request_pressure_mode ();
 
-	uint8_t selection_color;
-	uint8_t contrast_color;
+	uint8_t _selection_color;
+	uint8_t _contrast_color;
 
-	bool in_range_select;
+	bool _in_range_select;
+	bool _stop_down;
 };
 
 } /* namespace */

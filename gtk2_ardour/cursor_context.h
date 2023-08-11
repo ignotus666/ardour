@@ -19,7 +19,8 @@
 #ifndef __ardour_gtk_cursor_context_h__
 #define __ardour_gtk_cursor_context_h__
 
-#include <boost/shared_ptr.hpp>
+#include <memory>
+
 #include <gdkmm/cursor.h>
 
 class Editor;
@@ -43,7 +44,7 @@ class CursorContext
 {
 public:
 	/** A smart handle for a cursor change context. */
-	typedef boost::shared_ptr<CursorContext> Handle;
+	typedef std::shared_ptr<CursorContext> Handle;
 
 	~CursorContext();
 

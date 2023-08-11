@@ -21,6 +21,9 @@
 #ifndef __ardour_session_configuration_h__
 #define __ardour_session_configuration_h__
 
+#include <map>
+#include <string>
+
 #include "pbd/configuration.h"
 
 namespace ARDOUR {
@@ -32,8 +35,8 @@ public:
 
 	void map_parameters (boost::function<void (std::string)>&);
 	int set_state (XMLNode const &, int version);
-	XMLNode& get_state ();
-	XMLNode& get_variables ();
+	XMLNode& get_state () const;
+	XMLNode& get_variables (std::string const & nodename) const;
 	void set_variables (XMLNode const &);
 
 	bool load_state ();
@@ -66,6 +69,8 @@ public:
 #undef  CONFIG_VARIABLE_SPECIAL
 
 	int foo;
+
+	std::map<std::string,PBD::ConfigVariableBase*> _my_variables;
 };
 
 }

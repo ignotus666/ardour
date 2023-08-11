@@ -109,7 +109,7 @@ public:
 		run_loop_thread = Glib::Threads::Thread::self ();
 	}
 
-	void call_slot (InvalidationRecord* ir, const boost::function<void()>& f)
+	bool call_slot (InvalidationRecord* ir, const boost::function<void()>& f)
 	{
 		if (Glib::Threads::Thread::self () == run_loop_thread) {
 			cout << string_compose ("%1/%2 direct dispatch of call slot via functor @ %3, invalidation %4\n", event_loop_name (), pthread_name (), &f, ir);
@@ -119,6 +119,7 @@ public:
 			assert (!ir);
 			f (); // XXX TODO, queue and process during run ()
 		}
+		return true;
 	}
 
 	void run ()
@@ -126,14 +127,14 @@ public:
 		; // TODO process Events, if any
 	}
 
-	Glib::Threads::Mutex& slot_invalidation_mutex ()
+	Glib::Threads::RWLock& slot_invalidation_rwlock ()
 	{
 		return request_buffer_map_lock;
 	}
 
 private:
 	Glib::Threads::Thread* run_loop_thread;
-	Glib::Threads::Mutex   request_buffer_map_lock;
+	Glib::Threads::RWLock  request_buffer_map_lock;
 };
 
 static MyEventLoop* event_loop = NULL;
@@ -554,8 +555,8 @@ usage ()
 	printf ("\n\
 Ardour at your finger tips...\n\
 \n");
-	printf ("Report bugs to <http://tracker.ardour.org/>\n"
-	        "Website: <http://ardour.org/>\n");
+	printf ("Report bugs to <https://tracker.ardour.org/>\n"
+	        "Website: <https://ardour.org/>\n");
 	console_madness_end ();
 	::exit (EXIT_SUCCESS);
 }
@@ -647,7 +648,6 @@ main (int argc, char** argv)
 	lua = NULL;
 
 	AudioEngine::instance ()->stop ();
-	AudioEngine::destroy ();
 
 	ARDOUR::cleanup ();
 	delete event_loop;

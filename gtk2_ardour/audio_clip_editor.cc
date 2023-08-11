@@ -92,7 +92,7 @@ AudioClipEditor::ClipBBTMetric::get_marks (std::vector<ArdourCanvas::Ruler::Mark
 		return;
 	}
 
-	boost::shared_ptr<AudioTrigger> at = boost::dynamic_pointer_cast<AudioTrigger> (trigger);
+	std::shared_ptr<AudioTrigger> at = std::dynamic_pointer_cast<AudioTrigger> (trigger);
 	if (!at) {
 		return;
 	}
@@ -105,7 +105,7 @@ AudioClipEditor::ClipBBTMetric::get_marks (std::vector<ArdourCanvas::Ruler::Mark
 
 	std::cerr << "get marks between " << lower << " .. " << upper << " with tempo " << tempo << " upp = " << units_per_pixel << std::endl;
 
-	samplecnt_t samples_per_beat = tempo.samples_per_note_type (AudioEngine::instance()->sample_rate());
+	samplecnt_t samples_per_beat = tempo.samples_per_note_type (TEMPORAL_SAMPLE_RATE);
 	int64_t beat_number = (lower + (samples_per_beat/2)) / samples_per_beat;
 	int64_t last = INT64_MIN;
 	const double scale = UIConfiguration::instance ().get_ui_scale ();
@@ -144,6 +144,7 @@ AudioClipEditor::AudioClipEditor ()
 	scroll_bar_handle->set_outline (false);
 	scroll_bar_handle->set_corner_radius (5.);
 	scroll_bar_handle->Event.connect (sigc::mem_fun (*this, &AudioClipEditor::scroll_event_handler));
+	scroll_bar_handle->disable_scroll_translation ();
 
 	/* A scrolling container for our waves and lines etc. */
 
@@ -401,7 +402,7 @@ AudioClipEditor::drop_waves ()
 }
 
 void
-AudioClipEditor::set_region (boost::shared_ptr<AudioRegion> r, TriggerReference tr)
+AudioClipEditor::set_region (std::shared_ptr<AudioRegion> r, TriggerReference tr)
 {
 	drop_waves ();
 
@@ -424,12 +425,12 @@ AudioClipEditor::set_region (boost::shared_ptr<AudioRegion> r, TriggerReference 
 	len = r->source (0)->length ().samples ();
 
 	for (uint32_t n = 0; n < n_chans; ++n) {
-		boost::shared_ptr<Region> wr = RegionFactory::get_whole_region_for_source (r->source (n));
+		std::shared_ptr<Region> wr = RegionFactory::get_whole_region_for_source (r->source (n));
 		if (!wr) {
 			continue;
 		}
 
-		boost::shared_ptr<AudioRegion> war = boost::dynamic_pointer_cast<AudioRegion> (wr);
+		std::shared_ptr<AudioRegion> war = std::dynamic_pointer_cast<AudioRegion> (wr);
 		if (!war) {
 			continue;
 		}
@@ -444,7 +445,7 @@ AudioClipEditor::set_region (boost::shared_ptr<AudioRegion> r, TriggerReference 
 	}
 
 	TriggerPtr trigger (tr.trigger());
-	boost::shared_ptr<AudioTrigger> at = boost::dynamic_pointer_cast<AudioTrigger> (trigger);
+	std::shared_ptr<AudioTrigger> at = std::dynamic_pointer_cast<AudioTrigger> (trigger);
 	if (at) {
 		if (at->segment_tempo() == 0.) {
 			/* tempo unknown, hide ruler */
@@ -606,9 +607,9 @@ AudioClipEditorBox::zoom_out_click ()
 }
 
 void
-AudioClipEditorBox::set_region (boost::shared_ptr<Region> r, TriggerReference tref)
+AudioClipEditorBox::set_region (std::shared_ptr<Region> r, TriggerReference tref)
 {
-	boost::shared_ptr<AudioRegion> ar = boost::dynamic_pointer_cast<AudioRegion> (r);
+	std::shared_ptr<AudioRegion> ar = std::dynamic_pointer_cast<AudioRegion> (r);
 
 	if (!ar) {
 		return;

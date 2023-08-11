@@ -374,6 +374,13 @@ Editor::canvas_stream_view_event (GdkEvent *event, ArdourCanvas::Item* item, Rou
 bool
 Editor::canvas_automation_track_event (GdkEvent *event, ArdourCanvas::Item* item, AutomationTimeAxisView *atv)
 {
+	if (atv->parameter().type() == MidiVelocityAutomation) {
+		/* no event handling for velocity tracks until we can make the
+		   automation control affect note velocity.
+		*/
+		return false;
+	}
+
 	bool ret = false;
 
 	switch (event->type) {
@@ -401,6 +408,18 @@ Editor::canvas_automation_track_event (GdkEvent *event, ArdourCanvas::Item* item
 
 	case GDK_LEAVE_NOTIFY:
 		ret = leave_handler (item, event, AutomationTrackItem);
+		break;
+
+	case GDK_KEY_PRESS:
+		if (_drags->active()) {
+			return _drags->mid_drag_key_event (&event->key);
+		}
+		break;
+
+	case GDK_KEY_RELEASE:
+		if (_drags->active()) {
+			return _drags->mid_drag_key_event (&event->key);
+		}
 		break;
 
 	default:
@@ -647,7 +666,7 @@ Editor::canvas_fade_out_handle_event (GdkEvent *event, ArdourCanvas::Item* item,
 }
 
 struct DescendingRegionLayerSorter {
-	bool operator()(boost::shared_ptr<Region> a, boost::shared_ptr<Region> b) {
+	bool operator()(std::shared_ptr<Region> a, std::shared_ptr<Region> b) {
 		return a->layer() > b->layer();
 	}
 };
@@ -669,6 +688,18 @@ Editor::canvas_control_point_event (GdkEvent *event, ArdourCanvas::Item* item, C
 	}
 
 	return typed_event (item, event, ControlPointItem);
+}
+
+bool
+Editor::canvas_velocity_event (GdkEvent *event, ArdourCanvas::Item* item)
+{
+	return typed_event (item, event, VelocityItem);
+}
+
+bool
+Editor::canvas_velocity_base_event (GdkEvent *event, ArdourCanvas::Item* item)
+{
+	return typed_event (item, event, VelocityBaseItem);
 }
 
 bool
@@ -876,7 +907,7 @@ Editor::canvas_region_view_name_highlight_event (GdkEvent* event, ArdourCanvas::
 		break;
 	case GDK_MOTION_NOTIFY:
 		motion_handler (item, event);
-		ret = true; // force this to avoid progagating the event into the regionview
+		ret = true; // force this to avoid propagating the event into the regionview
 		break;
 	case GDK_ENTER_NOTIFY:
 		ret = enter_handler (item, event, RegionViewNameHighlight);
@@ -979,33 +1010,9 @@ Editor::canvas_marker_event (GdkEvent *event, ArdourCanvas::Item* item, ArdourMa
 }
 
 bool
-Editor::canvas_marker_bar_event (GdkEvent *event, ArdourCanvas::Item* item)
+Editor::canvas_selection_marker_event (GdkEvent *event, ArdourCanvas::Item* item)
 {
-	return typed_event (item, event, MarkerBarItem);
-}
-
-bool
-Editor::canvas_range_marker_bar_event (GdkEvent *event, ArdourCanvas::Item* item)
-{
-	return typed_event (item, event, RangeMarkerBarItem);
-}
-
-bool
-Editor::canvas_transport_marker_bar_event (GdkEvent *event, ArdourCanvas::Item* item)
-{
-	return typed_event (item, event, TransportMarkerBarItem);
-}
-
-bool
-Editor::canvas_cd_marker_bar_event (GdkEvent *event, ArdourCanvas::Item* item)
-{
-	return typed_event (item, event, CdMarkerBarItem);
-}
-
-bool
-Editor::canvas_cue_marker_bar_event (GdkEvent *event, ArdourCanvas::Item* item)
-{
-	return typed_event (item, event, CueMarkerBarItem);
+	return typed_event (item, event, SelectionMarkerItem);
 }
 
 bool
@@ -1097,15 +1104,26 @@ Editor::canvas_ruler_event (GdkEvent *event, ArdourCanvas::Item* item, ItemType 
 }
 
 bool
-Editor::canvas_tempo_bar_event (GdkEvent *event, ArdourCanvas::Item* item)
+Editor::canvas_ruler_bar_event (GdkEvent *event, ArdourCanvas::Item* item, ItemType type, std::string const& color_name)
 {
-	return typed_event (item, event, TempoBarItem);
-}
+	/* XXX consolidate with Editor::canvas_ruler_event ? */
 
-bool
-Editor::canvas_meter_bar_event (GdkEvent *event, ArdourCanvas::Item* item)
-{
-	return typed_event (item, event, MeterBarItem);
+	switch (event->type) {
+	case GDK_ENTER_NOTIFY:
+		if (event->crossing.detail != GDK_NOTIFY_INFERIOR) {
+			item->set_fill_color (Gtkmm2ext::HSV(UIConfiguration::instance().color_mod (color_name, "marker bar")).lighter(0.20).color());
+		}
+		break;
+	case GDK_LEAVE_NOTIFY:
+		if (event->crossing.detail != GDK_NOTIFY_INFERIOR) {
+			item->set_fill_color (UIConfiguration::instance().color_mod (color_name, "marker bar"));
+		}
+		break;
+	default:
+		break;
+	};
+
+	return typed_event (item, event, type);
 }
 
 bool
@@ -1157,6 +1175,10 @@ Editor::canvas_drop_zone_event (GdkEvent* event)
 	case GDK_LEAVE_NOTIFY:
 		return typed_event (_canvas_drop_zone, event, DropZoneItem);
 
+	case GDK_MOTION_NOTIFY:
+		return motion_handler (_canvas_drop_zone, event);
+		break;
+
 	default:
 		break;
 	}
@@ -1167,8 +1189,8 @@ Editor::canvas_drop_zone_event (GdkEvent* event)
 bool
 Editor::track_canvas_drag_motion (Glib::RefPtr<Gdk::DragContext> const& context, int x, int y, guint time)
 {
-	boost::shared_ptr<Region> region;
-	boost::shared_ptr<Region> region_copy;
+	std::shared_ptr<Region> region;
+	std::shared_ptr<Region> region_copy;
 	RouteTimeAxisView* rtav;
 	GdkEvent event;
 	double px;
@@ -1265,7 +1287,7 @@ Editor::drop_regions (const Glib::RefPtr<Gdk::DragContext>& /*context*/,
 	samplepos_t const pos = window_event_sample (&event, &px, &py);
 
 	PBD::ID rid (data.get_data_as_string ());
-	boost::shared_ptr<Region> region = RegionFactory::region_by_id (rid);
+	std::shared_ptr<Region> region = RegionFactory::region_by_id (rid);
 
 	if (!region) { return; }
 
@@ -1276,20 +1298,20 @@ Editor::drop_regions (const Glib::RefPtr<Gdk::DragContext>& /*context*/,
 		rtav = dynamic_cast<RouteTimeAxisView*> (tv.first);
 	} else {
 		try {
-			if (boost::dynamic_pointer_cast<AudioRegion> (region)) {
+			if (std::dynamic_pointer_cast<AudioRegion> (region)) {
 				uint32_t output_chan = region->sources().size();
 				if ((Config->get_output_auto_connect() & AutoConnectMaster) && session()->master_out()) {
 					output_chan =  session()->master_out()->n_inputs().n_audio();
 				}
-				list<boost::shared_ptr<AudioTrack> > audio_tracks;
+				list<std::shared_ptr<AudioTrack> > audio_tracks;
 				audio_tracks = session()->new_audio_track (region->sources().size(), output_chan, 0, 1, region->name(), PresentationInfo::max_order);
 				rtav = dynamic_cast<RouteTimeAxisView*> (time_axis_view_from_stripable (audio_tracks.front()));
-			} else if (boost::dynamic_pointer_cast<MidiRegion> (region)) {
+			} else if (std::dynamic_pointer_cast<MidiRegion> (region)) {
 				ChanCount one_midi_port (DataType::MIDI, 1);
-				list<boost::shared_ptr<MidiTrack> > midi_tracks;
+				list<std::shared_ptr<MidiTrack> > midi_tracks;
 				midi_tracks = session()->new_midi_track (one_midi_port, one_midi_port,
 				                                         Config->get_strict_io () || Profile->get_mixbus (),
-				                                         boost::shared_ptr<ARDOUR::PluginInfo>(),
+				                                         std::shared_ptr<ARDOUR::PluginInfo>(),
 				                                         (ARDOUR::Plugin::PresetRecord*) 0,
 				                                         (ARDOUR::RouteGroup*) 0, 1, region->name(), PresentationInfo::max_order, Normal, true);
 				rtav = dynamic_cast<RouteTimeAxisView*> (time_axis_view_from_stripable (midi_tracks.front()));
@@ -1303,11 +1325,11 @@ Editor::drop_regions (const Glib::RefPtr<Gdk::DragContext>& /*context*/,
 	}
 
 	if (rtav != 0 && rtav->is_track ()) {
-		boost::shared_ptr<Region> region_copy = RegionFactory::create (region, true);
+		std::shared_ptr<Region> region_copy = RegionFactory::create (region, true);
 
-		if ((boost::dynamic_pointer_cast<AudioRegion> (region_copy) != 0 && dynamic_cast<AudioTimeAxisView*> (rtav) != 0) ||
-		    (boost::dynamic_pointer_cast<MidiRegion> (region_copy) != 0 && dynamic_cast<MidiTimeAxisView*> (rtav) != 0)) {
-			_drags->set (new RegionInsertDrag (this, region_copy, rtav, timepos_t (pos)), &event);
+		if ((std::dynamic_pointer_cast<AudioRegion> (region_copy) != 0 && dynamic_cast<AudioTimeAxisView*> (rtav) != 0) ||
+		    (std::dynamic_pointer_cast<MidiRegion> (region_copy) != 0 && dynamic_cast<MidiTimeAxisView*> (rtav) != 0)) {
+			_drags->set (new RegionInsertDrag (this, region_copy, rtav, timepos_t (pos), drag_time_domain (region_copy.get())), &event);
 			_drags->end_grab (&event);
 		}
 	}

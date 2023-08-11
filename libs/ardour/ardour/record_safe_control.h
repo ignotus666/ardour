@@ -19,9 +19,8 @@
 #ifndef __ardour_record_safe_control_h__
 #define __ardour_record_safe_control_h__
 
+#include <memory>
 #include <string>
-
-#include <boost/shared_ptr.hpp>
 
 #include "ardour/slavable_automation_control.h"
 #include "ardour/recordable.h"
@@ -35,7 +34,7 @@ class Session;
 class LIBARDOUR_API RecordSafeControl : public SlavableAutomationControl
 {
   public:
-	RecordSafeControl (Session& session, std::string const & name, Recordable& m, Temporal::TimeDomain td);
+	RecordSafeControl (Session& session, std::string const & name, Recordable& m, Temporal::TimeDomainProvider const & td);
 	~RecordSafeControl() {}
 
   protected:

@@ -42,6 +42,18 @@ void CairoWidget::set_source_rgb_a( cairo_t* cr, Gdk::Color col, float a)  //ToD
 	cairo_set_source_rgba(cr, r, g, b, a);
 }
 
+void CairoWidget::set_source_rgb_a( cairo_t* cr, Gtkmm2ext::Color col, float a)  //ToDo:  this one and the Canvas version should be in a shared file (?)
+{
+	int ir, ig, ib;
+	UINT_TO_RGB (col, &ir, &ig, &ib);
+
+	const float r = ir / 256.;
+	const float g = ig / 256.;
+	const float b = ib / 256.;
+
+	cairo_set_source_rgba(cr, r, g, b, a);
+}
+
 CairoWidget::CairoWidget ()
 	: _active_state (Gtkmm2ext::Off)
 	, _visual_state (Gtkmm2ext::NoVisualState)
@@ -51,7 +63,9 @@ CairoWidget::CairoWidget ()
 	, _current_parent (0)
 	, _canvas_widget (false)
 	, _nsglview (0)
-#ifdef USE_CAIRO_IMAGE_SURFACE
+#ifdef __APPLE__
+	, _use_image_surface (false)
+#elif defined USE_CAIRO_IMAGE_SURFACE
 	, _use_image_surface (true)
 #else
 	, _use_image_surface (NULL != getenv("ARDOUR_IMAGE_SURFACE"))
@@ -84,13 +98,13 @@ CairoWidget::set_canvas_widget ()
 }
 
 void
-CairoWidget::use_nsglview ()
+CairoWidget::use_nsglview (bool retina)
 {
 	assert (!_nsglview);
 	assert (!_canvas_widget);
-	assert (!is_realized());
+	assert (!get_realized());
 #ifdef ARDOUR_CANVAS_NSVIEW_TAG // patched gdkquartz.h
-	_nsglview = Gtkmm2ext::nsglview_create (this);
+	_nsglview = Gtkmm2ext::nsglview_create (this, retina);
 #endif
 }
 

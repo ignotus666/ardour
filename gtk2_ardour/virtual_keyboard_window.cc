@@ -49,7 +49,7 @@ VirtualKeyboardWindow::VirtualKeyboardWindow ()
 {
 	UIConfiguration::instance().ParameterChanged.connect (sigc::mem_fun (*this, &VirtualKeyboardWindow::parameter_changed));
 
-	_piano.set_flags (Gtk::CAN_FOCUS);
+	_piano.set_can_focus ();
 
 	select_keyboard_layout (UIConfiguration::instance().get_vkeybd_layout ());
 	_piano.set_annotate_octave (true);
@@ -74,6 +74,7 @@ VirtualKeyboardWindow::VirtualKeyboardWindow ()
 	_piano_velocity.append_text_item ("32");
 	_piano_velocity.append_text_item ("64");
 	_piano_velocity.append_text_item ("82");
+	_piano_velocity.append_text_item ("96");
 	_piano_velocity.append_text_item ("100");
 	_piano_velocity.append_text_item ("127");
 #endif
@@ -100,11 +101,11 @@ VirtualKeyboardWindow::VirtualKeyboardWindow ()
 	_piano_octave_range.set_active ("7");
 	_transpose_output.set_active ("0");
 
-	_pitchbend            = boost::shared_ptr<VKBDControl> (new VKBDControl ("PB", 8192, 16383));
+	_pitchbend            = std::shared_ptr<VKBDControl> (new VKBDControl ("PB", 8192, 16383));
 	_pitch_slider         = manage (new VSliderController (&_pitch_adjustment, _pitchbend, 0, PX_SCALE (15)));
 	_pitch_slider_tooltip = new Gtkmm2ext::PersistentTooltip (_pitch_slider);
 
-	_modwheel         = boost::shared_ptr<VKBDControl> (new VKBDControl ("MW", 0, 127));
+	_modwheel         = std::shared_ptr<VKBDControl> (new VKBDControl ("MW", 0, 127));
 	_modwheel_slider  = manage (new VSliderController (&_modwheel_adjustment, _modwheel, 0, PX_SCALE (15)));
 	_modwheel_tooltip = new Gtkmm2ext::PersistentTooltip (_modwheel_slider);
 
@@ -137,7 +138,7 @@ VirtualKeyboardWindow::VirtualKeyboardWindow ()
 
 	int col = 4;
 	for (size_t i = 0; i < VKBD_NCTRLS; ++i, ++col) {
-		_cc[i]      = boost::shared_ptr<VKBDControl> (new VKBDControl ("CC"));
+		_cc[i]      = std::shared_ptr<VKBDControl> (new VKBDControl ("CC"));
 		_cc_knob[i] = manage (new ArdourKnob (ArdourKnob::default_elements, ArdourKnob::Flags (0)));
 		_cc_knob[i]->set_controllable (_cc[i]);
 		_cc_knob[i]->set_size_request (PX_SCALE (21), PX_SCALE (21));
@@ -221,6 +222,7 @@ VirtualKeyboardWindow::VirtualKeyboardWindow ()
 	_piano.NoteOff.connect (sigc::mem_fun (*this, &VirtualKeyboardWindow::note_off_event_handler));
 	_piano.SwitchOctave.connect (sigc::mem_fun (*this, &VirtualKeyboardWindow::octave_key_event_handler));
 	_piano.PitchBend.connect (sigc::mem_fun (*this, &VirtualKeyboardWindow::pitch_bend_key_event_handler));
+	_piano.SetVelocity.connect (sigc::mem_fun (*this, &VirtualKeyboardWindow::velocity_key_event_handler));
 
 	/* initialize GUI */
 
@@ -260,7 +262,7 @@ VirtualKeyboardWindow::parameter_changed (std::string const& p)
 }
 
 XMLNode&
-VirtualKeyboardWindow::get_state ()
+VirtualKeyboardWindow::get_state () const
 {
 	XMLNode* node = new XMLNode (X_("VirtualKeyboard"));
 	node->set_property (X_("Channel"), _midi_channel.get_text ());
@@ -449,6 +451,17 @@ VirtualKeyboardWindow::update_cc (size_t i, int cc)
 }
 
 void
+VirtualKeyboardWindow::velocity_key_event_handler (int v)
+{
+	if (v < 1 || v > 127) {
+		return;
+	}
+	char buf[16];
+	sprintf (buf, "%d", v);
+	_piano_velocity.set_active (buf);
+}
+
+void
 VirtualKeyboardWindow::octave_key_event_handler (bool up)
 {
 	int k = PBD::atoi (_piano_octave_key.get_text ()) + (up ? 1 : -1);
@@ -561,7 +574,7 @@ VirtualKeyboardWindow::note_off_event_handler (int note)
 	ev[0] = MIDI_CMD_NOTE_OFF | channel;
 	ev[1] = note;
 	ev[2] = 0;
-	_session->vkbd_output_port ()->write (ev, 3, 0);
+	_session->vkbd_output_port ()->write (ev, 3, 1);
 }
 
 void
@@ -602,7 +615,7 @@ VirtualKeyboardWindow::pitch_bend_event_handler (int val)
 }
 
 void
-VirtualKeyboardWindow::pitch_bend_release ()
+VirtualKeyboardWindow::pitch_bend_release (int)
 {
 	_pitch_adjustment.set_value (8192);
 }

@@ -29,8 +29,8 @@ using namespace std;
 using namespace Gtk;
 using namespace ARDOUR;
 
-ScriptSelector::ScriptSelector (std::string title, LuaScriptInfo::ScriptType type)
-	: ArdourDialog (title)
+ScriptSelector::ScriptSelector (Gtk::Window& parent, std::string title, LuaScriptInfo::ScriptType type)
+	: ArdourDialog (parent, title, true)
 	, _type_label ("<b>Type:</b>", Gtk::ALIGN_END, Gtk::ALIGN_CENTER)
 	, _type ("", Gtk::ALIGN_START, Gtk::ALIGN_CENTER)
 	, _author_label ("<b>Author:</b>", Gtk::ALIGN_END, Gtk::ALIGN_CENTER)
@@ -107,13 +107,13 @@ ScriptSelector::setup_list ()
 	_script_combo.set_row_separator_func (sigc::mem_fun (*this, &ScriptSelector::script_separator));
 
 	if (_script_type == LuaScriptInfo::EditorAction) {
-		_script_combo.append_text ("Shortcut");
-		_script_combo.append_text ("--separator--");
+		_script_combo.append ("Shortcut");
+		_script_combo.append ("--separator--");
 	}
 
 	vector<string>::const_iterator i;
 	for (i = script_names.begin(); i != script_names.end(); ++i) {
-		_script_combo.append_text (*i);
+		_script_combo.append (*i);
 	}
 
 	_script_combo.set_active(0);
@@ -222,7 +222,7 @@ ScriptParameterDialog::ScriptParameterDialog (std::string title,
 	++ty;
 
 	if (_lsp.size () > 0) {
-		l = manage (new Label (_("<b>Instance Parameters</b>"), Gtk::ALIGN_LEFT, Gtk::ALIGN_CENTER, false));
+		l = manage (new Label (_("<b>Instance Parameters</b>"), Gtk::ALIGN_START, Gtk::ALIGN_CENTER, false));
 		l->set_use_markup ();
 		t->attach (*l, 0, 2, ty, ty+1);
 		++ty;
@@ -236,7 +236,7 @@ ScriptParameterDialog::ScriptParameterDialog (std::string title,
 			c->signal_toggled().connect (sigc::bind (sigc::mem_fun (*this, &ScriptParameterDialog::active_changed), i, c, e));
 			t->attach (*c, 0, 1, ty, ty+1);
 		} else {
-			Label* l = manage (new Label (_lsp[i]->title, Gtk::ALIGN_LEFT));
+			Label* l = manage (new Label (_lsp[i]->title, Gtk::ALIGN_START));
 			t->attach (*l, 0, 1, ty, ty+1);
 		}
 

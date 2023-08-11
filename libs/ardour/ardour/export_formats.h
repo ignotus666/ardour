@@ -22,8 +22,8 @@
 #ifndef __ardour_export_formats_h__
 #define __ardour_export_formats_h__
 
-#include <boost/weak_ptr.hpp>
 #include <list>
+#include <memory>
 
 #include "pbd/failed_constructor.h"
 #include "pbd/signals.h"
@@ -137,7 +137,7 @@ public:
 		int         quality;
 	};
 
-	typedef boost::shared_ptr<CodecQuality> CodecQualityPtr;
+	typedef std::shared_ptr<CodecQuality> CodecQualityPtr;
 	typedef std::list<CodecQualityPtr>      CodecQualityList;
 
 	virtual ~HasCodecQuality () {}
@@ -187,12 +187,12 @@ public:
 		ExportFormatBase::DitherType type;
 	};
 
-	typedef boost::shared_ptr<SampleFormatState> SampleFormatPtr;
-	typedef boost::weak_ptr<SampleFormatState>   WeakSampleFormatPtr;
+	typedef std::shared_ptr<SampleFormatState> SampleFormatPtr;
+	typedef std::weak_ptr<SampleFormatState>   WeakSampleFormatPtr;
 	typedef std::list<SampleFormatPtr>           SampleFormatList;
 
-	typedef boost::shared_ptr<DitherTypeState> DitherTypePtr;
-	typedef boost::weak_ptr<DitherTypeState>   WeakDitherTypePtr;
+	typedef std::shared_ptr<DitherTypeState> DitherTypePtr;
+	typedef std::weak_ptr<DitherTypeState>   WeakDitherTypePtr;
 	typedef std::list<DitherTypePtr>           DitherTypeList;
 
 public:
@@ -350,6 +350,58 @@ public:
 		return SF_16;
 	}
 	virtual bool has_broadcast_info () const
+	{
+		return true;
+	}
+};
+
+class LIBARDOUR_API ExportFormatOggOpus : public ExportFormat, public HasCodecQuality
+{
+public:
+	ExportFormatOggOpus ();
+	~ExportFormatOggOpus (){};
+
+	bool set_compatibility_state (ExportFormatCompatibility const& compatibility);
+
+	Type get_type () const
+	{
+		return T_Sndfile;
+	}
+	SampleFormat get_explicit_sample_format () const
+	{
+		return SF_Opus;
+	}
+	int default_codec_quality () const
+	{
+		return 49;
+	}
+	virtual bool supports_tagging () const
+	{
+		return true;
+	}
+};
+
+class LIBARDOUR_API ExportFormatMPEG : public ExportFormat, public HasSampleFormat, public HasCodecQuality
+{
+public:
+	ExportFormatMPEG (std::string const& name, std::string const& ext);
+	~ExportFormatMPEG (){};
+
+	bool set_compatibility_state (ExportFormatCompatibility const& compatibility);
+
+	Type get_type () const
+	{
+		return T_Sndfile;
+	}
+	SampleFormat default_sample_format () const
+	{
+		return SF_MPEG_LAYER_III;
+	}
+	int default_codec_quality () const
+	{
+		return 40;
+	}
+	virtual bool supports_tagging () const
 	{
 		return true;
 	}

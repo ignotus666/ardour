@@ -71,6 +71,7 @@ setup_enum_writer ()
 	DiskIOPoint _DiskIOPoint;
 	MeterType _MeterType;
 	TrackMode _TrackMode;
+	RecordMode _RecordMode;
 	NoteMode _NoteMode;
 	ChannelMode _ChannelMode;
 	ColorMode _ColorMode;
@@ -80,6 +81,7 @@ setup_enum_writer ()
 	MeterLineUp _MeterLineUp;
 	InputMeterLayout _InputMeterLayout;
 	EditMode _EditMode;
+	RippleMode _RippleMode;
 	RegionPoint _RegionPoint;
 	Placement _Placement;
 	MonitorModel _MonitorModel;
@@ -107,6 +109,7 @@ setup_enum_writer ()
 	FadeShape _FadeShape;
 	RegionSelectionAfterSplit _RegionSelectionAfterSplit;
 	RangeSelectionAfterSplit _RangeSelectionAfterSplit;
+	TimeSelectionAfterSectionPaste _TimeSelectionAfterSectionPaste;
 	IOChange _IOChange;
 	AutomationType _AutomationType;
 	AutoState _AutoState;
@@ -141,6 +144,8 @@ setup_enum_writer ()
 	WaveformScale _WaveformScale;
 	WaveformShape _WaveformShape;
 	ScreenSaverMode _ScreenSaverMode;
+	PluginGUIBehavior _PluginGUIBehavior;
+	AppleNSGLViewMode _AppleNSGLViewMode;
 	Session::PostTransportWork _Session_PostTransportWork;
 	MTC_Status _MIDI_MTC_Status;
 	BufferingPreset _BufferingPreset;
@@ -201,7 +206,9 @@ setup_enum_writer ()
 	REGISTER_ENUM (MonitoringAutomation);
 	REGISTER_ENUM (BusSendLevel);
 	REGISTER_ENUM (BusSendEnable);
+	REGISTER_ENUM (InsertReturnLevel);
 	REGISTER_ENUM (MainOutVolume);
+	REGISTER_ENUM (MidiVelocityAutomation);
 	REGISTER (_AutomationType);
 
 	REGISTER_ENUM (Off);
@@ -256,6 +263,11 @@ setup_enum_writer ()
 	REGISTER_ENUM (Destructive);
 	REGISTER (_TrackMode);
 
+	REGISTER_ENUM (RecLayered);
+	REGISTER_ENUM (RecNonLayered);
+	REGISTER_ENUM (RecSoundOnSound);
+	REGISTER (_RecordMode);
+
 	REGISTER_ENUM (Sustained);
 	REGISTER_ENUM (Percussive);
 	REGISTER (_NoteMode);
@@ -304,9 +316,13 @@ setup_enum_writer ()
 	REGISTER_ENUM (LayoutAutomatic);
 	REGISTER (_InputMeterLayout);
 
+	REGISTER_ENUM (RippleSelected);
+	REGISTER_ENUM (RippleAll);  //enum had to be disambiguated from EditMode:RippleAll
+	REGISTER_ENUM (RippleInterview);
+	REGISTER (_RippleMode);
+
 	REGISTER_ENUM (Slide);
 	REGISTER_ENUM (Ripple);
-	REGISTER_ENUM (RippleAll);
 	REGISTER_ENUM (Lock);
 	REGISTER (_EditMode);
 	/*
@@ -558,6 +574,12 @@ setup_enum_writer ()
 	REGISTER (_RegionSelectionAfterSplit);
 	REGISTER (_RangeSelectionAfterSplit);
 
+	REGISTER_ENUM(SectionSelectNoop);
+	REGISTER_ENUM(SectionSelectClear);
+	REGISTER_ENUM(SectionSelectRetain);
+	REGISTER_ENUM(SectionSelectRetainAndMovePlayhead);
+	REGISTER (_TimeSelectionAfterSectionPaste);
+
 	REGISTER_CLASS_ENUM (DiskIOProcessor, Recordable);
 	REGISTER_CLASS_ENUM (DiskIOProcessor, Hidden);
 	REGISTER_BITS (_DiskIOProcessor_Flag);
@@ -621,6 +643,7 @@ setup_enum_writer ()
 	REGISTER_CLASS_ENUM (ExportFormatBase, F_Ogg);
 	REGISTER_CLASS_ENUM (ExportFormatBase, F_CAF);
 	REGISTER_CLASS_ENUM (ExportFormatBase, F_FFMPEG);
+	REGISTER_CLASS_ENUM (ExportFormatBase, F_MPEG);
 	REGISTER (_ExportFormatBase_FormatId);
 
 	REGISTER_CLASS_ENUM (ExportFormatBase, E_FileDefault);
@@ -638,6 +661,8 @@ setup_enum_writer ()
 	REGISTER_CLASS_ENUM (ExportFormatBase, SF_Float);
 	REGISTER_CLASS_ENUM (ExportFormatBase, SF_Double);
 	REGISTER_CLASS_ENUM (ExportFormatBase, SF_Vorbis);
+	REGISTER_CLASS_ENUM (ExportFormatBase, SF_Opus);
+	REGISTER_CLASS_ENUM (ExportFormatBase, SF_MPEG_LAYER_III);
 	REGISTER (_ExportFormatBase_SampleFormat);
 
 	REGISTER_CLASS_ENUM (ExportFormatBase, D_None);
@@ -657,6 +682,7 @@ setup_enum_writer ()
 	REGISTER_CLASS_ENUM (ExportFormatBase, SR_Session);
 	REGISTER_CLASS_ENUM (ExportFormatBase, SR_8);
 	REGISTER_CLASS_ENUM (ExportFormatBase, SR_22_05);
+	REGISTER_CLASS_ENUM (ExportFormatBase, SR_24);
 	REGISTER_CLASS_ENUM (ExportFormatBase, SR_44_1);
 	REGISTER_CLASS_ENUM (ExportFormatBase, SR_48);
 	REGISTER_CLASS_ENUM (ExportFormatBase, SR_88_2);
@@ -738,6 +764,16 @@ setup_enum_writer ()
 	REGISTER_ENUM(InhibitWhileRecording);
 	REGISTER_ENUM(InhibitAlways);
 	REGISTER(_ScreenSaverMode);
+
+	REGISTER_ENUM(PluginGUIHide);
+	REGISTER_ENUM(PluginGUIDestroyAny);
+	REGISTER_ENUM(PluginGUIDestroyVST);
+	REGISTER(_PluginGUIBehavior);
+
+	REGISTER_ENUM(NSGLHiRes);
+	REGISTER_ENUM(NSGLLoRes);
+	REGISTER_ENUM(NSGLDisable);
+	REGISTER(_AppleNSGLViewMode);
 
 	REGISTER_ENUM (Small);
 	REGISTER_ENUM (Medium);
@@ -853,24 +889,20 @@ setup_enum_writer ()
 	REGISTER_CLASS_ENUM (Trigger, Stopped);
 	REGISTER_CLASS_ENUM (Trigger, WaitingToStart);
 	REGISTER_CLASS_ENUM (Trigger, Running);
-	REGISTER_CLASS_ENUM (Trigger, Playout);
 	REGISTER_CLASS_ENUM (Trigger, WaitingForRetrigger);
 	REGISTER_CLASS_ENUM (Trigger, WaitingToStop);
+	REGISTER_CLASS_ENUM (Trigger, WaitingToSwitch);
 	REGISTER_CLASS_ENUM (Trigger, Stopping);
 	REGISTER (_TriggerState);
 
 	REGISTER_CLASS_ENUM (FollowAction, None);
 	REGISTER_CLASS_ENUM (FollowAction, Stop);
 	REGISTER_CLASS_ENUM (FollowAction, Again);
-	REGISTER_CLASS_ENUM (FollowAction, QueuedTrigger);
-	REGISTER_CLASS_ENUM (FollowAction, NextTrigger);
-	REGISTER_CLASS_ENUM (FollowAction, PrevTrigger);
 	REGISTER_CLASS_ENUM (FollowAction, ForwardTrigger);
 	REGISTER_CLASS_ENUM (FollowAction, ReverseTrigger);
 	REGISTER_CLASS_ENUM (FollowAction, FirstTrigger);
 	REGISTER_CLASS_ENUM (FollowAction, LastTrigger);
-	REGISTER_CLASS_ENUM (FollowAction, AnyTrigger);
-	REGISTER_CLASS_ENUM (FollowAction, OtherTrigger);
+	REGISTER_CLASS_ENUM (FollowAction, JumpTrigger);
 	REGISTER (_FollowAction);
 
 	REGISTER_CLASS_ENUM (Trigger, OneShot);

@@ -56,10 +56,91 @@ using namespace PBD;
 using std::string;
 using std::vector;
 
+/* Cache dB -> coefficient calculation for dB/sec falloff.
+ * @n_samples engine-buffer-size
+ * @rate engine sample-rate
+ * @return coefficiant taking user preferences meter_falloff (dB/sec) into account
+ */
+struct FallOffCache {
+	FallOffCache ()
+		: _falloff (1.0)
+		, _cfg_db_s (0)
+		, _n_samples (0)
+		, _rate (0)
+	{
+	}
+
+	float calc (pframes_t n_samples, samplecnt_t rate)
+	{
+		if (n_samples == 0 || rate == 0) {
+			return 1.0;
+		}
+
+		if (Config->get_meter_falloff () != _cfg_db_s || n_samples != _n_samples || rate != _rate) {
+			_cfg_db_s  = Config->get_meter_falloff ();
+			_n_samples = n_samples;
+			_rate      = rate;
+#ifdef _GNU_SOURCE
+			_falloff = exp10f (-0.05f * _cfg_db_s * _n_samples / _rate);
+#else
+			_falloff = powf (10.f, -0.05f * _cfg_db_s * _n_samples / _rate);
+#endif
+		}
+
+		return _falloff;
+	}
+
+private:
+	float       _falloff;
+	float       _cfg_db_s;
+	pframes_t   _n_samples;
+	samplecnt_t _rate;
+};
+
+static FallOffCache falloff_cache;
+
+void
+PortManager::falloff_cache_calc (pframes_t n_samples, samplecnt_t rate)
+{
+	falloff_cache.calc (n_samples, rate);
+}
+
 PortManager::AudioInputPort::AudioInputPort (samplecnt_t sz)
 	: scope (AudioPortScope (new CircularSampleBuffer (sz)))
 	, meter (AudioPortMeter (new DPM))
 {
+}
+
+void
+PortManager::AudioInputPort::apply_falloff (pframes_t n_samples, samplecnt_t rate, bool reset)
+{
+	if (reset) {
+		meter->reset ();
+	}
+
+	if (meter->level > 1e-10) {
+		meter->level *= falloff_cache.calc (n_samples, rate);
+	} else {
+		meter->level = 0;
+	}
+}
+
+void
+PortManager::AudioInputPort::silence (pframes_t n_samples)
+{
+	meter->level = 0;
+	scope->silence (n_samples);
+}
+
+void
+PortManager::AudioInputPort::process (Sample const* buf, pframes_t n_samples, bool reset)
+{
+	scope->write (buf, n_samples);
+
+	float level  = reset ? 0 : meter->level;
+	level        = compute_peak (buf, n_samples, level);
+	meter->level = std::min (level, 100.f); // cut off at +40dBFS for falloff.
+	meter->peak  = std::max (meter->peak, level);
 }
 
 PortManager::MIDIInputPort::MIDIInputPort (samplecnt_t sz)
@@ -68,7 +149,37 @@ PortManager::MIDIInputPort::MIDIInputPort (samplecnt_t sz)
 {
 }
 
-PortManager::PortID::PortID (boost::shared_ptr<AudioBackend> b, DataType dt, bool in, std::string const& pn)
+void
+PortManager::MIDIInputPort::apply_falloff (pframes_t n_samples, samplecnt_t rate, bool reset)
+{
+	for (size_t i = 0; i < 17; ++i) {
+		/* falloff */
+		if (!reset && meter->chn_active[i] > 1e-10) {
+			meter->chn_active[i] *= falloff_cache.calc (n_samples, rate);
+		} else {
+			meter->chn_active[i] = 0;
+		}
+	}
+}
+
+void
+PortManager::MIDIInputPort::process_event (uint8_t const* buf, size_t size)
+{
+	if (size == 0 || buf[0] == 0xfe) {
+		/* ignore active sensing */
+		return;
+	}
+
+	if ((buf[0] & 0xf0) == 0xf0) {
+		meter->chn_active[16] = 1.0;
+	} else {
+		int chn                   = (buf[0] & 0x0f);
+		meter->chn_active[chn] = 1.0;
+	}
+	monitor->write (buf, size);
+}
+
+PortManager::PortID::PortID (std::shared_ptr<AudioBackend> b, DataType dt, bool in, std::string const& pn)
 	: backend (b->name ())
 	, port_name (pn)
 	, data_type (dt)
@@ -146,7 +257,7 @@ PortManager::PortManager ()
 	, _audio_input_ports (new AudioInputPorts)
 	, _midi_input_ports (new MIDIInputPorts)
 {
-	g_atomic_int_set (&_reset_meters, 1);
+	_reset_meters.store (1);
 	load_port_info ();
 }
 
@@ -176,7 +287,7 @@ PortManager::remove_all_ports ()
 
 	{
 		RCUWriter<Ports>         writer (_ports);
-		boost::shared_ptr<Ports> ps = writer.get_copy ();
+		std::shared_ptr<Ports> ps = writer.get_copy ();
 		ps->clear ();
 	}
 
@@ -243,6 +354,26 @@ PortManager::get_pretty_name_by_name (const std::string& portname) const
 
 	return string ();
 }
+
+std::string
+PortManager::get_hardware_port_name_by_name (const std::string& portname) const
+{
+	PortEngine::PortHandle ph = _backend->get_port_by_name (portname);
+
+	if (ph) {
+		std::string value;
+		std::string type;
+		if (0 == _backend->get_port_property (ph, "http://ardour.org/metadata/hardware-port-name", value, type)) {
+			return value;
+		} else {
+			return short_port_name_from_port_name (portname);
+		}
+	}
+
+	return string ();
+}
+
+
 
 bool
 PortManager::port_is_mine (const string& portname) const
@@ -371,21 +502,21 @@ PortManager::n_physical_inputs () const
 /** @param name Full or short name of port
  *  @return Corresponding Port or 0.
  */
-boost::shared_ptr<Port>
+std::shared_ptr<Port>
 PortManager::get_port_by_name (const string& portname)
 {
 	if (!_backend) {
-		return boost::shared_ptr<Port> ();
+		return std::shared_ptr<Port> ();
 	}
 
 	if (!port_is_mine (portname)) {
 		/* not an ardour port */
-		return boost::shared_ptr<Port> ();
+		return std::shared_ptr<Port> ();
 	}
 
-	boost::shared_ptr<Ports> pr  = _ports.reader ();
-	std::string              rel = make_port_name_relative (portname);
-	Ports::iterator          x   = pr->find (rel);
+	std::shared_ptr<Ports const> pr  = _ports.reader ();
+	std::string                  rel = make_port_name_relative (portname);
+	Ports::const_iterator        x   = pr->find (rel);
 
 	if (x != pr->end ()) {
 		/* its possible that the port was renamed by some 3rd party and
@@ -400,18 +531,18 @@ PortManager::get_port_by_name (const string& portname)
 		return x->second;
 	}
 
-	return boost::shared_ptr<Port> ();
+	return std::shared_ptr<Port> ();
 }
 
 void
 PortManager::port_renamed (const std::string& old_relative_name, const std::string& new_relative_name)
 {
 	RCUWriter<Ports>         writer (_ports);
-	boost::shared_ptr<Ports> p = writer.get_copy ();
+	std::shared_ptr<Ports> p = writer.get_copy ();
 	Ports::iterator          x = p->find (old_relative_name);
 
 	if (x != p->end ()) {
-		boost::shared_ptr<Port> port = x->second;
+		std::shared_ptr<Port> port = x->second;
 		p->erase (x);
 		p->insert (make_pair (new_relative_name, port));
 	}
@@ -420,10 +551,10 @@ PortManager::port_renamed (const std::string& old_relative_name, const std::stri
 int
 PortManager::get_ports (DataType type, PortList& pl)
 {
-	boost::shared_ptr<Ports> plist = _ports.reader ();
-	for (Ports::iterator p = plist->begin (); p != plist->end (); ++p) {
-		if (p->second->type () == type) {
-			pl.push_back (p->second);
+	std::shared_ptr<Ports const> plist = _ports.reader ();
+	for (auto const& p : *plist) {
+		if (p.second->type () == type) {
+			pl.push_back (p.second);
 		}
 	}
 	return pl.size ();
@@ -439,6 +570,19 @@ PortManager::get_ports (const string& port_name_pattern, DataType type, PortFlag
 	}
 
 	return _backend->get_ports (port_name_pattern, type, flags, s);
+}
+
+size_t
+PortManager::session_port_count () const
+{
+	size_t cnt = 0;
+	for (auto const& p : *_ports.reader ()) {
+		if (p.second->flags () & TransportSyncPort) {
+			continue;
+		}
+		++cnt;
+	}
+	return cnt;
 }
 
 void
@@ -471,10 +615,10 @@ struct PortDeleter {
 	}
 };
 
-boost::shared_ptr<Port>
+std::shared_ptr<Port>
 PortManager::register_port (DataType dtype, const string& portname, bool input, bool async, PortFlags flags)
 {
-	boost::shared_ptr<Port> newport;
+	std::shared_ptr<Port> newport;
 
 	/* limit the possible flags that can be set */
 
@@ -506,7 +650,7 @@ PortManager::register_port (DataType dtype, const string& portname, bool input, 
 		newport->set_buffer_size (AudioEngine::instance ()->samples_per_cycle ());
 
 		RCUWriter<Ports>         writer (_ports);
-		boost::shared_ptr<Ports> ps = writer.get_copy ();
+		std::shared_ptr<Ports> ps = writer.get_copy ();
 		ps->insert (make_pair (make_port_name_relative (portname), newport));
 
 		/* writer goes out of scope, forces update */
@@ -524,20 +668,20 @@ PortManager::register_port (DataType dtype, const string& portname, bool input, 
 	return newport;
 }
 
-boost::shared_ptr<Port>
+std::shared_ptr<Port>
 PortManager::register_input_port (DataType type, const string& portname, bool async, PortFlags extra_flags)
 {
 	return register_port (type, portname, true, async, extra_flags);
 }
 
-boost::shared_ptr<Port>
+std::shared_ptr<Port>
 PortManager::register_output_port (DataType type, const string& portname, bool async, PortFlags extra_flags)
 {
 	return register_port (type, portname, false, async, extra_flags);
 }
 
 int
-PortManager::unregister_port (boost::shared_ptr<Port> port)
+PortManager::unregister_port (std::shared_ptr<Port> port)
 {
 	/* This is a little subtle. We do not call the backend's port
 	 * unregistration code from here. That is left for the Port
@@ -549,7 +693,7 @@ PortManager::unregister_port (boost::shared_ptr<Port> port)
 
 	{
 		RCUWriter<Ports>         writer (_ports);
-		boost::shared_ptr<Ports> ps = writer.get_copy ();
+		std::shared_ptr<Ports> ps = writer.get_copy ();
 		Ports::iterator          x  = ps->find (make_port_name_relative (port->name ()));
 
 		if (x != ps->end ()) {
@@ -623,8 +767,8 @@ PortManager::connect (const string& source, const string& destination)
 	string s = make_port_name_non_relative (source);
 	string d = make_port_name_non_relative (destination);
 
-	boost::shared_ptr<Port> src = get_port_by_name (s);
-	boost::shared_ptr<Port> dst = get_port_by_name (d);
+	std::shared_ptr<Port> src = get_port_by_name (s);
+	std::shared_ptr<Port> dst = get_port_by_name (d);
 
 	if (src) {
 		ret = src->connect (d);
@@ -659,8 +803,8 @@ PortManager::disconnect (const string& source, const string& destination)
 	string s = make_port_name_non_relative (source);
 	string d = make_port_name_non_relative (destination);
 
-	boost::shared_ptr<Port> src = get_port_by_name (s);
-	boost::shared_ptr<Port> dst = get_port_by_name (d);
+	std::shared_ptr<Port> src = get_port_by_name (s);
+	std::shared_ptr<Port> dst = get_port_by_name (d);
 
 	if (src) {
 		ret = src->disconnect (d);
@@ -679,7 +823,7 @@ PortManager::disconnect (const string& source, const string& destination)
 }
 
 int
-PortManager::disconnect (boost::shared_ptr<Port> port)
+PortManager::disconnect (std::shared_ptr<Port> port)
 {
 	return port->disconnect_all ();
 }
@@ -697,9 +841,10 @@ PortManager::disconnect (std::string const& name)
 int
 PortManager::reestablish_ports ()
 {
-	Ports::iterator i;
-	_midi_info_dirty           = true;
-	boost::shared_ptr<Ports> p = _ports.reader ();
+	_midi_info_dirty = true;
+
+	Ports::const_iterator        i;
+	std::shared_ptr<Ports const> p = _ports.reader ();
 	DEBUG_TRACE (DEBUG::Ports, string_compose ("reestablish %1 ports\n", p->size ()));
 
 	for (i = p->begin (); i != p->end (); ++i) {
@@ -767,15 +912,27 @@ PortManager::set_pretty_names (std::vector<std::string> const& port_names, DataT
 int
 PortManager::reconnect_ports ()
 {
-	boost::shared_ptr<Ports> p = _ports.reader ();
+	std::shared_ptr<Ports const> p = _ports.reader ();
 
 	/* re-establish connections */
 
 	DEBUG_TRACE (DEBUG::Ports, string_compose ("reconnect %1 ports\n", p->size ()));
 
-	for (Ports::iterator i = p->begin (); i != p->end (); ++i) {
-		if (i->second->reconnect ()) {
-			PortConnectedOrDisconnected (i->second, i->first, boost::weak_ptr<Port> (), "", false);
+	Session* s = AudioEngine::instance ()->session ();
+	if (s && s->master_out() && !s->master_out ()->output()->has_ext_connection()) {
+		s->auto_connect_master_bus ();
+	}
+	if (s && s->monitor_out() && !s->monitor_out ()->output()->has_ext_connection()) {
+		s->auto_connect_monitor_bus ();
+	}
+	if (s && s->click_io() && !s->click_io ()->has_ext_connection()) {
+		s->auto_connect_io (s->click_io());
+	}
+
+
+	for (auto const& i : *p) {
+		if (i.second->reconnect ()) {
+			PortConnectedOrDisconnected (i.second, i.first, std::weak_ptr<Port> (), "", false);
 		}
 	}
 
@@ -802,10 +959,10 @@ PortManager::connect_callback (const string& a, const string& b, bool conn)
 {
 	DEBUG_TRACE (DEBUG::BackendCallbacks, string_compose (X_("connect callback %1 + %2 connected ? %3\n"), a, b, conn));
 
-	boost::shared_ptr<Port>  port_a;
-	boost::shared_ptr<Port>  port_b;
-	Ports::iterator          x;
-	boost::shared_ptr<Ports> pr = _ports.reader ();
+	std::shared_ptr<Port>        port_a;
+	std::shared_ptr<Port>        port_b;
+	Ports::const_iterator        x;
+	std::shared_ptr<Ports const> pr = _ports.reader ();
 
 	x = pr->find (make_port_name_relative (a));
 	if (x != pr->end ()) {
@@ -822,12 +979,18 @@ PortManager::connect_callback (const string& a, const string& b, bool conn)
 			port_a->increment_external_connections ();
 		} else if (port_b && !port_a) {
 			port_b->increment_external_connections ();
+		} else if (port_a && port_b) {
+			port_a->increment_internal_connections ();
+			port_a->increment_internal_connections ();
 		}
 	} else {
 		if (port_a && !port_b) {
 			port_a->decrement_external_connections ();
 		} else if (port_b && !port_a) {
 			port_b->decrement_external_connections ();
+		} else if (port_a && port_b) {
+			port_a->decrement_internal_connections ();
+			port_a->decrement_internal_connections ();
 		}
 	}
 
@@ -891,7 +1054,7 @@ PortManager::update_input_ports (bool clear)
 		new_midi  = midi_ports;
 		_monitor_port.clear_ports (true);
 	} else {
-		boost::shared_ptr<AudioInputPorts> aip = _audio_input_ports.reader ();
+		std::shared_ptr<AudioInputPorts const> aip = _audio_input_ports.reader ();
 		/* find new audio ports */
 		for (std::vector<std::string>::iterator p = audio_ports.begin (); p != audio_ports.end (); ++p) {
 			if (port_is_mine (*p) || !_backend->get_port_by_name (*p)) {
@@ -903,13 +1066,13 @@ PortManager::update_input_ports (bool clear)
 		}
 
 		/* find stale audio ports */
-		for (AudioInputPorts::iterator p = aip->begin (); p != aip->end (); ++p) {
-			if (std::find (audio_ports.begin (), audio_ports.end (), p->first) == audio_ports.end ()) {
-				old_audio.push_back (p->first);
+		for (auto const& p : *aip) {
+			if (std::find (audio_ports.begin (), audio_ports.end (), p.first) == audio_ports.end ()) {
+				old_audio.push_back (p.first);
 			}
 		}
 
-		boost::shared_ptr<MIDIInputPorts> mip = _midi_input_ports.reader ();
+		std::shared_ptr<MIDIInputPorts const> mip = _midi_input_ports.reader ();
 		/* find new MIDI ports */
 		for (std::vector<std::string>::iterator p = midi_ports.begin (); p != midi_ports.end (); ++p) {
 			if (port_is_mine (*p) || !_backend->get_port_by_name (*p)) {
@@ -926,16 +1089,16 @@ PortManager::update_input_ports (bool clear)
 		}
 
 		/* find stale audio ports */
-		for (MIDIInputPorts::iterator p = mip->begin (); p != mip->end (); ++p) {
-			if (std::find (midi_ports.begin (), midi_ports.end (), p->first) == midi_ports.end ()) {
-				old_midi.push_back (p->first);
+		for (auto const& p : *mip) {
+			if (std::find (midi_ports.begin (), midi_ports.end (), p.first) == midi_ports.end ()) {
+				old_midi.push_back (p.first);
 			}
 		}
 	}
 
 	if (!new_audio.empty () || !old_audio.empty () || clear) {
 		RCUWriter<AudioInputPorts>         apwr (_audio_input_ports);
-		boost::shared_ptr<AudioInputPorts> apw = apwr.get_copy ();
+		std::shared_ptr<AudioInputPorts> apw = apwr.get_copy ();
 		if (clear) {
 			apw->clear ();
 		} else {
@@ -956,7 +1119,7 @@ PortManager::update_input_ports (bool clear)
 
 	if (!new_midi.empty () || !old_midi.empty () || clear) {
 		RCUWriter<MIDIInputPorts>         mpwr (_midi_input_ports);
-		boost::shared_ptr<MIDIInputPorts> mpw = mpwr.get_copy ();
+		std::shared_ptr<MIDIInputPorts> mpw = mpwr.get_copy ();
 		if (clear) {
 			mpw->clear ();
 		} else {
@@ -982,7 +1145,7 @@ PortManager::update_input_ports (bool clear)
 	}
 
 	if (clear) {
-		/* don't send notifcation for initial setup.
+		/* don't send notification for initial setup.
 		 * Physical I/O is initially connected in
 		 * reconnect_ports(), it is too early to
 		 * do this when called from ::reestablish_ports()
@@ -1093,6 +1256,9 @@ PortManager::cycle_start (pframes_t nframes, Session* s)
 
 	_cycle_ports = _ports.reader ();
 
+	/* pre-calc/cache value */
+	falloff_cache.calc (nframes, s ? s->nominal_sample_rate () : 0);
+
 	/* TODO optimize
 	 *  - when speed == 1.0, the resampler copies data without processing
 	 *   it may (or may not) be more efficient to just run all in sequence.
@@ -1112,19 +1278,22 @@ PortManager::cycle_start (pframes_t nframes, Session* s)
 	 *    A single external source-port may be connected to many ardour
 	 *    input-ports. Currently re-sampling is per input.
 	 */
-	if (s && s->rt_tasklist () && fabs (Port::speed_ratio ()) != 1.0) {
-		RTTaskList::TaskList tl;
-		for (Ports::iterator p = _cycle_ports->begin (); p != _cycle_ports->end (); ++p) {
-			if (!(p->second->flags () & TransportSyncPort)) {
-				tl.push_back (boost::bind (&Port::cycle_start, p->second, nframes));
+	std::shared_ptr<RTTaskList> tl;
+	if (s) {
+		tl = s->rt_tasklist ();
+	}
+	if (tl && fabs (Port::resample_ratio ()) != 1.0) {
+		for (auto const& p : *_cycle_ports) {
+			if (!(p.second->flags () & TransportSyncPort)) {
+				tl->push_back (boost::bind (&Port::cycle_start, p.second, nframes));
 			}
 		}
-		tl.push_back (boost::bind (&PortManager::run_input_meters, this, nframes, s ? s->nominal_sample_rate () : 0));
-		s->rt_tasklist ()->process (tl);
+		tl->push_back (boost::bind (&PortManager::run_input_meters, this, nframes, s ? s->nominal_sample_rate () : 0));
+		tl->process ();
 	} else {
-		for (Ports::iterator p = _cycle_ports->begin (); p != _cycle_ports->end (); ++p) {
-			if (!(p->second->flags () & TransportSyncPort)) {
-				p->second->cycle_start (nframes);
+		for (auto const& p : *_cycle_ports) {
+			if (!(p.second->flags () & TransportSyncPort)) {
+				p.second->cycle_start (nframes);
 			}
 		}
 		run_input_meters (nframes, s ? s->nominal_sample_rate () : 0);
@@ -1135,26 +1304,29 @@ void
 PortManager::cycle_end (pframes_t nframes, Session* s)
 {
 	// see optimzation note in ::cycle_start()
-	if (0 && s && s->rt_tasklist () && fabs (Port::speed_ratio ()) != 1.0) {
-		RTTaskList::TaskList tl;
-		for (Ports::iterator p = _cycle_ports->begin (); p != _cycle_ports->end (); ++p) {
-			if (!(p->second->flags () & TransportSyncPort)) {
-				tl.push_back (boost::bind (&Port::cycle_end, p->second, nframes));
+	std::shared_ptr<RTTaskList> tl;
+	if (s) {
+		tl = s->rt_tasklist ();
+	}
+	if (tl && fabs (Port::resample_ratio ()) != 1.0) {
+		for (auto const& p : *_cycle_ports) {
+			if (!(p.second->flags () & TransportSyncPort)) {
+				tl->push_back (boost::bind (&Port::cycle_end, p.second, nframes));
 			}
 		}
-		s->rt_tasklist ()->process (tl);
+		tl->process ();
 	} else {
-		for (Ports::iterator p = _cycle_ports->begin (); p != _cycle_ports->end (); ++p) {
-			if (!(p->second->flags () & TransportSyncPort)) {
-				p->second->cycle_end (nframes);
+		for (auto const& p : *_cycle_ports) {
+			if (!(p.second->flags () & TransportSyncPort)) {
+				p.second->cycle_end (nframes);
 			}
 		}
 	}
 
-	for (Ports::iterator p = _cycle_ports->begin (); p != _cycle_ports->end (); ++p) {
+	for (auto const& p : *_cycle_ports) {
 		/* AudioEngine::split_cycle flushes buffers until Port::port_offset.
 		 * Now only flush remaining events (after Port::port_offset) */
-		p->second->flush_buffers (nframes * Port::speed_ratio () - Port::port_offset ());
+		p.second->flush_buffers (nframes * Port::resample_ratio () - Port::port_offset ());
 	}
 
 	_cycle_ports.reset ();
@@ -1165,22 +1337,30 @@ PortManager::cycle_end (pframes_t nframes, Session* s)
 void
 PortManager::silence (pframes_t nframes, Session* s)
 {
-	for (Ports::iterator i = _cycle_ports->begin (); i != _cycle_ports->end (); ++i) {
-		if (s && i->second == s->mtc_output_port ()) {
+	for (auto const& p : *_cycle_ports) {
+		if (s && p.second == s->mtc_output_port ()) {
 			continue;
 		}
-		if (s && i->second == s->midi_clock_output_port ()) {
+		if (s && p.second == s->midi_clock_output_port ()) {
 			continue;
 		}
-		if (s && i->second == s->ltc_output_port ()) {
+		if (s && p.second == s->ltc_output_port ()) {
 			continue;
 		}
-		if (boost::dynamic_pointer_cast<AsyncMIDIPort> (i->second)) {
+		if (std::dynamic_pointer_cast<AsyncMIDIPort> (p.second)) {
 			continue;
 		}
-		if (i->second->sends_output ()) {
-			i->second->get_buffer (nframes).silence (nframes);
+		if (p.second->sends_output ()) {
+			p.second->get_buffer (nframes).silence (nframes);
 		}
+	}
+}
+
+void
+PortManager::reinit (bool with_ratio)
+{
+	for (auto const& p : *_ports.reader ()) {
+		p.second->reinit (with_ratio);
 	}
 }
 
@@ -1226,15 +1406,14 @@ PortManager::silence_outputs (pframes_t nframes)
 void
 PortManager::check_monitoring ()
 {
-	for (Ports::iterator i = _cycle_ports->begin (); i != _cycle_ports->end (); ++i) {
+	for (auto const& p : *_cycle_ports) {
 		bool x;
-
-		if (i->second->last_monitor () != (x = i->second->monitoring_input ())) {
-			i->second->set_last_monitor (x);
+		if (p.second->last_monitor () != (x = p.second->monitoring_input ())) {
+			p.second->set_last_monitor (x);
 			/* XXX I think this is dangerous, due to
 			   a likely mutex in the signal handlers ...
 			*/
-			i->second->MonitorInputChanged (x); /* EMIT SIGNAL */
+			p.second->MonitorInputChanged (x); /* EMIT SIGNAL */
 		}
 	}
 }
@@ -1243,27 +1422,30 @@ void
 PortManager::cycle_end_fade_out (gain_t base_gain, gain_t gain_step, pframes_t nframes, Session* s)
 {
 	// see optimzation note in ::cycle_start()
-	if (0 && s && s->rt_tasklist () && fabs (Port::speed_ratio ()) != 1.0) {
-		RTTaskList::TaskList tl;
-		for (Ports::iterator p = _cycle_ports->begin (); p != _cycle_ports->end (); ++p) {
-			if (!(p->second->flags () & TransportSyncPort)) {
-				tl.push_back (boost::bind (&Port::cycle_end, p->second, nframes));
+	std::shared_ptr<RTTaskList> tl;
+	if (s) {
+		tl = s->rt_tasklist ();
+	}
+	if (tl && fabs (Port::resample_ratio ()) != 1.0) {
+		for (auto const& p : *_cycle_ports) {
+			if (!(p.second->flags () & TransportSyncPort)) {
+				tl->push_back (boost::bind (&Port::cycle_end, p.second, nframes));
 			}
 		}
-		s->rt_tasklist ()->process (tl);
+		tl->process ();
 	} else {
-		for (Ports::iterator p = _cycle_ports->begin (); p != _cycle_ports->end (); ++p) {
-			if (!(p->second->flags () & TransportSyncPort)) {
-				p->second->cycle_end (nframes);
+		for (auto const& p : *_cycle_ports) {
+			if (!(p.second->flags () & TransportSyncPort)) {
+				p.second->cycle_end (nframes);
 			}
 		}
 	}
 
-	for (Ports::iterator p = _cycle_ports->begin (); p != _cycle_ports->end (); ++p) {
-		p->second->flush_buffers (nframes);
+	for (auto const& p : *_cycle_ports) {
+		p.second->flush_buffers (nframes);
 
-		if (p->second->sends_output ()) {
-			boost::shared_ptr<AudioPort> ap = boost::dynamic_pointer_cast<AudioPort> (p->second);
+		if (p.second->sends_output ()) {
+			std::shared_ptr<AudioPort> ap = std::dynamic_pointer_cast<AudioPort> (p.second);
 			if (ap) {
 				Sample* s = ap->engine_get_whole_audio_buffer ();
 				gain_t  g = base_gain;
@@ -1307,6 +1489,7 @@ PortManager::port_is_control_only (std::string const& name)
 			X_(".*US-2400 .*"),
 			X_(".*Mackie .*"),
 			X_(".*MIDI Control .*"),
+			X_(".*Console1 .*"),
 		};
 
 		pattern = "(";
@@ -1717,10 +1900,9 @@ PortManager::fill_midi_port_info_locked ()
 void
 PortManager::set_port_buffer_sizes (pframes_t n)
 {
-	boost::shared_ptr<Ports> all = _ports.reader ();
-
-	for (Ports::iterator p = all->begin (); p != all->end (); ++p) {
-		p->second->set_buffer_size (n);
+	std::shared_ptr<Ports const> all = _ports.reader ();
+	for (auto const& p : *all) {
+		p.second->set_buffer_size (n);
 	}
 	_monitor_port.set_buffer_size (n);
 }
@@ -1728,15 +1910,15 @@ PortManager::set_port_buffer_sizes (pframes_t n)
 bool
 PortManager::check_for_ambiguous_latency (bool log) const
 {
-	bool                     rv    = false;
-	boost::shared_ptr<Ports> plist = _ports.reader ();
-	for (Ports::iterator pi = plist->begin (); pi != plist->end (); ++pi) {
-		boost::shared_ptr<Port> const& p (pi->second);
+	bool                         rv    = false;
+	std::shared_ptr<Ports const> plist = _ports.reader ();
+	for (auto const& pi : *plist) {
+		std::shared_ptr<Port> const& p (pi.second);
 		/* check one to many connections */
 		if (!p->sends_output () || (p->flags () & IsTerminal) || !p->connected ()) {
 			continue;
 		}
-		if (boost::dynamic_pointer_cast<AsyncMIDIPort> (p)) {
+		if (std::dynamic_pointer_cast<AsyncMIDIPort> (p)) {
 			continue;
 		}
 		assert (port_is_mine (p->name ()));
@@ -1760,65 +1942,22 @@ PortManager::check_for_ambiguous_latency (bool log) const
 void
 PortManager::reset_input_meters ()
 {
-	g_atomic_int_set (&_reset_meters, 1);
+	_reset_meters.store (1);
 }
 
 PortManager::AudioInputPorts
 PortManager::audio_input_ports () const
 {
-	boost::shared_ptr<AudioInputPorts> p = _audio_input_ports.reader ();
+	std::shared_ptr<AudioInputPorts const> p = _audio_input_ports.reader ();
 	return *p;
 }
 
 PortManager::MIDIInputPorts
 PortManager::midi_input_ports () const
 {
-	boost::shared_ptr<MIDIInputPorts> p = _midi_input_ports.reader ();
+	std::shared_ptr<MIDIInputPorts const> p = _midi_input_ports.reader ();
 	return *p;
 }
-
-/* Cache dB -> coefficient calculation for dB/sec falloff.
- * @n_samples engine-buffer-size
- * @rate engine sample-rate
- * @return coefficiant taking user preferences meter_falloff (dB/sec) into account
- */
-struct FallOffCache {
-	FallOffCache ()
-		: _falloff (1.0)
-		, _cfg_db_s (0)
-		, _n_samples (0)
-		, _rate (0)
-	{
-	}
-
-	float calc (pframes_t n_samples, samplecnt_t rate)
-	{
-		if (n_samples == 0 || rate == 0) {
-			return 1.0;
-		}
-
-		if (Config->get_meter_falloff () != _cfg_db_s || n_samples != _n_samples || rate != _rate) {
-			_cfg_db_s  = Config->get_meter_falloff ();
-			_n_samples = n_samples;
-			_rate      = rate;
-#ifdef _GNU_SOURCE
-			_falloff = exp10f (-0.05f * _cfg_db_s * _n_samples / _rate);
-#else
-			_falloff = powf (10.f, -0.05f * _cfg_db_s * _n_samples / _rate);
-#endif
-		}
-
-		return _falloff;
-	}
-
-private:
-	float       _falloff;
-	float       _cfg_db_s;
-	pframes_t   _n_samples;
-	samplecnt_t _rate;
-};
-
-static FallOffCache falloff_cache;
 
 void
 PortManager::run_input_meters (pframes_t n_samples, samplecnt_t rate)
@@ -1827,23 +1966,21 @@ PortManager::run_input_meters (pframes_t n_samples, samplecnt_t rate)
 		return;
 	}
 
-	const bool  reset   = g_atomic_int_compare_and_exchange (&_reset_meters, 1, 0);
-	const float falloff = falloff_cache.calc (n_samples, rate);
+	int canderef (1);
+	const bool reset = _reset_meters.compare_exchange_strong (canderef, 0);
 
 	_monitor_port.monitor (port_engine (), n_samples);
 
 	/* calculate peak of all physical inputs (readable ports) */
-	boost::shared_ptr<AudioInputPorts> aip = _audio_input_ports.reader ();
+	std::shared_ptr<AudioInputPorts const> aip = _audio_input_ports.reader ();
 
-	for (AudioInputPorts::iterator p = aip->begin (); p != aip->end (); ++p) {
-		assert (!port_is_mine (p->first));
-		AudioInputPort& ai (p->second);
+	for (auto const& p : *aip) {
+		assert (!port_is_mine (p.first));
+		AudioInputPort& ai = *const_cast<AudioInputPort*>(&p.second);
 
-		if (reset) {
-			ai.meter->reset ();
-		}
+		ai.apply_falloff (n_samples, rate, reset);
 
-		PortEngine::PortHandle ph = _backend->get_port_by_name (p->first);
+		PortEngine::PortHandle ph = _backend->get_port_by_name (p.first);
 		if (!ph) {
 			continue;
 		}
@@ -1851,46 +1988,25 @@ PortManager::run_input_meters (pframes_t n_samples, samplecnt_t rate)
 		Sample* buf = (Sample*)_backend->get_buffer (ph, n_samples);
 		if (!buf) {
 			/* can this happen? */
-			ai.meter->level = 0;
-			ai.scope->silence (n_samples);
+			ai.silence (n_samples);
 			continue;
 		}
 
-		ai.scope->write (buf, n_samples);
-
-		/* falloff */
-		if (ai.meter->level > 1e-10) {
-			ai.meter->level *= falloff;
-		} else {
-			ai.meter->level = 0;
-		}
-
-		float level     = ai.meter->level;
-		level           = compute_peak (buf, n_samples, reset ? 0 : level);
-		ai.meter->level = std::min (level, 100.f); // cut off at +40dBFS for falloff.
-		ai.meter->peak  = std::max (ai.meter->peak, level);
+		ai.process (buf, n_samples, reset);
 	}
 
 	/* MIDI */
-	boost::shared_ptr<MIDIInputPorts> mip = _midi_input_ports.reader ();
-	for (MIDIInputPorts::iterator p = mip->begin (); p != mip->end (); ++p) {
-		assert (!port_is_mine (p->first));
+	std::shared_ptr<MIDIInputPorts const> mip = _midi_input_ports.reader ();
+	for (auto const& p : *mip) {
+		assert (!port_is_mine (p.first));
 
-		PortEngine::PortHandle ph = _backend->get_port_by_name (p->first);
+		PortEngine::PortHandle ph = _backend->get_port_by_name (p.first);
 		if (!ph || !_backend->connected (ph)) {
 			continue;
 		}
 
-		MIDIInputPort& mi (p->second);
-
-		for (size_t i = 0; i < 17; ++i) {
-			/* falloff */
-			if (mi.meter->chn_active[i] > 1e-10) {
-				mi.meter->chn_active[i] *= falloff;
-			} else {
-				mi.meter->chn_active[i] = 0;
-			}
-		}
+		MIDIInputPort& mi = *const_cast<MIDIInputPort*>(&p.second);
+		mi.apply_falloff (n_samples, rate, reset);
 
 		void*           buffer      = _backend->get_buffer (ph, n_samples);
 		const pframes_t event_count = _backend->get_midi_event_count (buffer);
@@ -1900,17 +2016,7 @@ PortManager::run_input_meters (pframes_t n_samples, samplecnt_t rate)
 			size_t         size;
 			uint8_t const* buf;
 			_backend->midi_event_get (timestamp, size, &buf, buffer, i);
-			if (buf[0] == 0xfe) {
-				/* ignore active sensing */
-				continue;
-			}
-			if ((buf[0] & 0xf0) == 0xf0) {
-				mi.meter->chn_active[16] = 1.0;
-			} else {
-				int chn                   = (buf[0] & 0x0f);
-				mi.meter->chn_active[chn] = 1.0;
-			}
-			mi.monitor->write (buf, size);
+			mi.process_event (buf, size);
 		}
 	}
 }
@@ -1919,17 +2025,17 @@ PortManager::run_input_meters (pframes_t n_samples, samplecnt_t rate)
 void
 PortManager::list_all_ports () const
 {
-	boost::shared_ptr<Ports> plist = _ports.reader ();
-	for (Ports::iterator p = plist->begin (); p != plist->end (); ++p) {
-		std::cout << p->first << "\n";
+	std::shared_ptr<Ports const> plist = _ports.reader ();
+	for (auto const& p : *plist) {
+		std::cout << p.first << "\n";
 	}
 }
 
 void
 PortManager::list_cycle_ports () const
 {
-	for (Ports::iterator p = _cycle_ports->begin (); p != _cycle_ports->end (); ++p) {
-		std::cout << p->first << "\n";
+	for (auto const& p : *_cycle_ports) {
+		std::cout << p.first << "\n";
 	}
 }
 #endif

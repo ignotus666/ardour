@@ -24,7 +24,7 @@ function factory (params) return function ()
 		print("3. Combining region clouds to a defined length")
 		print("")
 		print("Abstract: This script for Ardour (>=4.7 git) operates on the time")
-		print("line. It allows to copy and combine specific portions within the loop")
+		print("line. It allows one to copy and combine specific portions within the loop")
 		print("range to a later point on the time line with one single action")
 		print("command. Everything that can be heard within the loop range is")
 		print("considered for this process, namely non-muted regions on non-muted or")
@@ -174,7 +174,7 @@ function factory (params) return function ()
 		goto errorout
 	end
 	assert (loop:start () < loop:_end ())
-	if loop:_end () > playhead then
+	if loop:_end ():samples () > playhead then
 --		print_help();
 		print ("Error: The Playhead (paste point) needs to be after the loop.")
 		LuaDialog.Message ("Tom's Loop", "Error: The Playhead (paste point) needs to be after the loop.", LuaDialog.MessageType.Error, LuaDialog.ButtonType.Close):run ()
@@ -242,34 +242,29 @@ function factory (params) return function ()
 		playlist:to_stateful ():clear_changes ()
 
 		-- do the actual work
-		local region = track:bounce_range (loop:start (), loop:_end (), itt, proc, false, "")
-		playlist:add_region (region, playhead, n_paste, false, 0, 0, false)
+		local region = track:bounce_range (loop:start ():samples(), loop:_end ():samples(), itt, proc, false, "")
+		playlist:add_region (region, Temporal.timepos_t (playhead), n_paste, false)
 
 		n_regions_created = n_regions_created + 1
 
 		-- create a diff of the performed work, add it to the session's undo stack
 		-- and check if it is not empty
-		if not Session:add_stateful_diff_command (playlist:to_statefuldestructible ()):empty () then
-			add_undo = true
-		end
+		Session:add_stateful_diff_command (playlist:to_statefuldestructible ())
 
 		::continue::
 	end -- for all routes
 
 	--advance playhead so it's just after the newly added regions
 	if n_regions_created > 0 then
-		Session:request_locate (playhead + loop:length() * n_paste, ARDOUR.LocateTransportDisposition.MustStop, ARDOUR.TransportRequestSource.TRS_UI)
+		Session:request_locate (playhead + loop:length():samples() * n_paste, false, ARDOUR.LocateTransportDisposition.MustStop, ARDOUR.TransportRequestSource.TRS_UI)
 	end
 
 	-- all done, commit the combined Undo Operation
-	if add_undo then
-		-- the 'nil' Command here mean to use the collected diffs added above
+	if not Session:abort_empty_reversible_command () then
 		Session:commit_reversible_command (nil)
-	else
-		Session:abort_reversible_command ()
 	end
 
-	print ("bounced " .. n_regions_created .. " regions from loop range (" .. loop:length() ..  " samples) to playhead @ sample # " .. playhead)
+	print ("bounced " .. n_regions_created .. " regions from loop range (" .. loop:length():samples() ..  " samples) to playhead @ sample # " .. playhead)
 	::errorout::
 end -- end of anonymous action script function
 end -- end of script factory

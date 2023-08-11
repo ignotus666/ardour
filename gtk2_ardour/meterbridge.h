@@ -49,7 +49,7 @@ public:
 
 	void set_session (ARDOUR::Session *);
 
-	XMLNode& get_state (void);
+	XMLNode& get_state () const;
 	int set_state (const XMLNode& );
 
 	void show_window ();
@@ -96,8 +96,8 @@ private:
 	struct MeterOrderRouteSorter
 	{
 		bool operator() (struct MeterBridgeStrip ma, struct MeterBridgeStrip mb) {
-			boost::shared_ptr<ARDOUR::Route> a = ma.s->route();
-			boost::shared_ptr<ARDOUR::Route> b = mb.s->route();
+			std::shared_ptr<ARDOUR::Route> a = ma.s->route();
+			std::shared_ptr<ARDOUR::Route> b = mb.s->route();
 			if (a->is_master() || a->is_monitor()) {
 				/* "a" is a special route (master, monitor, etc), and comes
 				 * last in the mixer ordering
@@ -130,10 +130,9 @@ private:
 	void update_title ();
 
 	// for restoring window geometry.
-	int m_root_x, m_root_y, m_width, m_height;
+	mutable int m_root_x, m_root_y, m_width, m_height;
 
 	void set_window_pos_and_size ();
-	void get_window_pos_and_size ();
 
 	bool on_key_press_event (GdkEventKey*);
 	bool on_key_release_event (GdkEventKey*);
@@ -153,6 +152,8 @@ private:
 
 	int _mm_left, _mm_right;
 	ARDOUR::MeterType _mt_left, _mt_right;
+
+	bool on_configure_event (GdkEventConfigure* conf);
 };
 
 #endif

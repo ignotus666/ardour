@@ -35,7 +35,7 @@ public:
 	Hit (MidiRegionView&                   region,
 	     ArdourCanvas::Item*               parent,
 	     double                            size,
-	     const boost::shared_ptr<NoteType> note        = boost::shared_ptr<NoteType>(),
+	     const std::shared_ptr<NoteType> note        = std::shared_ptr<NoteType>(),
 	     bool                              with_events = true);
 
 	~Hit();
@@ -65,6 +65,8 @@ public:
 	bool big_enough_to_trim() const { return false; }
 
 	static ArdourCanvas::Points points(ArdourCanvas::Distance height);
+
+	double visual_velocity() const;
 
 private:
 	ArdourCanvas::Polygon* _polygon;

@@ -124,7 +124,8 @@ Session::click (samplepos_t cycle_start, samplecnt_t nframes)
 		const samplepos_t end = start + move;
 
 		_click_points.clear ();
-		TempoMap::use()->get_grid (_click_points, samples_to_superclock (start, sample_rate()), samples_to_superclock (end, sample_rate()));
+		assert (_click_points.capacity() > 0);
+		TempoMap::use()->get_grid (_click_iterator, _click_points, samples_to_superclock (start, sample_rate()), samples_to_superclock (end, sample_rate()));
 
 		if (_click_points.empty()) {
 			start += move;
@@ -132,18 +133,18 @@ Session::click (samplepos_t cycle_start, samplecnt_t nframes)
 			continue;
 		}
 
-		for (TempoMapPoints::iterator i = _click_points.begin(); i != _click_points.end(); ++i) {
+		for (auto const & p : _click_points) {
 
-			if (superclock_to_samples ((*i).sclock(), sample_rate()) < start) {
+			if (superclock_to_samples (p.sclock(), sample_rate()) < start) {
 				continue;
 			}
 
-			assert (superclock_to_samples ((*i).sclock(), sample_rate()) < end);
+			assert (superclock_to_samples (p.sclock(), sample_rate()) < end);
 
-			if (i->bbt().is_bar() && (click_emphasis_data && Config->get_use_click_emphasis())) {
-				add_click ((*i).sample (sample_rate()), true);
+			if (p.bbt().is_bar() && (click_emphasis_data && Config->get_use_click_emphasis())) {
+				add_click (p.sample (sample_rate()), true);
 			} else {
-				add_click ((*i).sample (sample_rate()), false);
+				add_click (p.sample (sample_rate()), false);
 			}
 		}
 
@@ -310,6 +311,12 @@ Session::setup_click_sounds (Sample** data, Sample const * default_data, samplec
 		delete[] tmp;
 		sf_close (sndfile);
 	}
+
+	/* Overwhelmingly likely that we will have zero or 1 click grid point
+	 * per cycle. So this is really overkill. If it is too low, it just
+	 * causes RT memory allocation inside TempoMap::get_grid().
+	 */
+	_click_points.reserve (16);
 }
 
 void

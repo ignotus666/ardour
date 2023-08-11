@@ -1,0 +1,637 @@
+#
+# This file lists all preference parameters/variables for Ardour/Mixbus, broken down into 3 categories (UI, Session and Global)
+#
+# Within each section, a line that contains [some-text-like-this] names the preference variable, and is followed by zero or more lines containing a series of
+# whitespace-separated words. These words are the "metadata" for the variable: words that a user may search for when trying to find that preference variable.
+# All words should be in English (they are translatable via the normal mechanism for the program). The wordlist may be a "free association" as desired.
+#
+# A fictional example:
+#
+# [never-do-that-thing]
+#   thing that action prevent never stop otherthing
+#
+# The file is processed via tools/process-metadata to create build/gtk2_ardour/configuration_metadata.h which is then incorporated via an #include directive
+# within gtk2_ardour/ui_config.cc
+#
+# Whenever a new preference variable is added to the source code, its name should also be added here.
+#
+# GUIDANCE:
+#   when adding new metadata/keywords, use a longer form of the word wherever possible, so that we will match on a substring of that word. For example
+#   use "synchronization" rather than sync, because that will match both "sync" and "synchronization". For languages that create plurals with a suffix,
+#   prefer plural forms for the same reason.
+#
+[SECTION:UI]
+
+[action-table-columns]
+[all-floating-windows-are-dialogs]
+  KDE quirks dialogs window hidden behind
+[allow-non-quarter-pulse]
+[ask-before-closing-last-window]
+[automation-edit-cancels-auto-hide]
+  automation spill touch
+[autoplay-clips]
+  audition clips slots triggers autoplay automatically play
+[autoplay-files]
+  files audition autoplay automatically play
+[autoscroll-editor]
+  scroll editor
+[blink-alert-indicators]
+  blink alert indicators
+[blink-rec-arm]
+  appearance blink record rec enable rec-enable record-enable
+[boxy-buttons]
+  appearance style boxy buttons theme
+[buggy-gradients]
+  appearance bugs tweaks kwirks
+[cairo-image-surface]
+[check-announcements]
+  check announcements phone home
+[clock-display-limit]
+  clock display limit length maximum duration
+[color-file]
+ theme colors appearance style themeing
+[color-regions-using-track-color]
+ theme colors appearance style themeing
+[default-bindings]
+ shortcuts keys keybindings bindings
+[default-lower-midi-note]
+ MIDI low lowest lower
+[default-narrow_ms]
+ appearance width mixer
+[default-upper-midi-note]
+ MIDI upper high highest
+[draggable-playhead]
+ playhead dragging
+[draggable-playhead-speed]
+ playhead dragging
+[editor-stereo-only-meters]
+ editor stereo meters
+[extra-ui-extents-time]
+[flat-buttons]
+  appearance style flat buttons theme ableton
+[floating-monitor-section]
+  appearance monitor floating separate window
+[follow-edits]
+[font-scale]
+  fonts font size scaling readable readability
+[freesound-dir]
+  freesound folder folders directory directories download
+[grid-follows-internal]
+  grid switch automatic tools mode selection internal edit
+[hide-splash-screen]
+  appearance hide splash screen
+[highlight-auditioned-clips]
+[icon-set]
+[input-meter-layout]
+  meter recorder layout
+[input-meter-scopes]
+  scopes recorder layout
+[insert-at-position]
+  import embed position insert
+[keyboard-layout]
+[keyboard-layout-name]
+[link-region-and-track-selection]
+[lock-gui-after-seconds]
+  lock gui time seconds
+[max-note-height]
+  maximum note height theme appearance size visible range
+[max-inline-controls]
+  plugins mixer-strip controls inline
+[max-plugin-chart]
+  plugins top favorite sidebar
+[max-plugin-recent]
+  plugins recent favorite sidebar
+[meter-hold]
+  metering standard hold falloff level dbfs
+[meter-line-up-din]
+  metering standard din line-up level dbfs
+[meter-line-up-level]
+  metering standard line-up level dbfs
+[meter-peak]
+  metering peak line-up level dbfs
+[meter-style-led]
+  metering style led
+[meter-vu-standard]
+  metering standard vu line-up level dbfs
+[mixer-element-visibility]
+  mixer visibility comment solo mute phase polarity invert rec solo locked vca trigger
+[name-new-markers]
+  markers name dialog naming
+[never-display-periodic-midi]
+  sysex mtc midi regions messages events
+[new-automation-points-on-lane]
+  automation y-axis click draw lane points
+[no-new-session-dialog]
+[one-plugin-window-only]
+  plugins window single close
+[only-copy-imported-files]
+  drag drop import copy link files
+[open-gui-after-adding-plugin]
+  plugins gui open window
+[plugin-gui-behavior]
+  plugins gui resources vst destroy window
+[prefer-inline-over-gui]
+  plugins inline mixer strip
+[preview-video-frame-on-drag]
+[primary-clock-delta-mode]
+  clocks mode primary delta difference edit cursor playhead
+[recent-session-sort]
+[rubberbanding-snaps-to-grid]
+  rubberband snap grid time stretch
+[ruler-granularity]
+  ruler spacing grid snap distance
+[rulers-follow-grid]
+  ruler grid auto show visibility
+[save-export-analysis-image]
+  export analysis save image
+[save-export-mixer-screenshot]
+  export save image mixer screenshot
+[screen-saver-mode]
+  screensaver screen-saver prevent lock
+[secondary-clock-delta-mode]
+  clocks mode secondary delta difference edit cursor playhead
+[show-editor-meter]
+  toolbar editor meter master
+[show-grids-ruler]
+[show-inline-display-by-default]
+  plugins inline controls mixer
+[show-manager-if-plugins-are-missing]
+  plugins manager missing
+[show-mini-timeline]
+  minitimeline mini timeline toolbar
+[show-name-highlight]
+  editor region name bar highlight layout
+[show-on-cue-page]
+[show-plugin-scan-window]
+  plugins popup progress scan indexing
+[show-region-cue-markers]
+  cue markers regions editor
+[show-region-gain]
+  regions gain envelope volume modes
+[show-region-name]
+  regions name appearance editor
+[show-selection-marker]
+  selection ruler marker range
+[show-region-xrun-markers]
+  regions xruns markers dropouts
+[show-secondary-clock]
+  clock toolbar visibility secondary
+[show-snapped-cursor]
+  cursor snap edit point line
+[show-toolbar-cuectrl]
+  toolbar cue
+[show-toolbar-latency]
+  toolbar latency information
+[show-toolbar-monitor-info]
+  toolbar monitoring information section
+[show-toolbar-monitoring]
+  toolbar monitoring information section
+[show-toolbar-recpunch]
+  toolbar punch recording layered sound transparent
+[show-toolbar-selclock]
+  toolbar clock selection time display
+[show-track-meters]
+  editor meter small track header
+[show-triggers-inline]
+[show-waveform-clipping]
+  waveform clipping red peak
+[show-waveforms]
+  waveform display box empty invisible hide show
+[show-waveforms-while-recording]
+  waveform display recording
+[show-zoom-tools]
+[snap-threshold]
+  snap threshold distance mouse
+[snap-to-grid]
+  snap grid editor mouse
+[snap-to-marks]
+  snap grid editor mouse markers marks
+[snap-to-playhead]
+  snap grid editor mouse playhead
+[snap-to-region-end]
+  snap grid editor mouse regions boundaries boundary
+[snap-to-region-start]
+  snap grid editor mouse regions boundaries boundary
+[snap-to-region-sync]
+  snap grid editor mouse regions sync
+[sound-midi-notes]
+  play notes selection midi sound hear
+[stripable-color-palette]
+[super-rapid-clock-update]
+  clocks fast update display timecode video slow updates
+[time-axis-name-ellipsize-mode]
+  editor width name track header ellipsize size
+[timeline-item-gradient-depth]
+  editor gradient blur contrast style
+[transients-follow-front]
+  KDE quirks dialogs window hidden behind transient
+[ui-font-family]
+[ui-rc-file]
+[update-editor-during-summary-drag]
+  editor summary scroll drag pan follow
+[use-double-click-to-zoom-to-selection]
+  editor zoom selection mouse click
+[use-mouse-position-as-zoom-focus-on-scroll]
+  editor zoom selection mouse wheel focus scroll
+[use-note-bars-for-velocity]
+  midi velocity bars box
+[use-note-color-for-velocity]
+  midi velocity color
+[use-opengl-view]
+[use-route-color-widely]
+  mixer colors faders
+[use-time-rulers-to-zoom-with-vertical-drag]
+  zoom drag mouse
+[use-tooltips]
+  tooltips help popup information
+[use-wm-visibility]
+  quirks visibility switch windows
+[vertical-region-gap]
+  visual gap tracks spacing
+[vkeybd-layout]
+  virtual keyboard layout qwerty midi
+[waveform-cache-size]
+  memory cache performance optimization image
+[waveform-clip-level]
+  clip level dbfs waveform peaking
+[waveform-gradient-depth]
+  editor gradient blur contrast style waveform
+[waveform-scale]
+  waveform logarithmic logscale linear
+[waveform-shape]
+  waveform rectified half shape display
+[widget-prelight]
+  highlight mouse prelight hover indicate
+
+[SECTION:Session]
+
+[audio-search-path]
+[auto-input]
+[auto-play]
+  transport autoplay automatically play
+[auto-return]
+  transport autoreturn automatically return go back
+[count-in]
+  transport count in count-in 
+[cue-behavior]
+[draw-opaque-midi_regions]
+[external-sync]
+  transport use external synchronization master 
+[glue-new-markers-to-bars-and-beats]
+  position time domain glue use markers bars beats musical
+[glue-new-regions-to-bars-and-beats]
+  position time domain glue use regions bars beats musical
+[insert-merge-policy]
+[jack-time-master]
+  transport synchronization jack time master 
+[meterbridge-label-height]
+  meter meterbridge bridge label height
+[midi-copy-is-fork]
+  midi copy clone duplicate fork linked
+[midi-search-path]
+[minitimeline-span]
+[native-file-data-format]
+  audio files audiofiles native data format
+[native-file-header-format]
+  audio files audiofiles native header format container envelope
+[punch-in]
+[punch-out]
+[raid-path]
+[realtime-export]
+  exporting realtime real time nonrealtime nonreal
+[record-mode]
+  recording capture layers layering sound on soundonsound nonlayered layered
+[session-monitoring]
+  monitoring hearing listening signal monitors
+[show-busses-on-meterbridge]
+  busses bus meterbridge meters
+[show-fader-on-meterbridge]
+  faders meterbridge
+[show-group-tabs]
+  group tabs show hide visible visibility
+[show-master-on-meterbridge]
+  master meterbridge
+[show-midi-on-meterbridge]
+  midi meterbridge
+[show-monitor-on-meterbridge]
+  monitor meterbridge
+[show-mute-on-meterbridge]
+  mute meterbridge
+[show-name-on-meterbridge]
+  solo meterbridge
+[show-rec-on-meterbridge]
+  record recenable meterbridge
+[show-region-fades]
+  region gain fades show hide fadein fadeout
+[show-solo-on-meterbridge]
+  solo meterbridge
+[show-summary]
+  summary show
+[slave-timecode-offset]
+  timecode synchronization offset
+[subframes-per-frame]
+  timecode subframes sync
+[take-name]
+  take names
+[timecode-format]
+  timecode synchronization format tc 
+[timecode-generator-offset]
+  timecode synchronization offset generate send
+[timecode-offset]
+  timecode synchronization offset receive
+[timecode-offset-negative]
+  timecode synchronization offset negative
+[track-name-number]
+  name naming numbered tracks
+[track-name-take]
+  name naming tracks takes 
+[triggerbox-overrides-disk-monitoring]
+[use-monitor-fades]
+  monitoring fades fadein fadeout enable disable use 
+[use-region-fades]
+  region fades fadein fadeout enable disable use 
+[use-transport-fades]
+  transport fades fadein fadeout enable disable use 
+[use-video-file-fps]
+  video use frames per second fps 
+[use-video-sync]
+[video-pullup]
+[videotimeline-pullup]
+[wave-amplitude-zoom]
+[wave-zoom-factor]
+
+[SECTION:Global]
+
+[afl-position]
+  monitoring monitor afl pfl pre post position
+[all-safe]
+[allow-special-bus-removal]
+[ask-replace-instrument]
+[ask-setup-instrument]
+[auditioner-output-left]
+[auditioner-output-right]
+[auto-analyse-audio]
+  automatic automated audio analysis transients
+[auto-connect-standard-busses]
+[auto-input-does-talkback]
+[auto-return-after-rewind-ffwd]
+[auto-return-target-list]
+[automation-follows-regions]
+[automation-interval-msecs]
+[automation-thinning-factor]
+[buffering-preset]
+[capture-buffer-seconds]
+[click-emphasis-sound]
+ metronome click beat downbeat emphasis sample sound
+[click-gain]
+ metronome click beat volume gain level
+[click-record-only]
+[click-sound]
+ metronome click beat sound sample
+[clicking]
+[clip-library-dir]
+  folder folders directory directories download clips library
+[conceal-lv1-if-lv2-exists]
+[conceal-vst2-if-vst3-exists]
+[copy-demo-sessions]
+[cpu-dma-latency]
+  cpu dma latency performance xrun
+[create-xrun-marker]
+  xrun xmarker
+[default-automation-time-domain]
+  automation time domain default
+[default-fade-shape]
+  fades fadein fadeout shape type style default
+[default-session-parent-dir]
+  folders directory directories session path default
+[default-trigger-input-port]
+[denormal-model]
+  denormal model handling cpu performance speed xruns dsp load
+[denormal-protection]
+  denormal model handling cpu performance speed xruns dsp load
+[deprecated-hiding-groups-deactivates-groups]
+[disable-disarm-during-roll]
+[discover-plugins-on-start]
+  plugins scan discover rescan reload startup
+[disk-choice-space-threshold]
+[display-first-midi-bank-as-zero]
+[donate-url]
+[edit-mode]
+[exclusive-solo]
+[export-preroll]
+[export-silence-threshold]
+[feedback-interval-ms]
+[group-override-inverts]
+[hide-dummy-backend]
+[history-depth]
+  history undo redo depth length size 
+[initial-program-change]
+[input-auto-connect]
+[inter-scene-gap-samples]
+[interview-editing]
+[latched-record-enable]
+[layer-model]
+  editing layering model style type
+[limit-n-automatables]
+[link-send-and-route-panner]
+  mixing panning send panner link connect tie
+[listen-position]
+   afl pfl listen monitoring position 
+[locate-while-waiting-for-sync]
+[loop-fade-choice]
+  looping fades fadein fadeout choice type style model
+[loop-is-mode]
+  looping mode behavior
+[ltc-output-port]
+  timecode output port routing
+[ltc-output-volume]
+  timecode output level gain volume ltc
+[ltc-send-continuously]
+  timecode transmit send continuously always ltc
+[max-gain]
+  volume gain fader maximum peak
+[max-recent-sessions]
+  number maximum recent sessions
+[max-recent-templates]
+  number maximum recent templates
+[max-transport-speed]
+  maximum top fastest highest transport speed
+[meter-falloff]
+  meter falloff fall off
+[meter-type-bus]
+  meter type bus
+[meter-type-master]
+  meter type master
+[meter-type-track]
+  meter type track
+[midi-audition-synth-uri]
+  midi audition synthesizer plugin name id uri location
+[midi-clock-resolution]
+  midi clock resolution quantize limit precision
+[midi-clock-sets-tempo]
+  midi clock mclk set tempo
+[midi-feedback]
+  midi generic control surface feedback
+[midi-input-follows-selection]
+  midi inputs port device follow selection tracks
+[midi-track-buffer-seconds]
+[minimum-disk-read-bytes]
+  disk disc i/o io chunk read size bytes buffering
+[minimum-disk-write-bytes]
+  disk disc i/o io chunk write size bytes buffering
+[mmc-control]
+[mmc-receive-device-id]
+  midi machine control mmc receive receiving device id
+[mmc-send-device-id]
+  midi machine control mmc send sending device id
+[monitor-bus-preferred-bundle]
+[monitoring-model]
+  monitoring model style type
+[mtc-qf-speed-tolerance]
+  transport synchronization MIDI timecode time code threshold tolerance sensitivity quarter frame
+[mute-affects-control-outs]
+  mute muting monitor outs control outputs
+[mute-affects-main-outs]
+  mute muting main outs outputs master
+[mute-affects-post-fader]
+  mute muting postfader post fader
+[mute-affects-pre-fader]
+  mute muting prefader pre fader
+[new-plugins-active]
+  plugins newly added active 
+[osc-port]
+  OSC port number
+[output-auto-connect]
+  outputs automatically connect
+[periodic-safety-backup-interval]
+  backups autosave
+[periodic-safety-backups]
+  backups autosave
+[pfl-position]
+  solo listen prefader position
+[pingback-url]
+[playback-buffer-seconds]
+  performance disk disc buffering playback keep up size seconds 
+[plugin-cache-version]
+[plugin-path-lxvst]
+  plugins paths folders directory directories linux vst lxvst search
+[plugin-path-vst]
+  plugins paths folders directory directories vst search
+[plugin-path-vst3]
+  plugins paths folders directory directories vst3 search
+[plugin-scan-timeout]
+  plugins scan timeout fail wait
+[plugins-stop-with-transport]
+  plugins stop transport tail reverb ringing reset
+[port-resampler-quality]
+  resampling audioengine global quality level
+[preroll-seconds]
+[processor-usage]
+  cpu threads usage distribute parallel
+[quieten-at-speed]
+  volume gain level reduce quieten cut speed fast forward rewind ffwd
+[range-location-minimum]
+[range-selection-after-split]
+  editing split selection range after split 
+[recording-resets-xrun-count]
+  recording resets xruns 
+[reference-manual-url]
+[region-boundaries-from-onscreen_tracks]
+  grid region boundaries from visible onscreen tracks lanes
+[region-boundaries-from-selected-tracks]
+  grid region boundaries from selected tracks lanes
+[region-equivalency]
+  options equivalent equivalence regions comparison selection
+[region-selection-after-split]
+  selection regions after split left right side
+[replicate-missing-region-channels]
+   channels replicate missing region
+[reset-default-speed-on-stop]
+   transport reset default speed stop
+[resource-index-url]
+[rewind-ffwd-like-tape-decks]
+[ripple-mode]
+  ripple all interview selected
+[run-all-transport-masters-always]
+  synchronization always run masters transport
+[sample-lib-path]
+  files folders samples library path
+[save-history]
+   history save disk serialize store
+[save-history-depth]
+   history depth size length
+[send-ltc]
+  synchronization send transmit deliver linear timecode ltc
+[send-midi-clock]
+  synchronization send transmit deliver midi clock mclk
+[send-mmc]
+  synchronization send transmit deliver midi machine code mmc
+[send-mtc]
+  synchronization send transmit deliver midi time code timecode mtc
+[show-solo-mutes]
+  appearance solo mute
+[show-video-server-dialog]
+[show-vst3-micro-edit-inline]
+[shuttle-max-speed]
+  transport shuttle varispeed control speed maximum
+[shuttle-speed-factor]
+  transport shuttle varispeed control speed
+[shuttle-speed-threshold]
+  transport shuttle varispeed control threshold 
+[shuttle-units]
+  transport shuttle varispeed units semitones percentage
+[skip-playback]
+[solo-control-is-listen-control]
+[solo-mute-gain]
+[solo-mute-override]
+  solo mute override overrule priority
+[stop-at-session-end]
+  transport stop end session
+[stop-recording-on-xrun]
+  transport recording xrun stop 
+[strict-io]
+  plugins outputs number flexible variable fixed
+[timecode-sync-frame-rate]
+  timecode synchronization frame rate
+[trace-midi-input]
+[trace-midi-output]
+[tracks-auto-naming]
+   automatically name tracks
+[transient-sensitivity]
+   analysis transients sensitive sensitivity vamp
+[transport-masters-just-roll-when-sync-lost]
+[try-autostart-engine]
+   audioengine startup 
+[tutorial-manual-url]
+[updates-url]
+[use-audio-units]
+  plugins audiounits audio-unit enable disable
+[use-click-emphasis]
+   metronome beat click sound emphasis
+[use-lxvst]
+  plugins vst2 enable disable
+[use-macvst]
+  plugins vst2 enable disable
+[use-master-volume]
+[use-monitor-bus]
+   monitoring bus optional
+[use-osc]
+   osc open sound control
+[use-plugin-own-gui]
+   plugins GUI editor prefer use own
+[use-tranzport]
+[use-vst3]
+   plugins vst3
+[use-windows-vst]
+[verbose-plugin-scan]
+  plugins scanning verbose
+[verify-remove-last-capture]
+  verify remove removal last most recent capture recording take
+[video-advanced-setup]
+   video setup
+[video-server-docroot]
+[video-server-url]
+  video server location url file
+[work-around-jack-no-copy-optimization]
+[xjadeo-binary]
+  xjadeo video monitor location file

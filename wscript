@@ -10,6 +10,7 @@ import platform as PLATFORM
 from waflib.Tools import winres
 from waflib.Build import Context
 from waflib.Build import BuildContext
+import waflib.Utils as Utils
 
 # Fixup OSX 10.5/10.6 builds
 # prefer gcc, g++ 4.x over ancient clang-1.5
@@ -19,20 +20,20 @@ c_compiler['darwin'] = ['gcc', 'clang' ]
 cxx_compiler['darwin'] = ['g++', 'clang++' ]
 
 class i18n(BuildContext):
-        cmd = 'i18n'
-        fun = 'i18n'
+    cmd = 'i18n'
+    fun = 'i18n'
 
 class i18n_pot(BuildContext):
-        cmd = 'i18n_pot'
-        fun = 'i18n_pot'
+    cmd = 'i18n_pot'
+    fun = 'i18n_pot'
 
 class i18n_po(BuildContext):
-        cmd = 'i18n_po'
-        fun = 'i18n_po'
+    cmd = 'i18n_po'
+    fun = 'i18n_po'
 
 class i18n_mo(BuildContext):
-        cmd = 'i18n_mo'
-        fun = 'i18n_mo'
+    cmd = 'i18n_mo'
+    fun = 'i18n_mo'
 
 compiler_flags_dictionaries= {
     'gcc' : {
@@ -88,6 +89,8 @@ compiler_flags_dictionaries= {
         'attasm': '-masm=att',
         # Flags to make AVX instructions/intrinsics available
         'avx': '-mavx',
+        # Flags to make AVX512F instructions/intrinsics available
+        'avx512f': '-mavx512f',
         # Flags to make FMA instructions/intrinsics available
         'fma': '-mfma',
         # Flags to make ARM/NEON instructions/intrinsics available
@@ -102,7 +105,6 @@ compiler_flags_dictionaries= {
         'linker-debuggable' : ['/DEBUG', '/INCREMENTAL' ],
         'nondebuggable' : ['/DNDEBUG', '/Ob1', '/MD', '/Gd', '/EHsc'],
         'profile' : '/Oy-',
-        'sse' : '/arch:SSE',
         'silence-unused-arguments' : '',
         'sse' : '',
         'xsaveintrin' : '',
@@ -142,26 +144,29 @@ gcc_darwin_dict['strict'] = ['-Wall', '-Wcast-align', '-Wextra', '-Wwrite-string
 gcc_darwin_dict['generic-x86'] = [ '-arch', 'i386' ]
 gcc_darwin_dict['generic-ppc'] = [ '-arch', 'ppc' ]
 gcc_darwin_dict['generic-arm64'] = [ '-arch', 'arm64' ]
-compiler_flags_dictionaries['gcc-darwin'] = gcc_darwin_dict;
+compiler_flags_dictionaries['gcc-darwin'] = gcc_darwin_dict
 
-clang_dict = compiler_flags_dictionaries['gcc'].copy();
+clang_dict = compiler_flags_dictionaries['gcc'].copy()
 clang_dict['sse'] = ''
 clang_dict['fpmath-sse'] = ''
 clang_dict['xsaveintrin'] = ''
 clang_dict['xmmintrinsics'] = ''
 clang_dict['silence-unused-arguments'] = '-Qunused-arguments'
 clang_dict['extra-cxx-warnings'] = [ '-Woverloaded-virtual', '-Wno-mismatched-tags', '-Wno-cast-align', '-Wno-unused-local-typedefs', '-Wunneeded-internal-declaration' ]
+clang_dict['basic-warnings'] = [ '-Wall', '-Wpointer-arith', '-Wcast-qual', '-Wcast-align', '-Wno-unused-parameter', '-Wno-deprecated-declarations', '-Wno-deprecated-copy-with-user-provided-copy' ]
 clang_dict['cxx-strict'] = [ '-ansi', '-Wnon-virtual-dtor', '-Woverloaded-virtual', '-fstrict-overflow' ]
 clang_dict['strict'] = ['-Wall', '-Wcast-align', '-Wextra', '-Wwrite-strings' ]
 clang_dict['generic-x86'] = [ '-arch', 'i386' ]
 clang_dict['generic-arm64'] = [ '-arch', 'arm64' ]
 clang_dict['full-optimization'] = [ '-O3', '-fomit-frame-pointer', '-ffast-math', ]
-compiler_flags_dictionaries['clang'] = clang_dict;
+compiler_flags_dictionaries['clang'] = clang_dict
 
-clang_darwin_dict = compiler_flags_dictionaries['clang'].copy();
+clang_darwin_dict = compiler_flags_dictionaries['clang'].copy()
 clang_darwin_dict['cxx-strict'] = [ '-ansi', '-Wnon-virtual-dtor', '-Woverloaded-virtual', ]
 clang_darwin_dict['full-optimization'] = [ '-O3', '-ffast-math']
-compiler_flags_dictionaries['clang-darwin'] = clang_darwin_dict;
+compiler_flags_dictionaries['clang-darwin'] = clang_darwin_dict
+
+# Version stuff
 
 def fetch_git_revision_date ():
     cmd = ["git", "describe", "HEAD"]
@@ -188,55 +193,109 @@ def fetch_tarball_revision_date():
 
         return rev, date
 
-if os.path.isdir (os.path.join(os.getcwd(), '.git')):
-    rev, rev_date = fetch_git_revision_date()
-else:
-    rev, rev_date = fetch_tarball_revision_date()
+def set_version (from_file = False):
+    def sanitize(s):
+        # round-trip to remove anything in the string that is not encodable in
+        # ASCII, yet still keep a real (utf8-encoded internally) string.
+        s = s.encode ('ascii', 'ignore').decode ("utf-8")
+        # In Python3, bytes is the class of binary content and encode() returns
+        # bytes to transform a string according to a text encoding; str is the
+        # class of normal strings (utf8-encoded internally) and decode() returns
+        # that type.
+        # Python 2 did not initially cater for encoding problems and can use str
+        # for both binary content and for (decoded) strings. The Unicode type was
+        # added to correspond to Python 3 str, and the Python 2 str type should
+        # only correspond to bytes. Alas, almost everything in the Python 2
+        # ecosystem has been written with str in mind and doesn't handle Unicode
+        # objects correctly. If Python 2 is in use, s will be a Unicode object and
+        # to avoid strange problems later we convert back to str, but in utf-8
+        # nonetheless.
+        if not isinstance(s, str):
+            s = s.encode("utf-8")
+        return s
 
-#
-# rev is now of the form MAJOR.MINOR[-rcX]-rev-commit
-# or, if right at the same rev as a release, MAJOR.MINOR[-rcX]
-#
+    global MAJOR
+    global MINOR
+    global MICRO
+    global VERSION
+    global PROGRAM_VERSION
+    global rev_date
 
-parts = rev.split ('.', 1)
-MAJOR = parts[0]
-other = parts[1].split('-', 1)
-MINOR = other[0]
-if len(other) > 1:
-    MICRO = other[1].rsplit('-',1)[0].replace('-','.')
-else:
-    MICRO = '0'
+    if not from_file and os.path.isdir (os.path.join(os.getcwd(), '.git')):
+        rev, rev_date = fetch_git_revision_date()
+    else:
+        rev, rev_date = fetch_tarball_revision_date()
 
-V = MAJOR + '.' + MINOR + '.' + MICRO
+    #
+    # rev is now of the form MAJOR.MINOR[-rcX]-rev-commit
+    # or, if right at the same rev as a release, MAJOR.MINOR[-rcX]
+    #
 
-def sanitize(s):
-    # round-trip to remove anything in the string that is not encodable in
-    # ASCII, yet still keep a real (utf8-encoded internally) string.
-    s = s.encode ('ascii', 'ignore').decode ("utf-8")
-    # In Python3, bytes is the class of binary content and encode() returns
-    # bytes to transform a string according to a text encoding; str is the
-    # class of normal strings (utf8-encoded internally) and decode() returns
-    # that type.
-    # Python 2 did not initially cater for encoding problems and can use str
-    # for both binary content and for (decoded) strings. The Unicode type was
-    # added to correspond to Python 3 str, and the Python 2 str type should
-    # only correspond to bytes. Alas, almost everything in the Python 2
-    # ecosystem has been written with str in mind and doesn't handle Unicode
-    # objects correctly. If Python 2 is in use, s will be a Unicode object and
-    # to avoid strange problems later we convert back to str, but in utf-8
-    # nonetheless.
-    if not isinstance(s, str):
-        s = s.encode("utf-8")
-    return s
-VERSION = sanitize(V)
-PROGRAM_VERSION = sanitize(MAJOR)
-del sanitize
+    parts = rev.split ('.', 1)
+    MAJOR = parts[0]
+    other = parts[1].split('-', 1)
+    MINOR = other[0]
+    if len(other) > 1:
+        MICRO = other[1].rsplit('-',1)[0].replace('-','.')
+    else:
+        MICRO = '0'
+
+    V = MAJOR + '.' + MINOR + '.' + MICRO
+
+    VERSION = sanitize(V)
+    PROGRAM_VERSION = sanitize(MAJOR)
+
+def fetch_gcc_version (CC):
+    cmd = "%s --version" % CC
+    output = subprocess.Popen(cmd, shell=True, stderr=subprocess.STDOUT, stdout=subprocess.PIPE).communicate()[0].splitlines()
+    o = output[0].decode('utf-8')
+    version = o.split(' ')[2].split('.')
+    return version
+
+def create_stored_revision():
+    set_version ()
+    rev = ""
+    if os.path.exists('.git'):
+        rev, rev_date = fetch_git_revision_date()
+        print("Git version: " + rev + "\n")
+    elif os.path.exists('libs/ardour/revision.cc'):
+        print("Using packaged revision")
+        return
+    else:
+        print("Missing libs/ardour/revision.cc.  Blame the packager.")
+        sys.exit(-1)
+
+    try:
+        #
+        # if you change the format of this, be sure to fix fetch_tarball_revision_date()
+        # above so that  it still works.
+        #
+        text =  '#include "ardour/revision.h"\n'
+        text += (
+            'namespace ARDOUR { const char* revision = \"%s\"; '
+            'const char* date = \"%s\"; }\n'
+        ) % (rev, rev_date)
+        print('Writing revision info to libs/ardour/revision.cc using ' + rev + ', ' + rev_date)
+        o = open('libs/ardour/revision.cc', 'w')
+        o.write(text)
+        o.close()
+    except IOError:
+        print('Could not open libs/ardour/revision.cc for writing\n')
+        sys.exit(-1)
+
+def get_depstack_rev(depstack_root):
+    try:
+        with open(depstack_root + '/../.vers', 'r') as f:
+            return f.readline().strip()[:7]
+    except IOError:
+        return '-unknown-'
 
 if any(arg in ('dist', 'distcheck') for arg in sys.argv[1:]):
-        if not 'APPNAME' in os.environ:
-                print ("You must define APPNAME in the environment when running ./waf dist/distcheck")
-                sys.exit (1)
-        APPNAME = os.environ['APPNAME'];
+    create_stored_revision ()
+    if not 'APPNAME' in os.environ:
+        print ("You must define APPNAME in the environment when running ./waf dist/distcheck")
+        sys.exit (1)
+    APPNAME = os.environ['APPNAME']
 
 # Mandatory variables
 top = '.'
@@ -258,6 +317,7 @@ children = [
         'libs/pbd',
         'libs/midi++2',
         'libs/evoral',
+        'libs/ctrl-interface',
         'libs/surfaces',
         'libs/panners',
         'libs/backends',
@@ -301,52 +361,6 @@ i18n_children = [
         'libs/gtkmm2ext',
 ]
 
-# Version stuff
-
-def fetch_gcc_version (CC):
-    cmd = "%s --version" % CC
-    output = subprocess.Popen(cmd, shell=True, stderr=subprocess.STDOUT, stdout=subprocess.PIPE).communicate()[0].splitlines()
-    o = output[0].decode('utf-8')
-    version = o.split(' ')[2].split('.')
-    return version
-
-def create_stored_revision():
-    rev = ""
-    if os.path.exists('.git'):
-        rev, rev_date = fetch_git_revision_date();
-        print("Git version: " + rev + "\n")
-    elif os.path.exists('libs/ardour/revision.cc'):
-        print("Using packaged revision")
-        return
-    else:
-        print("Missing libs/ardour/revision.cc.  Blame the packager.")
-        sys.exit(-1)
-
-    try:
-        #
-        # if you change the format of this, be sure to fix fetch_tarball_revision_date()
-        # above so that  it still works.
-        #
-        text =  '#include "ardour/revision.h"\n'
-        text += (
-            'namespace ARDOUR { const char* revision = \"%s\"; '
-            'const char* date = \"%s\"; }\n'
-        ) % (rev, rev_date)
-        print('Writing revision info to libs/ardour/revision.cc using ' + rev + ', ' + rev_date)
-        o = open('libs/ardour/revision.cc', 'w')
-        o.write(text)
-        o.close()
-    except IOError:
-        print('Could not open libs/ardour/revision.cc for writing\n')
-        sys.exit(-1)
-
-def get_depstack_rev(depstack_root):
-    try:
-        with open(depstack_root + '/../.vers', 'r') as f:
-            return f.readline().decode('utf-8').strip()[:7]
-    except IOError:
-        return '-unknown-';
-
 def set_compiler_flags (conf,opt):
     #
     # Compiler flags and other system-dependent stuff
@@ -387,7 +401,7 @@ int main() { return 0; }''',
         else:
             compiler_name = 'clang'
     elif conf.env['MSVC_COMPILER']:
-            compiler_name = 'msvc'
+        compiler_name = 'msvc'
     else:
         if platform == 'darwin':
             compiler_name = 'gcc-darwin'
@@ -398,7 +412,7 @@ int main() { return 0; }''',
     # Save the compiler flags because we need them at build time
     # when we need to add compiler specific flags in certain
     # libraries
-    conf.env['compiler_flags_dict'] = flags_dict;
+    conf.env['compiler_flags_dict'] = flags_dict
 
     autowaf.set_basic_compiler_flags (conf,flags_dict)
 
@@ -419,22 +433,26 @@ int main() { return 0; }''',
 
     # OSX
     if platform == 'darwin':
-        if re.search ("^13[.]", version) != None:
+        if re.search ("^13[.]", version) is not None:
             conf.env['build_host'] = 'mavericks'
-        elif re.search ("^14[.]", version) != None:
+        elif re.search ("^14[.]", version) is not None:
             conf.env['build_host'] = 'yosemite'
-        elif re.search ("^15[.]", version) != None:
+        elif re.search ("^15[.]", version) is not None:
             conf.env['build_host'] = 'el_capitan'
-        elif re.search ("^16[.]", version) != None:
+        elif re.search ("^16[.]", version) is not None:
             conf.env['build_host'] = 'sierra'
-        elif re.search ("^17[.]", version) != None:
+        elif re.search ("^17[.]", version) is not None:
             conf.env['build_host'] = 'high_sierra'
-        elif re.search ("^18[.]", version) != None:
+        elif re.search ("^18[.]", version) is not None:
             conf.env['build_host'] = 'mojave'
-        elif re.search ("^19[.]", version) != None:
+        elif re.search ("^19[.]", version) is not None:
             conf.env['build_host'] = 'catalina'
-        elif re.search ("^20[.]", version) != None:
+        elif re.search ("^20[.]", version) is not None:
             conf.env['build_host'] = 'bigsur'
+        elif re.search ("^21[.]", version) is not None:
+            conf.env['build_host'] = 'monterey'
+        elif re.search ("^22[.]", version) is not None:
+            conf.env['build_host'] = 'ventura'
         else:
             conf.env['build_host'] = 'irrelevant'
 
@@ -442,34 +460,38 @@ int main() { return 0; }''',
     if opt.dist_target == 'auto':
         if platform == 'darwin':
             # The [.] matches to the dot after the major version, "." would match any character
-            if re.search ("^[0-7][.]", version) != None:
+            if re.search ("^[0-7][.]", version) is not None:
                 conf.env['build_target'] = 'panther'
-            elif re.search ("^8[.]", version) != None:
+            elif re.search ("^8[.]", version) is not None:
                 conf.env['build_target'] = 'tiger'
-            elif re.search ("^9[.]", version) != None:
+            elif re.search ("^9[.]", version) is not None:
                 conf.env['build_target'] = 'leopard'
-            elif re.search ("^10[.]", version) != None:
+            elif re.search ("^10[.]", version) is not None:
                 conf.env['build_target'] = 'snowleopard'
-            elif re.search ("^11[.]", version) != None:
+            elif re.search ("^11[.]", version) is not None:
                 conf.env['build_target'] = 'lion'
-            elif re.search ("^12[.]", version) != None:
+            elif re.search ("^12[.]", version) is not None:
                 conf.env['build_target'] = 'mountainlion'
-            elif re.search ("^13[.]", version) != None:
+            elif re.search ("^13[.]", version) is not None:
                 conf.env['build_target'] = 'mavericks'
-            elif re.search ("^14[.]", version) != None:
+            elif re.search ("^14[.]", version) is not None:
                 conf.env['build_target'] = 'yosemite'
-            elif re.search ("^15[.]", version) != None:
+            elif re.search ("^15[.]", version) is not None:
                 conf.env['build_target'] = 'el_capitan'
-            elif re.search ("^16[.]", version) != None:
+            elif re.search ("^16[.]", version) is not None:
                 conf.env['build_target'] = 'sierra'
-            elif re.search ("^17[.]", version) != None:
+            elif re.search ("^17[.]", version) is not None:
                 conf.env['build_target'] = 'high_sierra'
-            elif re.search ("^18[.]", version) != None:
+            elif re.search ("^18[.]", version) is not None:
                 conf.env['build_target'] = 'mojave'
-            elif re.search ("^19[.]", version) != None:
+            elif re.search ("^19[.]", version) is not None:
                 conf.env['build_target'] = 'catalina'
-            elif re.search ("^20[.]", version) != None:
+            elif re.search ("^20[.]", version) is not None:
                 conf.env['build_target'] = 'bigsur'
+            elif re.search ("^21[.]", version) is not None:
+                conf.env['build_target'] = 'monterey'
+            elif re.search ("^21[.]", version) is not None:
+                conf.env['build_target'] = 'ventura'
             else:
                 conf.env['build_target'] = 'catalina'
         else:
@@ -496,9 +518,20 @@ int main() { return 0; }''',
         if conf.env['build_target'] == 'armhf' or conf.env['build_target'] == 'aarch64':
             conf.define('ARM_NEON_SUPPORT', 1)
         elif conf.env['build_target'] == 'mingw':
-            if re.search ('x86_64-w64', str(conf.env['CC'])) != None:
+            if re.search ('x86_64-w64', str(conf.env['CC'])) is not None:
                 conf.define ('FPU_AVX_FMA_SUPPORT', 1)
+                conf.define ('FPU_AVX512F_SUPPORT', 1)
         elif conf.env['build_target'] == 'i386' or conf.env['build_target'] == 'i686' or conf.env['build_target'] == 'x86_64':
+            conf.check_cxx(fragment = "#include <immintrin.h>\nint main(void) { __m512 a; _mm512_abs_ps(a); _mm512_fmadd_ps(a, a, a); (void) _mm512_reduce_min_ps(a); (void)_mm512_reduce_max_ps(a); return 0; }\n",
+                           features  = ['cxx'],
+                           cxxflags  = [ conf.env['compiler_flags_dict']['avx512f'], conf.env['compiler_flags_dict']['fma'], conf.env['compiler_flags_dict']['avx'] ],
+                           mandatory = False,
+                           execute   = False,
+                           msg       = 'Checking compiler for AVX512F intrinsics',
+                           okmsg     = 'Found',
+                           errmsg    = 'Not supported',
+                           define_name = 'FPU_AVX512F_SUPPORT')
+
             conf.check_cxx(fragment = "#include <immintrin.h>\nint main(void) { __m128 a; _mm_fmadd_ss(a, a, a); return 0; }\n",
                            features  = ['cxx'],
                            cxxflags  = [ conf.env['compiler_flags_dict']['fma'], conf.env['compiler_flags_dict']['avx'] ],
@@ -510,10 +543,10 @@ int main() { return 0; }''',
                            define_name = 'FPU_AVX_FMA_SUPPORT')
 
     if opt.use_libcpp or conf.env['build_host'] in [ 'yosemite', 'el_capitan', 'sierra', 'high_sierra', 'mojave', 'catalina' ]:
-       cxx_flags.append('--stdlib=libc++')
-       linker_flags.append('--stdlib=libc++')
+        cxx_flags.append('--stdlib=libc++')
+        linker_flags.append('--stdlib=libc++')
 
-    if conf.options.cxx11 or conf.env['build_host'] in [ 'mavericks', 'yosemite', 'el_capitan', 'sierra', 'high_sierra', 'mojave', 'catalina' , 'bigsur' ]:
+    if conf.options.cxx11 or conf.env['build_host'] in [ 'mavericks', 'yosemite', 'el_capitan', 'sierra', 'high_sierra', 'mojave', 'catalina' , 'bigsur', 'monterey', 'ventura' ]:
         conf.check_cxx(cxxflags=["-std=c++11"])
         cxx_flags.append('-std=c++11')
         if platform == "darwin":
@@ -521,7 +554,7 @@ int main() { return 0; }''',
             # from requiring a full path to requiring just the header name.
             cxx_flags.append('-DCARBON_FLAT_HEADERS')
 
-            if not opt.use_libcpp and not conf.env['build_host'] in [ 'yosemite', 'el_capitan', 'sierra', 'high_sierra', 'mojave', 'catalina', 'bigsur' ]:
+            if not opt.use_libcpp and not conf.env['build_host'] in [ 'yosemite', 'el_capitan', 'sierra', 'high_sierra', 'mojave', 'catalina', 'bigsur', 'monterey', 'ventura' ]:
                 cxx_flags.append('--stdlib=libstdc++')
                 linker_flags.append('--stdlib=libstdc++')
             # Prevents visibility issues in standard headers
@@ -530,25 +563,23 @@ int main() { return 0; }''',
             cxx_flags.append('-DBOOST_NO_AUTO_PTR')
             cxx_flags.append('-DBOOST_BIND_GLOBAL_PLACEHOLDERS')
 
-
-    if (is_clang and platform == "darwin") or conf.env['build_host'] in [ 'mavericks', 'yosemite', 'el_capitan', 'sierra', 'high_sierra', 'mojave', 'catalina' , 'bigsur' ]:
+    if (is_clang and platform == "darwin") or conf.env['build_host'] in [ 'mavericks', 'yosemite', 'el_capitan', 'sierra', 'high_sierra', 'mojave', 'catalina' , 'bigsur',  'monterey', 'ventura' ]:
         # Silence warnings about the non-existing osx clang compiler flags
         # -compatibility_version and -current_version.  These are Waf
         # generated and not needed with clang
         c_flags.append("-Qunused-arguments")
         cxx_flags.append("-Qunused-arguments")
 
-    if (re.search ("(i[0-9]86|x86_64|AMD64)", cpu) != None) and conf.env['build_target'] != 'none':
+    if (re.search ("(i[0-9]86|x86_64|AMD64)", cpu) is not None) and conf.env['build_target'] != 'none':
 
         #
         # ARCH_X86 means anything in the x86 family from i386 to x86_64
         # the compile-time presence of the macro _LP64 is used to
-        # distingush 32 and 64 bit assembler
+        # distinguish 32 and 64 bit assembler
         #
 
-
         if not (opt.arm64 or conf.env['build_target'] == 'armhf' and conf.env['build_target'] == 'aarch64'):
-           compiler_flags.append ("-DARCH_X86")
+            compiler_flags.append ("-DARCH_X86")
 
         if platform == 'linux' and conf.env['build_target'] != 'armhf' and conf.env['build_target'] != 'aarch64':
 
@@ -577,7 +608,7 @@ int main() { return 0; }''',
             compiler_flags.extend ([ flags_dict['sse'], flags_dict['fpmath-sse'], flags_dict['xmmintrinsics'] ])
 
         if (conf.env['build_target'] == 'mingw'):
-            if (re.search ("(x86_64|AMD64)", cpu) != None):
+            if (re.search ("(x86_64|AMD64)", cpu) is not None):
                 # on Windows sse is supported by 64 bit platforms only
                 build_host_supports_sse = True
 
@@ -595,16 +626,16 @@ int main() { return 0; }''',
     # optimization section
     if conf.env['FPU_OPTIMIZATION']:
         if sys.platform == 'darwin':
-            compiler_flags.append("-DBUILD_VECLIB_OPTIMIZATIONS");
+            compiler_flags.append("-DBUILD_VECLIB_OPTIMIZATIONS")
             conf.env.append_value('LINKFLAGS_OSX', ['-framework', 'Accelerate'])
         elif conf.env['build_target'] == 'i686' or conf.env['build_target'] == 'x86_64':
-                compiler_flags.append ("-DBUILD_SSE_OPTIMIZATIONS")
+            compiler_flags.append ("-DBUILD_SSE_OPTIMIZATIONS")
         elif conf.env['build_target'] == 'mingw':
-                # usability of the 64 bit windows assembler depends on the compiler target,
-                # not the build host, which in turn can only be inferred from the name
-                # of the compiler.
-                if re.search ('x86_64-w64', str(conf.env['CC'])) != None:
-                        compiler_flags.append ("-DBUILD_SSE_OPTIMIZATIONS")
+            # usability of the 64 bit windows assembler depends on the compiler target,
+            # not the build host, which in turn can only be inferred from the name
+            # of the compiler.
+            if re.search ('x86_64-w64', str(conf.env['CC'])) is not None:
+                    compiler_flags.append ("-DBUILD_SSE_OPTIMIZATIONS")
         if not build_host_supports_sse:
             print("\nWarning: you are building Ardour with SSE support even though your system does not support these instructions. (This may not be an error, especially if you are a package maintainer)")
 
@@ -656,7 +687,7 @@ int main() { return 0; }''',
                  "-mmacosx-version-min=10.9"))
         linker_flags.append("-mmacosx-version-min=10.9")
 
-    elif conf.env['build_target'] in ['bigsur']:
+    elif conf.env['build_target'] in ['bigsur', 'monterey', 'ventura']:
         compiler_flags.extend(
                 ("-DMAC_OS_X_VERSION_MAX_ALLOWED=110000",
                  "-mmacosx-version-min=11.0"))
@@ -671,7 +702,7 @@ int main() { return 0; }''',
     # ARCH="..." overrides all
     #
 
-    if opt.arch != None:
+    if opt.arch is not None:
         optimization_flags = opt.arch.split()
 
     #
@@ -699,7 +730,7 @@ int main() { return 0; }''',
     if opt.stl_debug:
         cxx_flags.append("-D_GLIBCXX_DEBUG")
 
-    if re.search ("bsd", sys.platform) != None:
+    if re.search ("bsd", sys.platform) is not None:
         linker_flags.append('-lexecinfo')
 
     if conf.env['DEBUG_RT_ALLOC']:
@@ -736,11 +767,11 @@ int main() { return 0; }''',
 
     # need ISOC9X for llabs()
     compiler_flags.extend(
-        ('-DBOOST_SYSTEM_NO_DEPRECATED', '-D_ISOC9X_SOURCE',
+        ('-DBOOST_SYSTEM_NO_DEPRECATED', '-DBOOST_BIND_GLOBAL_PLACEHOLDERS', '-D_ISOC9X_SOURCE',
          '-D_LARGEFILE64_SOURCE', '-D_FILE_OFFSET_BITS=64'))
     cxx_flags.extend(
         ('-D__STDC_LIMIT_MACROS', '-D__STDC_FORMAT_MACROS',
-         '-DCANVAS_COMPATIBILITY', '-DCANVAS_DEBUG'))
+         '-DCANVAS_DEBUG'))
 
     # Do not use Boost.System library
     cxx_flags.append('-DBOOST_ERROR_CODE_HEADER_ONLY')
@@ -807,8 +838,8 @@ def options(opt):
                     help='Compile with -rdynamic -- allow obtaining backtraces from within Ardour')
     opt.add_option('--no-carbon', action='store_true', default=False, dest='nocarbon',
                     help='Compile without support for AU Plugins with only CARBON UI (needed for 64bit)')
-    opt.add_option('--no-compile-database', action='store_true', default=False, dest='clang_compile_db',
-                    help='Do not call clang_compilation_database to write compile_commands.json prior to build')
+    opt.add_option('--compile-database', action='store_true', default=False, dest='clang_compile_db',
+                    help='Enable clang_compilation_database to write compile_commands.json prior to build')
     opt.add_option('--boost-sp-debug', action='store_true', default=False, dest='boost_sp_debug',
                     help='Compile with Boost shared pointer debugging')
     opt.add_option('--debug-symbols', action='store_true', default=False, dest='debug_symbols',
@@ -900,29 +931,31 @@ def options(opt):
                     help='X Modifier(s) (Mod1,Mod2, etc) for the Windows key (X11 builds only). ' +
                     'Multiple modifiers must be separated by \'><\'')
     opt.add_option('--boost-include', type='string', action='store', dest='boost_include', default='',
-                    help='directory where Boost header files can be found')
+                    help='Directory where Boost header files can be found')
     opt.add_option('--also-include', type='string', action='store', dest='also_include', default='',
-                    help='additional include directory where header files can be found (split multiples with commas)')
+                    help='Additional include directory where header files can be found (split multiples with commas)')
     opt.add_option('--also-libdir', type='string', action='store', dest='also_libdir', default='',
-                    help='additional include directory where shared libraries can be found (split multiples with commas)')
+                    help='Additional include directory where shared libraries can be found (split multiples with commas)')
     opt.add_option('--noconfirm', action='store_true', default=False, dest='noconfirm',
                     help='Do not ask questions that require confirmation during the build')
     opt.add_option('--cxx11', action='store_true', default=False, dest='cxx11',
                     help='Turn on c++11 compiler flags (-std=c++11)')
     opt.add_option('--use-libc++', action='store_true', default=False, dest='use_libcpp',
-                    help='use libc++ instead of default or auto-detected stdlib')
+                    help='Use libc++ instead of default or auto-detected stdlib')
     opt.add_option('--address-sanitizer', action='store_true', default=False, dest='asan',
                     help='Turn on AddressSanitizer (requires GCC >= 4.8 or clang >= 3.1)')
     opt.add_option('--thread-sanitizer', action='store_true', default=False, dest='tsan',
                     help='Turn on ThreadSanitizer (requires GCC >= 4.8 or clang, and 64bit CPU)')
     opt.add_option('--ptformat', action='store_true', default=False, dest='ptformat',
-                    help='Turn on PT session import option')
+                    help='Enable support to import PTS/PTF/PTX sessions')
     opt.add_option('--no-threaded-waveviews', action='store_true', default=False, dest='no_threaded_waveviews',
                     help='Disable threaded waveview rendering')
+    opt.add_option('--no-futex-semaphore', action='store_true', default=False, dest='no_futex_semaphore',
+                    help='Disable use of futex for semaphores (Linux only)')
     opt.add_option(
         '--qm-dsp-include', type='string', action='store',
         dest='qm_dsp_include', default='/usr/include/qm-dsp',
-        help='directory where the header files of qm-dsp can be found')
+        help='Directory where the header files of qm-dsp can be found')
     opt.add_option ('--use-lld', action='store_true', default=False, dest='use_lld', help='Use LLD linker instead of ld (Linux only)')
 
     for i in children:
@@ -933,11 +966,12 @@ def sub_config_and_use(conf, name, has_objects = True):
     autowaf.set_local_lib(conf, name, has_objects)
 
 def configure(conf):
+    set_version ()
     conf.load('compiler_c')
     conf.load('compiler_cxx')
     if Options.options.dist_target == 'mingw':
         conf.load('winres')
-    elif not Options.options.clang_compile_db:
+    elif Options.options.clang_compile_db:
         conf.load('clang_compilation_database')
 
     if Options.options.dist_target == 'msvc':
@@ -1074,9 +1108,13 @@ def configure(conf):
         conf.env.append_value('LINKFLAGS_AUDIOUNITS', ['-framework', 'AudioToolbox', '-framework', 'AudioUnit'])
         conf.env.append_value('LINKFLAGS_AUDIOUNITS', ['-framework', 'Cocoa'])
 
+        # use image surface for rendering
+        conf.env.append_value('CFLAGS', '-DUSE_CAIRO_IMAGE_SURFACE')
+        conf.env.append_value('CXXFLAGS', '-DUSE_CAIRO_IMAGE_SURFACE')
+
         if (
                 # osx up to and including 10.6 (uname 10.X.X)
-                (re.search ("^[1-9][0-9]\.", os.uname()[2]) == None or not re.search ("^10\.", os.uname()[2]) == None)
+                (re.search (r"^[1-9][0-9]\.", os.uname()[2]) is None or not re.search (r"^10\.", os.uname()[2]) is None)
                 and (Options.options.generic or Options.options.ppc)
                 and not Options.options.nocarbon
            ):
@@ -1084,7 +1122,6 @@ def configure(conf):
             conf.env.append_value('LINKFLAGS_AUDIOUNITS', ['-framework', 'Carbon'])
         else:
             print ('No Carbon support available for this build\n')
-
 
     if Options.options.canvasui:
         conf.env['CANVASTESTUI'] = True
@@ -1122,8 +1159,8 @@ def configure(conf):
 
     # executing a test program is n/a when cross-compiling
     if Options.options.dist_target != 'mingw':
-        if Options.options.dist_target != 'msvc' and re.search ("(open|net)bsd", sys.platform) == None:
-            if re.search ("freebsd", sys.platform) != None:
+        if Options.options.dist_target != 'msvc' and re.search ("(open|net)bsd", sys.platform) is None:
+            if re.search ("freebsd", sys.platform) is not None:
                 conf.check_cc(
                         msg="Checking for function 'dlopen' in dlfcn.h",
                         fragment = "#include <dlfcn.h>\n int main(void) { dlopen (\"\", 0); return 0;}\n",
@@ -1137,17 +1174,15 @@ def configure(conf):
     conf.check_cxx(fragment = "#include <boost/version.hpp>\n#if !defined (BOOST_VERSION) || BOOST_VERSION < 105600\n#error boost >= 1.56 is not available\n#endif\nint main(void) { return 0; }\n",
               execute = False,
               mandatory = True,
-              msg = 'Checking for boost library >= 1.56',
-              okmsg = 'ok',
-              errmsg = 'too old\nPlease install boost version 1.56 or higher.')
+              msg = 'Checking for boost library >= 1.56')
 
-    if re.search ("linux", sys.platform) != None and Options.options.dist_target != 'mingw':
+    if re.search ("linux", sys.platform) is not None and Options.options.dist_target != 'mingw':
         autowaf.check_pkg(conf, 'alsa', uselib_store='ALSA')
 
-    if re.search ("linux", sys.platform) != None and Options.options.dist_target != 'mingw':
+    if re.search ("linux", sys.platform) is not None and Options.options.dist_target != 'mingw':
         autowaf.check_pkg(conf, 'libpulse', uselib_store='PULSEAUDIO', mandatory=False)
 
-    if re.search ("openbsd", sys.platform) != None:
+    if re.search ("openbsd", sys.platform) is not None:
         conf.env.append_value('LDFLAGS', '-L/usr/X11R6/lib')
 
     autowaf.check_pkg(conf, 'glib-2.0', uselib_store='GLIB', atleast_version='2.28', mandatory=True)
@@ -1164,6 +1199,25 @@ def configure(conf):
     autowaf.check_pkg(conf, 'vamp-hostsdk', uselib_store='VAMPHOSTSDK', atleast_version='2.1', mandatory=True)
     autowaf.check_pkg(conf, 'rubberband', uselib_store='RUBBERBAND', mandatory=True)
 
+    autowaf.check_pkg(conf, 'libusb-1.0', uselib_store='USB', atleast_version='1.0.16', mandatory=False)
+
+    # we cannot rely on pkg-config - https://lists.linuxaudio.org/archives/linux-audio-dev/2022-July/038395.html
+    conf.check_cc(
+                  features  = 'cxx',
+                  mandatory = False,
+                  execute   = False,
+                  msg       = 'Checking for rubberband >= 3.0.0',
+                  use       = 'RUBBERBAND',
+                  define_name= 'HAVE_RUBBERBAND_3_0_0',
+    fragment = '''
+#include <rubberband/RubberBandStretcher.h>
+#if RUBBERBAND_API_MAJOR_VERSION >= 2 && RUBBERBAND_API_MINOR_VERSION >= 7
+int main () { return 0; }
+#else
+#error
+#endif
+''')
+
     have_rf64_riff_support = conf.check_cc(fragment = '''
 #include <sndfile.h>
 int main () { int x = SFC_RF64_AUTO_DOWNGRADE; return 0; }
@@ -1172,13 +1226,13 @@ int main () { int x = SFC_RF64_AUTO_DOWNGRADE; return 0; }
                                            mandatory = False,
                                            execute   = False,
                                            use = 'SNDFILE',
-                                           msg       = 'Checking for  sndfile RF64=>RIFF support',
+                                           msg       = 'Checking for sndfile RF64=>RIFF support',
                                            okmsg = 'Found',
                                            errmsg = 'Not found, no RF64-to-WAV support')
 
     if have_rf64_riff_support:
-            conf.env.append_value('CXXFLAGS', "-DHAVE_RF64_RIFF")
-            conf.env.append_value('CFLAGS', "-DHAVE_RF64_RIFF")
+        conf.env.append_value('CXXFLAGS', "-DHAVE_RF64_RIFF")
+        conf.env.append_value('CFLAGS', "-DHAVE_RF64_RIFF")
 
     if Options.options.dist_target == 'mingw':
         Options.options.fpu_optimization = True
@@ -1243,6 +1297,20 @@ int main () { return 0; }
         # MORE STUFF PROBABLY NEEDED HERE
         conf.define ('WINDOWS', 1)
 
+    have_int128_support = conf.check_cc(fragment = '''
+int main () { __int128 x = 0; return 0; }
+''',
+                                           features  = 'c',
+                                           mandatory = False,
+                                           execute   = False,
+                                           msg       = 'Checking for int128 support',
+                                           okmsg = 'lots of bits found.',
+                                           errmsg = 'Not found, no int128 support.')
+
+    if have_int128_support:
+        conf.env.append_value('CXXFLAGS', "-DCOMPILER_INT128_SUPPORT")
+        conf.env.append_value('CFLAGS', "-DCOMPILER_INT128_SUPPORT")
+
     # Tell everyone that this is a waf build
 
     conf.env.append_value('CFLAGS', '-DWAF_BUILD')
@@ -1303,8 +1371,8 @@ int main () { return 0; }
             conf.define('LXVST_SUPPORT', 1)
             conf.env['LXVST_SUPPORT'] = True
     if opts.vst3:
-            conf.define('VST3_SUPPORT', 1)
-            conf.env['VST3_SUPPORT'] = True
+        conf.define('VST3_SUPPORT', 1)
+        conf.env['VST3_SUPPORT'] = True
     conf.env['WINDOWS_KEY'] = opts.windows_key
     if opts.rt_alloc_debug:
         conf.define('DEBUG_RT_ALLOC', 1)
@@ -1323,6 +1391,18 @@ int main () { return 0; }
     if opts.no_threaded_waveviews:
         conf.define('NO_THREADED_WAVEVIEWS', 1)
         conf.env['NO_THREADED_WAVEVIEWS'] = True
+    if not opts.no_futex_semaphore:
+        if re.search ("linux", sys.platform) is not None and Options.options.dist_target != 'mingw':
+            have_sys_futex = conf.check_cc(
+                    msg="Checking for 'futex' syscall support",
+                    features  = 'c',
+                    mandatory = False,
+                    execute   = False,
+                    fragment = "#include <sys/syscall.h>\n#include <linux/futex.h>\nint main () { int x = SYS_futex | FUTEX_WAKE_PRIVATE; return 0; }")
+
+            if have_sys_futex:
+                    conf.define('USE_FUTEX_SEMAPHORE', 1)
+                    conf.env['USE_FUTEX_SEMAPHORE'] = True
 
     backends = opts.with_backends.split(',')
 
@@ -1334,7 +1414,7 @@ int main () { return 0; }
         if conf.is_defined('HAVE_PULSEAUDIO'):
             backends += ['pulseaudio']
 
-        if re.search ("linux", sys.platform) != None and Options.options.dist_target != 'mingw':
+        if re.search ("linux", sys.platform) is not None and Options.options.dist_target != 'mingw':
             backends += ['alsa']
         if sys.platform == 'darwin':
             backends += ['coreaudio']
@@ -1361,44 +1441,42 @@ int main () { return 0; }
             or conf.env['BUILD_PULSEAUDIO']):
         conf.fatal("Must configure and build at least one backend")
 
-
     if (Options.options.use_lld):
-        if re.search ("linux", sys.platform) != None and Options.options.dist_target != 'mingw' and conf.env['BUILD_PABACKEND']:
-                conf.fatal("lld is only for Linux builds")
+        if re.search ("linux", sys.platform) is not None and Options.options.dist_target != 'mingw' and conf.env['BUILD_PABACKEND']:
+            conf.fatal("lld is only for Linux builds")
         else:
-                conf.find_program ('lld')
-                conf.env.append_value('LINKFLAGS', '-fuse-ld=lld')
+            conf.find_program ('lld')
+            conf.env.append_value('LINKFLAGS', '-fuse-ld=lld')
 
-    if re.search ("linux", sys.platform) != None and Options.options.dist_target != 'mingw' and conf.env['BUILD_PABACKEND']:
+    if re.search ("linux", sys.platform) is not None and Options.options.dist_target != 'mingw' and conf.env['BUILD_PABACKEND']:
         conf.fatal("PortAudio Backend is not for Linux")
-
 
     if sys.platform != 'darwin' and conf.env['BUILD_CORECRAPPITA']:
         conf.fatal("Coreaudio backend is only available for OSX")
 
-    if re.search ("linux", sys.platform) == None and conf.env['BUILD_ALSABACKEND']:
+    if re.search ("linux", sys.platform) is None and conf.env['BUILD_ALSABACKEND']:
         conf.fatal("ALSA Backend is only available on Linux")
 
-    if re.search ("linux", sys.platform) == None and conf.env['BUILD_PULSEAUDIO']:
-        conf.fatal("Pulseaudio Backend is only available on Linux")
+    if re.search ("linux", sys.platform) is None and conf.env['BUILD_PULSEAUDIO']:
+        conf.fatal("PulseAudio Backend is only available on Linux")
 
     if conf.env['BUILD_PULSEAUDIO'] and not conf.is_defined('HAVE_PULSEAUDIO'):
-        conf.fatal("Pulseaudio Backend requires libpulse-dev")
+        conf.fatal("PulseAudio Backend requires libpulse-dev")
 
     set_compiler_flags (conf, Options.options)
 
-    if conf.env['build_host'] not in [ 'mojave', 'catalina', 'bigsur']:
-        conf.env.append_value('CXXFLAGS_OSX', '-F/System/Library/Frameworks')
+    if sys.platform == 'darwin':
+        if conf.env['build_host'] not in [ 'mojave', 'catalina', 'bigsur', 'monterey', 'ventura']:
+            conf.env.append_value('CXXFLAGS_OSX', '-F/System/Library/Frameworks')
 
-    conf.env.append_value('CXXFLAGS_OSX', '-F/Library/Frameworks')
+        conf.env.append_value('CXXFLAGS_OSX', '-F/Library/Frameworks')
 
     if sys.platform == 'darwin':
         sub_config_and_use(conf, 'libs/appleutility')
-    elif re.search ("openbsd", sys.platform) != None:
+    elif re.search ("openbsd", sys.platform) is not None:
         pass
     elif Options.options.dist_target != 'mingw':
         sub_config_and_use(conf, 'tools/sanity_check')
-        sub_config_and_use(conf, 'tools/gccabicheck')
 
     # explicitly link against libm. This is possible on all POSIX systems
     # and required on Linux for symbol versioning and ABI compatibility
@@ -1417,11 +1495,11 @@ int main () { return 0; }
         # override waf's -install_name added in
         # waflib/Tools/ccroot.py when -dynamiclib is used
         if conf.env.LINKFLAGS_cshlib:
-            conf.env.LINKFLAGS_cshlib = [];
+            conf.env.LINKFLAGS_cshlib = []
             conf.env.LDFLAGS_cshlib = ['-dynamiclib']
 
         if conf.env.LINKFLAGS_cxxshlib:
-            conf.env.LINKFLAGS_cxxshlib = [];
+            conf.env.LINKFLAGS_cxxshlib = []
             conf.env.LDFLAGS_cxxshlib = ['-dynamiclib']
 
     config_text = open('libs/ardour/config_text.cc', "w")
@@ -1462,7 +1540,9 @@ const char* const ardour_config_info = "\\n\\
     write_config_text('Dr. Mingw',             conf.is_defined('HAVE_DRMINGW'))
     write_config_text('FLAC',                  conf.is_defined('HAVE_FLAC'))
     write_config_text('FPU optimization',      opts.fpu_optimization)
+    write_config_text('FPU AVX512F support',   conf.is_defined('FPU_AVX512F_SUPPORT'))
     write_config_text('FPU AVX/FMA support',   conf.is_defined('FPU_AVX_FMA_SUPPORT'))
+    write_config_text('Futex Semaphore',       conf.is_defined('USE_FUTEX_SEMAPHORE'))
     write_config_text('Freedesktop files',     opts.freedesktop)
     write_config_text('Libjack linking',       conf.env['libjack_link'])
     write_config_text('Libjack metadata',      conf.is_defined ('HAVE_JACK_METADATA'))
@@ -1497,7 +1577,7 @@ const char* const ardour_config_info = "\\n\\
     write_config_text('ALSA Backend',          conf.env['BUILD_ALSABACKEND'])
     write_config_text('Dummy backend',         conf.env['BUILD_DUMMYBACKEND'])
     write_config_text('JACK Backend',          conf.env['BUILD_JACKBACKEND'])
-    write_config_text('Pulseaudio Backend',    conf.env['BUILD_PULSEAUDIO'])
+    write_config_text('PulseAudio Backend',    conf.env['BUILD_PULSEAUDIO'])
     config_text.write("\\n\\\n")
     write_config_text('Buildstack', conf.env['DEPSTACK_REV'])
     write_config_text('Mac i386 Architecture', opts.generic)
@@ -1516,7 +1596,10 @@ const char* const ardour_config_info = "\\n\\
         create_resource_file(Options.options.program_name)
 
 def build(bld):
-    create_stored_revision()
+    if bld.is_install:
+        set_version (True)
+    else:
+        create_stored_revision()
 
     bld.env['DATE'] = rev_date
 
@@ -1542,17 +1625,22 @@ def build(bld):
     bld.env['DLLDIR'] = os.path.join(bld.env['LIBDIR'], lwrcase_dirname)
     bld.env['LIBDIR'] = bld.env['DLLDIR']
     bld.env['LOCALEDIR'] = os.path.join(bld.env['DATADIR'], 'locale')
-    bld.env['lwrcase_dirname'] = lwrcase_dirname;
+    bld.env['lwrcase_dirname'] = lwrcase_dirname
 
     autowaf.set_recursive()
 
     if sys.platform == 'darwin':
         bld.recurse('libs/appleutility')
-    elif re.search ("openbsd", sys.platform) != None:
+    elif re.search ("openbsd", sys.platform) is not None:
         pass
     elif bld.env['build_target'] != 'mingw':
         bld.recurse('tools/sanity_check')
-        bld.recurse('tools/gccabicheck')
+
+        obj              = bld(features = 'subst')
+        obj.source       = 'tools/avahi.sh'
+        obj.target       = 'libs/ardour-avahi'
+        obj.chmod        = Utils.O755
+        obj.install_path = bld.env['LIBDIR']
 
     bld.recurse('libs/clearlooks-newer')
 
@@ -1565,6 +1653,7 @@ def build(bld):
     bld.install_files (bld.env['CONFDIR'], 'system_config')
 
     bld.install_files (os.path.join (bld.env['DATADIR'], 'templates'), bld.path.ant_glob ('share/templates/**'), cwd=bld.path.find_dir ('share/templates'), relative_trick=True)
+    bld.install_files (os.path.join (bld.env['DATADIR'], 'rdf'), bld.path.ant_glob ('share/rdf/*.n3'))
 
     if bld.env['RUN_TESTS']:
         bld.add_post_fun(test)
@@ -1589,5 +1678,6 @@ def test(bld):
     subprocess.call("gtk2_ardour/artest")
 
 def help2man(bld):
+    set_version ()
     cmd = "help2man -s 1 -N -o ardour.1 -n Ardour --version-string='Ardour %s' gtk2_ardour/ardev" % PROGRAM_VERSION
     subprocess.call(cmd, shell=True)

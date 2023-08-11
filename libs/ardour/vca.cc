@@ -72,15 +72,15 @@ VCA::VCA (Session& s, int32_t num, const string& name)
 	: Stripable (s, name, PresentationInfo (num, PresentationInfo::VCA))
 	, Muteable (s, name)
 	, _number (num)
-	, _gain_control (new GainControl (s, Evoral::Parameter (GainAutomation), boost::shared_ptr<AutomationList> ()))
+	, _gain_control (new GainControl (s, Evoral::Parameter (GainAutomation), std::shared_ptr<AutomationList> ()))
 {
 }
 
 int
 VCA::init ()
 {
-	_solo_control.reset (new SoloControl (_session, X_("solo"), *this, *this, time_domain()));
-	_mute_control.reset (new MuteControl (_session, X_("mute"), *this, time_domain()));
+	_solo_control.reset (new SoloControl (_session, X_("solo"), *this, *this, *this));
+	_mute_control.reset (new MuteControl (_session, X_("mute"), *this, *this));
 
 	add_control (_gain_control);
 	add_control (_solo_control);
@@ -95,7 +95,7 @@ VCA::~VCA ()
 	{
 		Glib::Threads::Mutex::Lock lm (_control_lock);
 		for (Controls::const_iterator li = _controls.begin(); li != _controls.end(); ++li) {
-			boost::dynamic_pointer_cast<AutomationControl>(li->second)->drop_references ();
+			std::dynamic_pointer_cast<AutomationControl>(li->second)->drop_references ();
 		}
 	}
 	{
@@ -117,7 +117,7 @@ VCA::full_name() const
 }
 
 XMLNode&
-VCA::get_state ()
+VCA::get_state () const
 {
 	XMLNode* node = new XMLNode (xml_node_name);
 	node->set_property (X_("name"), name());
@@ -198,7 +198,7 @@ VCA::slaved () const
 }
 
 bool
-VCA::slaved_to (boost::shared_ptr<VCA> vca) const
+VCA::slaved_to (std::shared_ptr<VCA> vca) const
 {
 	if (!vca || !_gain_control) {
 		return false;
@@ -210,7 +210,7 @@ VCA::slaved_to (boost::shared_ptr<VCA> vca) const
 }
 
 void
-VCA::assign (boost::shared_ptr<VCA> v)
+VCA::assign (std::shared_ptr<VCA> v)
 {
 	/* prevent recursive assignments */
 	if (assigned_to (_session.vca_manager_ptr (), v)) {
@@ -220,10 +220,10 @@ VCA::assign (boost::shared_ptr<VCA> v)
 	Slavable::assign (v);
 }
 
-SlavableControlList
+SlavableAutomationControlList
 VCA::slavables () const
 {
-	SlavableControlList rv;
+	SlavableAutomationControlList rv;
 	rv.push_back (_gain_control);
 	rv.push_back (_mute_control);
 	rv.push_back (_solo_control);

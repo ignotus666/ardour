@@ -25,7 +25,7 @@ fi
 
 if test -z "${ARDOURCFG}"; then
 	if test -f ${PREFIX}/include/pa_asio.h; then
-		ARDOURCFG="--windows-vst --with-backends=jack,dummy,wavesaudio"
+		ARDOURCFG="--windows-vst --with-backends=jack,dummy,portaudio"
 	else
 		ARDOURCFG="--windows-vst --with-backends=jack,dummy"
 	fi
@@ -66,9 +66,10 @@ export DLLTOOL=${XPREFIX}-dlltool
 if grep -q optimize <<<"$ARDOURCFG"; then
 	OPT=""
 else
-	#debug-build luabindings.cc, has > 60k symbols.
+	# debug-build luabindings.cc, has > 60k symbols.
 	# -Wa,-mbig-obj has an unreasonable long build-time
-	# -Og to the rescue.
+	# so libs/ardour/wscript only uses it for luabindings.cc.
+	# session.cc is also big, -Og to the rescue.
 	OPT=" -Og"
 fi
 

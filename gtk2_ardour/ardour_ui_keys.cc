@@ -55,7 +55,7 @@ ARDOUR_UI::key_event_handler (GdkEventKey* ev, Gtk::Window* event_window)
 	Gtkmm2ext::Bindings* bindings = 0;
 	Gtk::Window* window = 0;
 
-	if (virtual_keyboard_window && virtual_keyboard_window->is_visible()) {
+	if (virtual_keyboard_window && virtual_keyboard_window->get_visible()) {
 		if (gtk_window_propagate_key_event (virtual_keyboard_window->gobj(), ev)) {
 			return true;
 		}
@@ -104,7 +104,7 @@ ARDOUR_UI::key_event_handler (GdkEventKey* ev, Gtk::Window* event_window)
 }
 
 static Gtkmm2ext::Bindings*
-get_bindings_from_widget_heirarchy (GtkWidget** w)
+get_bindings_from_widget_hierarchy (GtkWidget** w)
 {
 	void* p = NULL;
 
@@ -125,6 +125,7 @@ ARDOUR_UI::key_press_focus_accelerator_handler (Gtk::Window& window, GdkEventKey
 	GtkWidget* focus = gtk_window_get_focus (win);
 	bool special_handling_of_unmodified_accelerators = false;
 	const guint mask = (Keyboard::RelevantModifierKeyMask & ~(Gdk::SHIFT_MASK|Gdk::LOCK_MASK));
+	bool cutcopypaste = false;
 
 	if (focus) {
 
@@ -152,7 +153,20 @@ ARDOUR_UI::key_press_focus_accelerator_handler (Gtk::Window& window, GdkEventKey
                                                           (focus ? gtk_widget_get_name (focus) : "no focus widget"),
                                                           ((ev->state & mask) ? "yes" : "no"),
 	                                                  window.get_title(),
-	                                                  gdk_keyval_name (ev->keyval)))
+	                                                  gdk_keyval_name (ev->keyval)));
+
+	if (Keyboard::some_magic_widget_has_focus() && (ev->state == Keyboard::PrimaryModifier)) {
+		switch (ev->keyval) {
+		case GDK_x:
+		case GDK_c:
+		case GDK_v:
+			cutcopypaste = true;
+			DEBUG_TRACE (DEBUG::Accelerators, string_compose ("seen cut/copy/paste keys with magic widget focus, Primary-%1\n", gdk_keyval_name (ev->keyval)));
+			break;
+		default:
+			break;
+		}
+	}
 
 	/* This exists to allow us to override the way GTK handles
 	   key events. The normal sequence is:
@@ -186,7 +200,7 @@ ARDOUR_UI::key_press_focus_accelerator_handler (Gtk::Window& window, GdkEventKey
 	*/
 
 
-	if (!special_handling_of_unmodified_accelerators || (ev->state & mask)) {
+	if (!cutcopypaste && (!special_handling_of_unmodified_accelerators || (ev->state & mask))) {
 
 		/* no special handling or there are modifiers in effect: accelerate first */
 
@@ -194,11 +208,11 @@ ARDOUR_UI::key_press_focus_accelerator_handler (Gtk::Window& window, GdkEventKey
 
 		KeyboardKey k (ev->state, ev->keyval);
 
-		/* Check heirarchy from current focus widget upwards */
+		/* Check hierarchy from current focus widget upwards */
 
 		while (focus) {
 
-			Gtkmm2ext::Bindings* focus_bindings = get_bindings_from_widget_heirarchy (&focus);
+			Gtkmm2ext::Bindings* focus_bindings = get_bindings_from_widget_hierarchy (&focus);
 
 			if (focus_bindings) {
 				DEBUG_TRACE (DEBUG::Accelerators, string_compose ("\tusing widget (%3) bindings %1 @ %2 for this event\n", focus_bindings->name(), focus_bindings, gtk_widget_get_name (focus)));
@@ -243,7 +257,7 @@ ARDOUR_UI::key_press_focus_accelerator_handler (Gtk::Window& window, GdkEventKey
 
 	} else {
 
-		/* no modifiers, propagate first */
+		/* no modifiers or cut/copy/paste key event, propagate first */
 
 		DEBUG_TRACE (DEBUG::Accelerators, "\tpropagate, then activate\n");
 
@@ -257,7 +271,7 @@ ARDOUR_UI::key_press_focus_accelerator_handler (Gtk::Window& window, GdkEventKey
 
 		while (focus) {
 
-			Gtkmm2ext::Bindings* focus_bindings = get_bindings_from_widget_heirarchy (&focus);
+			Gtkmm2ext::Bindings* focus_bindings = get_bindings_from_widget_hierarchy (&focus);
 
 			if (focus_bindings) {
 				DEBUG_TRACE (DEBUG::Accelerators, string_compose ("\tusing widget (%3) bindings %1 @ %2 for this event\n", focus_bindings->name(), focus_bindings, gtk_widget_get_name (focus)));
@@ -275,7 +289,9 @@ ARDOUR_UI::key_press_focus_accelerator_handler (Gtk::Window& window, GdkEventKey
 		 * top level tab or a top level window)
 		 */
 
-		DEBUG_TRACE (DEBUG::Accelerators, string_compose ("\tusing top level bindings %1 @ %2 for this event\n", top_level_bindings->name(), top_level_bindings));
+		if (top_level_bindings) {
+			DEBUG_TRACE (DEBUG::Accelerators, string_compose ("\tusing top level bindings %1 @ %2 for this event\n", top_level_bindings->name(), top_level_bindings));
+		}
 
 		if (top_level_bindings && top_level_bindings->activate (k, Bindings::Press)) {
 			DEBUG_TRACE (DEBUG::Accelerators, "\t\thandled\n");

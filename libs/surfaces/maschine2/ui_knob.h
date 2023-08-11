@@ -19,7 +19,8 @@
 #ifndef _ardour_maschine2_knob_h_
 #define _ardour_maschine2_knob_h_
 
-#include <boost/shared_ptr.hpp>
+#include <memory>
+
 #include <sigc++/trackable.h>
 
 #include <cairomm/refptr.h>
@@ -52,9 +53,9 @@ class Maschine2Knob : public sigc::trackable, public ArdourCanvas::Container
 		Maschine2Knob (PBD::EventLoop*, ArdourCanvas::Item*);
 		virtual ~Maschine2Knob ();
 
-		void set_controllable (boost::shared_ptr<ARDOUR::AutomationControl>);
+		void set_controllable (std::shared_ptr<ARDOUR::AutomationControl>);
 		void set_control (M2EncoderInterface*);
-		boost::shared_ptr<ARDOUR::AutomationControl> controllable() const { return _controllable; }
+		std::shared_ptr<ARDOUR::AutomationControl> controllable() const { return _controllable; }
 
 		void render (ArdourCanvas::Rect const &, Cairo::RefPtr<Cairo::Context>) const;
 		void compute_bounding_box() const;
@@ -66,7 +67,7 @@ class Maschine2Knob : public sigc::trackable, public ArdourCanvas::Container
 		PBD::ScopedConnection watch_connection;
 		PBD::ScopedConnection encoder_connection;
 
-		boost::shared_ptr<ARDOUR::AutomationControl> _controllable;
+		std::shared_ptr<ARDOUR::AutomationControl> _controllable;
 		M2EncoderInterface* _ctrl;
 
 	private:

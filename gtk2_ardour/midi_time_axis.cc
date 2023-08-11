@@ -46,6 +46,7 @@
 #include "pbd/stateful_diff_command.h"
 #include "pbd/unwind.h"
 
+#include "gtkmm2ext/colors.h"
 #include "gtkmm2ext/gtk_ui.h"
 #include "gtkmm2ext/utils.h"
 
@@ -72,6 +73,7 @@
 #include "ardour/source.h"
 #include "ardour/track.h"
 #include "ardour/types.h"
+#include "ardour/velocity_control.h"
 
 #include "ardour_message.h"
 #include "automation_line.h"
@@ -97,7 +99,6 @@
 #include "rgb_macros.h"
 #include "selection.h"
 #include "step_editor.h"
-#include "utils.h"
 #include "note_base.h"
 
 #include "ardour/midi_track.h"
@@ -135,6 +136,7 @@ MidiTimeAxisView::MidiTimeAxisView (PublicEditor& ed, Session* sess, ArdourCanva
 	, _step_edit_item (0)
 	, controller_menu (0)
 	, _step_editor (0)
+	, velocity_menu_item (nullptr)
 {
 	_midnam_model_selector.disable_scrolling();
 	_midnam_custom_device_mode_selector.disable_scrolling();
@@ -146,7 +148,7 @@ MidiTimeAxisView::set_note_highlight (uint8_t note) {
 }
 
 void
-MidiTimeAxisView::set_route (boost::shared_ptr<Route> rt)
+MidiTimeAxisView::set_route (std::shared_ptr<Route> rt)
 {
 	_route = rt;
 
@@ -166,7 +168,7 @@ MidiTimeAxisView::set_route (boost::shared_ptr<Route> rt)
 	 */
 	RouteTimeAxisView::set_route (rt);
 
-	_view->apply_color (ARDOUR_UI_UTILS::gdk_color_to_rgba (color()), StreamView::RegionColor);
+	_view->apply_color (Gtkmm2ext::gdk_color_to_rgba (color()), StreamView::RegionColor);
 
 	_note_range_changed_connection.disconnect();
 
@@ -191,6 +193,10 @@ MidiTimeAxisView::set_route (boost::shared_ptr<Route> rt)
 	/* if set_state above didn't create a mute automation child, we need to make one */
 	if (automation_child (MuteAutomation) == 0) {
 		create_automation_child (MuteAutomation, false);
+	}
+
+	if (automation_child (MidiVelocityAutomation) == 0) {
+		create_automation_child (MidiVelocityAutomation, false);
 	}
 
 	if (_route->panner_shell()) {
@@ -571,7 +577,7 @@ MidiTimeAxisView::update_midi_controls_visibility (uint32_t h)
 }
 
 void
-MidiTimeAxisView::set_height (uint32_t h, TrackHeightMode m)
+MidiTimeAxisView::set_height (uint32_t h, TrackHeightMode m, bool from_idle)
 {
 	update_midi_controls_visibility (h);
 
@@ -581,28 +587,57 @@ MidiTimeAxisView::set_height (uint32_t h, TrackHeightMode m)
 		_midi_controls_box.hide();
 	}
 
-	if (h >= KEYBOARD_MIN_HEIGHT) {
-		if (is_track() && _range_scroomer) {
-			_range_scroomer->show();
-		}
-		if (is_track() && _piano_roll_header) {
-			_piano_roll_header->show();
-		}
-	} else {
-		if (is_track() && _range_scroomer) {
-			_range_scroomer->hide();
-		}
-		if (is_track() && _piano_roll_header) {
-			_piano_roll_header->hide();
-		}
-	}
+	update_scroomer_visbility (h, layer_display ());
 
 	/* We need to do this after changing visibility of our stuff, as it will
 	 * eventually trigger a call to Editor::reset_controls_layout_width(),
 	 * which needs to know if we have just shown or hidden a scroomer /
 	 * piano roll.
 	 */
-	RouteTimeAxisView::set_height (h, m);
+	RouteTimeAxisView::set_height (h, m, from_idle);
+}
+
+void
+MidiTimeAxisView::update_scroomer_visbility (uint32_t h, LayerDisplay d)
+{
+	if (!is_track ()) {
+		return;
+	}
+	if (h >= KEYBOARD_MIN_HEIGHT && d == Overlaid) {
+		if (_range_scroomer) {
+			_range_scroomer->show();
+		}
+		if (_piano_roll_header) {
+			_piano_roll_header->show();
+		}
+	} else {
+		if (_range_scroomer) {
+			_range_scroomer->hide();
+		}
+		if (_piano_roll_header) {
+			_piano_roll_header->hide();
+		}
+	}
+}
+
+void
+MidiTimeAxisView::set_layer_display (LayerDisplay d)
+{
+	LayerDisplay prev_layer_display = layer_display ();
+	RouteTimeAxisView::set_layer_display (d);
+	LayerDisplay curr_layer_display = layer_display ();
+
+	if (curr_layer_display == prev_layer_display) {
+		return;
+	}
+
+	uint32_t h = current_height ();
+	update_scroomer_visbility (h, curr_layer_display);
+
+	/* If visibility changed, trigger a call to Editor::reset_controls_layout_width()
+	 * by forcing a redraw via Editor::queue_redisplay_track_views ()
+	 */
+	_stripable->gui_changed ("visible_tracks", (void *) 0); /* EMIT SIGNAL */
 }
 
 void
@@ -691,6 +726,10 @@ MidiTimeAxisView::build_automation_action_menu (bool for_selection)
 	MenuList& automation_items = automation_action_menu->items();
 
 	uint16_t selected_channels = midi_track()->get_playback_channel_mask();
+
+	automation_items.push_back (CheckMenuElem (_("Velocity"), sigc::bind (sigc::mem_fun (*this, &MidiTimeAxisView::toggle_automation_track), MidiVelocityAutomation)));
+	velocity_menu_item = dynamic_cast<Gtk::CheckMenuItem*> (&automation_items.back ());
+	velocity_menu_item->set_active (string_to<bool> (velocity_track->gui_property ("visible")));
 
 	if (selected_channels != 0) {
 
@@ -798,7 +837,7 @@ MidiTimeAxisView::add_channel_command_menu_item (Menu_Helpers::MenuList& items,
 					               sigc::bind (sigc::mem_fun (*this, &RouteTimeAxisView::toggle_automation_track),
 					                           fully_qualified_param)));
 
-				boost::shared_ptr<AutomationTimeAxisView> track = automation_child (fully_qualified_param);
+				std::shared_ptr<AutomationTimeAxisView> track = automation_child (fully_qualified_param);
 				bool visible = false;
 
 				if (track) {
@@ -830,7 +869,7 @@ MidiTimeAxisView::add_channel_command_menu_item (Menu_Helpers::MenuList& items,
 					               sigc::bind (sigc::mem_fun (*this, &RouteTimeAxisView::toggle_automation_track),
 					                           fully_qualified_param)));
 
-				boost::shared_ptr<AutomationTimeAxisView> track = automation_child (fully_qualified_param);
+				std::shared_ptr<AutomationTimeAxisView> track = automation_child (fully_qualified_param);
 				bool visible = false;
 
 				if (track) {
@@ -871,7 +910,7 @@ MidiTimeAxisView::add_single_channel_controller_item(Menu_Helpers::MenuList& ctl
 						fully_qualified_param)));
 			dynamic_cast<Label*> (ctl_items.back().get_child())->set_use_markup (true);
 
-			boost::shared_ptr<AutomationTimeAxisView> track = automation_child (
+			std::shared_ptr<AutomationTimeAxisView> track = automation_child (
 				fully_qualified_param);
 
 			bool visible = false;
@@ -926,7 +965,7 @@ MidiTimeAxisView::add_multi_channel_controller_item(Menu_Helpers::MenuList& ctl_
 				               sigc::bind (sigc::mem_fun (*this, &RouteTimeAxisView::toggle_automation_track),
 				                           fully_qualified_param)));
 
-			boost::shared_ptr<AutomationTimeAxisView> track = automation_child (
+			std::shared_ptr<AutomationTimeAxisView> track = automation_child (
 				fully_qualified_param);
 			bool visible = false;
 
@@ -992,7 +1031,7 @@ MidiTimeAxisView::build_controller_menu ()
 			uint16_t channels  = _route->instrument_info().channels_for_control_list (l->first);
 			bool multi_channel = 0 != (channels & (channels - 1));
 
-			boost::shared_ptr<ControlNameList> name_list = l->second;
+			std::shared_ptr<ControlNameList> name_list = l->second;
 			Menu*                              ctl_menu  = NULL;
 
 			for (ControlNameList::Controls::const_iterator c = name_list->controls().begin();
@@ -1217,7 +1256,7 @@ MidiTimeAxisView::show_all_automation (bool apply_to_selection)
 
 		md.set_title (_("Show All Automation"));
 
-		md.set_secondary_text (_("There are a total of 16 MIDI channels times 128 Control-Change parameters, not including other MIDI controls. Showing all will add more than 2000 automation lanes which is not generally useful. This will take some time and also slow down the GUI signficantly."));
+		md.set_secondary_text (_("There are a total of 16 MIDI channels times 128 Control-Change parameters, not including other MIDI controls. Showing all will add more than 2000 automation lanes which is not generally useful. This will take some time and also slow down the GUI significantly."));
 		if (md.run () != RESPONSE_YES) {
 			return;
 		}
@@ -1250,7 +1289,7 @@ MidiTimeAxisView::show_all_automation (bool apply_to_selection)
 						continue;
 					}
 
-					boost::shared_ptr<ControlNameList> control_names = _route->instrument_info().control_name_list (chn);
+					std::shared_ptr<ControlNameList> control_names = _route->instrument_info().control_name_list (chn);
 					if (!control_names) {
 						continue;
 					}
@@ -1317,13 +1356,12 @@ MidiTimeAxisView::create_automation_child (const Evoral::Parameter& param, bool 
 		return;
 	}
 
-	boost::shared_ptr<AutomationTimeAxisView> track;
-	boost::shared_ptr<AutomationControl> control;
+	std::shared_ptr<AutomationTimeAxisView> track;
+	std::shared_ptr<AutomationControl> control;
 
 	switch (param.type()) {
 
 	case GainAutomation:
-	case BusSendLevel:
 		create_gain_automation_child (param, show);
 		break;
 
@@ -1333,6 +1371,10 @@ MidiTimeAxisView::create_automation_child (const Evoral::Parameter& param, bool 
 
 	case PluginAutomation:
 		/* handled elsewhere */
+		break;
+
+	case MidiVelocityAutomation:
+		create_velocity_automation_child (param, show);
 		break;
 
 	case MidiCCAutomation:
@@ -1354,7 +1396,7 @@ MidiTimeAxisView::create_automation_child (const Evoral::Parameter& param, bool 
 		track.reset (new AutomationTimeAxisView (
 			             _session,
 			             _route,
-			             control ? _route : boost::shared_ptr<Automatable> (),
+			             control ? _route : std::shared_ptr<Automatable> (),
 			             control,
 			             param,
 			             _editor,
@@ -1367,8 +1409,8 @@ MidiTimeAxisView::create_automation_child (const Evoral::Parameter& param, bool 
 			             _route->describe_parameter(param)));
 
 		if (_view) {
-			_view->foreach_regionview (
-				sigc::mem_fun (*track.get(), &TimeAxisView::add_ghost));
+			std::cerr << "Adding ghosts of each MIDI region\n";
+			_view->foreach_regionview (sigc::mem_fun (*track.get(), &TimeAxisView::add_ghost));
 		}
 
 		add_automation_child (param, track, show);
@@ -1524,7 +1566,7 @@ MidiTimeAxisView::toggle_note_selection (uint8_t note)
 }
 
 void
-MidiTimeAxisView::get_per_region_note_selection (list<pair<PBD::ID, set<boost::shared_ptr<Evoral::Note<Temporal::Beats> > > > >& selection)
+MidiTimeAxisView::get_per_region_note_selection (list<pair<PBD::ID, set<std::shared_ptr<Evoral::Note<Temporal::Beats> > > > >& selection)
 {
 	_view->foreach_regionview (
 		sigc::bind (sigc::mem_fun (*this, &MidiTimeAxisView::get_per_region_note_selection_region_view), sigc::ref(selection)));
@@ -1555,12 +1597,12 @@ MidiTimeAxisView::toggle_note_selection_region_view (RegionView* rv, uint8_t not
 }
 
 void
-MidiTimeAxisView::get_per_region_note_selection_region_view (RegionView* rv, list<pair<PBD::ID, std::set<boost::shared_ptr<Evoral::Note<Temporal::Beats> > > > > &selection)
+MidiTimeAxisView::get_per_region_note_selection_region_view (RegionView* rv, list<pair<PBD::ID, std::set<std::shared_ptr<Evoral::Note<Temporal::Beats> > > > > &selection)
 {
 	Evoral::Sequence<Temporal::Beats>::Notes selected;
 	dynamic_cast<MidiRegionView*>(rv)->selection_as_notelist (selected, false);
 
-	std::set<boost::shared_ptr<Evoral::Note<Temporal::Beats> > > notes;
+	std::set<std::shared_ptr<Evoral::Note<Temporal::Beats> > > notes;
 
 	Evoral::Sequence<Temporal::Beats>::Notes::iterator sel_it;
 	for (sel_it = selected.begin(); sel_it != selected.end(); ++sel_it) {
@@ -1587,7 +1629,7 @@ MidiTimeAxisView::set_channel_mode (ChannelMode, uint16_t)
 
 		for (uint32_t chn = 0; chn < 16; ++chn) {
 			Evoral::Parameter fully_qualified_param (MidiCCAutomation, chn, ctl);
-			boost::shared_ptr<AutomationTimeAxisView> track = automation_child (fully_qualified_param);
+			std::shared_ptr<AutomationTimeAxisView> track = automation_child (fully_qualified_param);
 
 			if (!track) {
 				continue;
@@ -1626,6 +1668,10 @@ MidiTimeAxisView::automation_child_menu_item (Evoral::Parameter param)
 		return m;
 	}
 
+	if (param.type() == MidiVelocityAutomation) {
+		return velocity_menu_item;
+	}
+
 	ParameterMenuMap::iterator i = _controller_menu_map.find (param);
 	if (i != _controller_menu_map.end()) {
 		return i->second;
@@ -1639,7 +1685,7 @@ MidiTimeAxisView::automation_child_menu_item (Evoral::Parameter param)
 	return 0;
 }
 
-boost::shared_ptr<MidiRegion>
+std::shared_ptr<MidiRegion>
 MidiTimeAxisView::add_region (timepos_t const & f, timecnt_t const & length, bool commit)
 {
 	Editor* real_editor = dynamic_cast<Editor*> (&_editor);
@@ -1652,11 +1698,11 @@ MidiTimeAxisView::add_region (timepos_t const & f, timecnt_t const & length, boo
 
 	real_editor->snap_to (pos, Temporal::RoundNearest);
 
-	boost::shared_ptr<Source> src = _session->create_midi_source_by_stealing_name (view()->trackview().track());
+	std::shared_ptr<Source> src = _session->create_midi_source_by_stealing_name (view()->trackview().track());
 
 	const Temporal::timecnt_t start (Temporal::BeatTime); /* zero beats */
 
-	boost::shared_ptr<Region> region;
+	std::shared_ptr<Region> region;
 
 	/* Create the (empty) whole-file region that will show up in the source
 	 * list. This is NOT used in any playlists.
@@ -1670,6 +1716,7 @@ MidiTimeAxisView::add_region (timepos_t const & f, timecnt_t const & length, boo
 		plist.add (ARDOUR::Properties::automatic, true);
 		plist.add (ARDOUR::Properties::whole_file, true);
 		plist.add (ARDOUR::Properties::name, PBD::basename_nosuffix(src->name()));
+		plist.add (ARDOUR::Properties::opaque, _session->config.get_draw_opaque_midi_regions());
 
 		region = (RegionFactory::create (src, plist, true));
 	}
@@ -1678,11 +1725,7 @@ MidiTimeAxisView::add_region (timepos_t const & f, timecnt_t const & length, boo
 
 	{
 		PropertyList plist;
-
-		plist.add (ARDOUR::Properties::start, start);
-		plist.add (ARDOUR::Properties::length, length);
 		plist.add (ARDOUR::Properties::name, region->name());
-
 		region = RegionFactory::create (region, plist, false);
 	}
 
@@ -1694,7 +1737,7 @@ MidiTimeAxisView::add_region (timepos_t const & f, timecnt_t const & length, boo
 		real_editor->commit_reversible_command ();
 	}
 
-	return boost::dynamic_pointer_cast<MidiRegion>(region);
+	return std::dynamic_pointer_cast<MidiRegion>(region);
 }
 
 void
@@ -1780,4 +1823,29 @@ void
 MidiTimeAxisView::get_regions_with_selected_data (RegionSelection& rs)
 {
 	midi_view()->get_regions_with_selected_data (rs);
+}
+
+void
+MidiTimeAxisView::create_velocity_automation_child (Evoral::Parameter const &, bool show)
+{
+	std::shared_ptr<AutomationControl> c = midi_track()->velocity_control();
+
+	if (!c) {
+		error << "MidiTrack has no velocity automation, unable to add automation track view." << endmsg;
+		return;
+	}
+
+	velocity_track.reset (new AutomationTimeAxisView (_session,
+	                                                  _route, midi_track(), c, c->parameter(),
+	                                                  _editor,
+	                                                  *this,
+	                                                  false,
+	                                                  parent_canvas,
+	                                                  midi_track()->describe_parameter(c->parameter())));
+
+	if (_view) {
+		_view->foreach_regionview (sigc::mem_fun (*velocity_track.get(), &TimeAxisView::add_ghost));
+	}
+
+	add_automation_child (Evoral::Parameter(MidiVelocityAutomation), velocity_track, show);
 }

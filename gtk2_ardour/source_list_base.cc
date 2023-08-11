@@ -33,40 +33,41 @@ SourceListBase::SourceListBase ()
 void
 SourceListBase::set_session (ARDOUR::Session* s)
 {
+	RegionListBase::set_session (s);
 	if (s) {
 		s->SourceRemoved.connect (_session_connections, MISSING_INVALIDATOR, boost::bind (&SourceListBase::remove_weak_source, this, _1), gui_context ());
 	}
-	RegionListBase::set_session (s);
 }
 
 void
-SourceListBase::remove_weak_source (boost::weak_ptr<ARDOUR::Source> src)
+SourceListBase::remove_weak_source (std::weak_ptr<ARDOUR::Source> src)
 {
-	boost::shared_ptr<ARDOUR::Source> source = src.lock ();
+	std::shared_ptr<ARDOUR::Source> source = src.lock ();
 	if (source) {
 		remove_source (source);
 	}
 }
 
 void
-SourceListBase::remove_source (boost::shared_ptr<ARDOUR::Source> source)
+SourceListBase::remove_source (std::shared_ptr<ARDOUR::Source> source)
 {
 	TreeModel::iterator i;
 	TreeModel::Children rows = _model->children ();
-	for (i = rows.begin (); i != rows.end (); ++i) {
-		boost::shared_ptr<ARDOUR::Region> rr = (*i)[_columns.region];
-		if (rr->source () == source) {
+	for (i = rows.begin (); i != rows.end ();) {
+		std::shared_ptr<ARDOUR::Region> rr = (*i)[_columns.region];
+		if (rr->uses_source (source)) {
 			RegionRowMap::iterator map_it = region_row_map.find (rr);
 			assert (map_it != region_row_map.end () && i == map_it->second);
 			region_row_map.erase (map_it);
-			_model->erase (i);
-			break;
+			i = _model->erase (i);
+		} else {
+			++i;
 		}
 	}
 }
 
 bool
-SourceListBase::list_region (boost::shared_ptr<ARDOUR::Region> region) const
+SourceListBase::list_region (std::shared_ptr<ARDOUR::Region> region) const
 {
 	/* by definition, the Source List only shows whole-file regions
 	 * this roughly equates to Source objects, but preserves the stereo-ness
@@ -82,7 +83,7 @@ SourceListBase::tag_edit (const std::string& path, const std::string& new_text)
 
 	TreeIter row_iter;
 	if ((row_iter = _model->get_iter (path))) {
-		boost::shared_ptr<ARDOUR::Region> region = (*row_iter)[_columns.region];
+		std::shared_ptr<ARDOUR::Region> region = (*row_iter)[_columns.region];
 		if (region) {
 			_session->set_dirty (); // whole-file regions aren't in a playlist to catch property changes, so we need to explicitly set the session dirty
 		}
@@ -96,7 +97,7 @@ SourceListBase::name_edit (const std::string& path, const std::string& new_text)
 
 	TreeIter row_iter;
 	if ((row_iter = _model->get_iter (path))) {
-		boost::shared_ptr<ARDOUR::Region> region = (*row_iter)[_columns.region];
+		std::shared_ptr<ARDOUR::Region> region = (*row_iter)[_columns.region];
 		if (region) {
 			_session->set_dirty (); // whole-file regions aren't in a playlist to catch property changes, so we need to explicitly set the session dirty
 		}

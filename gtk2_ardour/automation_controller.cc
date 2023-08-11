@@ -51,7 +51,7 @@ using namespace ArdourWidgets;
 using PBD::Controllable;
 
 AutomationBarController::AutomationBarController (
-		boost::shared_ptr<AutomationControl> ac,
+		std::shared_ptr<AutomationControl> ac,
 		Adjustment*                          adj)
 	: ArdourWidgets::BarController (*adj, ac)
 	, _controllable (ac)
@@ -69,7 +69,7 @@ AutomationBarController::~AutomationBarController()
 {
 }
 
-AutomationController::AutomationController(boost::shared_ptr<AutomationControl> ac,
+AutomationController::AutomationController(std::shared_ptr<AutomationControl> ac,
                                            Adjustment*                          adj,
                                            bool                                 use_knob)
 	: _widget(NULL)
@@ -140,10 +140,10 @@ AutomationController::~AutomationController()
 {
 }
 
-boost::shared_ptr<AutomationController>
+std::shared_ptr<AutomationController>
 AutomationController::create(const Evoral::Parameter&             param,
                              const ParameterDescriptor&           desc,
-                             boost::shared_ptr<AutomationControl> ac,
+                             std::shared_ptr<AutomationControl> ac,
                              bool use_knob)
 {
 	const double lo        = ac->internal_to_interface(desc.lower, true);
@@ -160,7 +160,7 @@ AutomationController::create(const Evoral::Parameter&             param,
 
 	assert (ac);
 	assert(ac->parameter() == param);
-	return boost::shared_ptr<AutomationController>(new AutomationController(ac, adjustment, use_knob));
+	return std::shared_ptr<AutomationController>(new AutomationController(ac, adjustment, use_knob));
 }
 
 void
@@ -195,7 +195,7 @@ AutomationController::value_adjusted ()
 {
 	if (!_ignore_change) {
 		const double new_val = _controllable->interface_to_internal(_adjustment->get_value(), true);
-		if (_controllable->user_double() != new_val) {
+		if (_controllable->get_double() != new_val) {
 			_controllable->set_value (new_val, Controllable::NoGroup);
 		}
 	}
@@ -212,14 +212,14 @@ AutomationController::value_adjusted ()
 }
 
 void
-AutomationController::start_touch()
+AutomationController::start_touch (int state)
 {
 	_grabbed = true;
 	_controllable->start_touch (timepos_t (_controllable->session().transport_sample()));
 }
 
 void
-AutomationController::end_touch ()
+AutomationController::end_touch (int state)
 {
 	_controllable->stop_touch (timepos_t (_controllable->session().transport_sample()));
 	if (_grabbed) {
@@ -229,20 +229,20 @@ AutomationController::end_touch ()
 }
 
 bool
-AutomationController::button_press (GdkEventButton*)
+AutomationController::button_press (GdkEventButton* ev)
 {
 	ArdourButton* but = dynamic_cast<ArdourButton*>(_widget);
 	if (but) {
-		start_touch ();
+		start_touch (ev->state);
 		_controllable->set_value (but->get_active () ? 0.0 : 1.0, Controllable::UseGroup);
 	}
 	return false;
 }
 
 bool
-AutomationController::button_release (GdkEventButton*)
+AutomationController::button_release (GdkEventButton* ev)
 {
-	end_touch ();
+	end_touch (ev->state);
 	return true;
 }
 
@@ -284,7 +284,7 @@ AutomationController::set_freq_beats(double beats)
 	const ARDOUR::ParameterDescriptor& desc    = _controllable->desc();
 	const ARDOUR::Session&             session = _controllable->session();
 	const samplepos_t                  pos     = session.transport_sample();
-	const Temporal::Tempo&             tempo   = Temporal::TempoMap::use()->metric_at (pos).tempo();
+	const Temporal::Tempo&             tempo   = Temporal::TempoMap::use()->metric_at (timepos_t (pos)).tempo();
 	const double                       bpm     = tempo.note_types_per_minute();
 	const double                       bps     = bpm / 60.0;
 	const double                       freq    = bps / beats;

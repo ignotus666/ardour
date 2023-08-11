@@ -331,8 +331,8 @@ PianoRollHeader::on_expose_event (GdkEventExpose* ev)
 	cr->move_to (0.5f, rect.y);
 	cr->line_to (0.5f, rect.y + rect.height);
 	cr->stroke ();
-	cr->move_to (get_width () - 0.5f, rect.y);
-	cr->line_to (get_width () - 0.5f, rect.y + rect.height);
+	cr->move_to (get_width () + 0.5f, rect.y);
+	cr->line_to (get_width () + 0.5f, rect.y + rect.height);
 	cr->stroke ();
 
 	//pat->add_color_stop_rgb(0.0, 0.33, 0.33, 0.33);
@@ -446,7 +446,7 @@ PianoRollHeader::on_expose_event (GdkEventExpose* ev)
 		/* render the name of which C this is */
 		if (oct_rel == 0) {
 			std::stringstream s;
-			double            y           = floor (_view.note_to_y (i)) - 0.5f;
+			double            y           = floor (_view.note_to_y (i)) + 0.5f;
 			double            note_height = floor (_view.note_to_y (i - 1)) - y;
 
 			int cn = i / 12 - 1;
@@ -682,7 +682,7 @@ PianoRollHeader::on_size_allocate (Gtk::Allocation& a)
 void
 PianoRollHeader::send_note_on (uint8_t note)
 {
-	boost::shared_ptr<ARDOUR::MidiTrack> track = _view.trackview ().midi_track ();
+	std::shared_ptr<ARDOUR::MidiTrack> track = _view.trackview ().midi_track ();
 	MidiTimeAxisView*                    mtv   = dynamic_cast<MidiTimeAxisView*> (&_view.trackview ());
 
 	//cerr << "note on: " << (int) note << endl;
@@ -699,7 +699,7 @@ PianoRollHeader::send_note_on (uint8_t note)
 void
 PianoRollHeader::send_note_off (uint8_t note)
 {
-	boost::shared_ptr<ARDOUR::MidiTrack> track = _view.trackview ().midi_track ();
+	std::shared_ptr<ARDOUR::MidiTrack> track = _view.trackview ().midi_track ();
 	MidiTimeAxisView*                    mtv   = dynamic_cast<MidiTimeAxisView*> (&_view.trackview ());
 
 	if (track) {

@@ -20,9 +20,9 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
-#include <stdint.h>
-
+#include <cstdint>
 #include <sstream>
+
 #include <sys/time.h>
 #include <time.h>
 
@@ -46,6 +46,7 @@ using namespace Gtk;
 using namespace std;
 using namespace MIDI;
 using namespace Glib;
+using namespace ARDOUR;
 
 MidiTracer::MidiTracer ()
 	: ArdourWindow (_("MIDI Tracer"))
@@ -63,12 +64,17 @@ MidiTracer::MidiTracer ()
 	, collect_button (_("Enabled"))
 	, delta_time_button (_("Delta times"))
 {
-	g_atomic_int_set (&_update_queued, 0);
+	_update_queued.store (0);
 
-	std::string portname (string_compose(X_("MIDI Tracer %1"), ++window_count));
-	tracer_port = ARDOUR::AudioEngine::instance()->register_input_port (ARDOUR::DataType::MIDI, portname, false, ARDOUR::IsInput);
+	std::string portname (string_compose(X_("x-MIDI-tracer-%1"), ++window_count));
+	std::shared_ptr<ARDOUR::Port> port = AudioEngine::instance()->register_input_port (DataType::MIDI, portname, false,  PortFlags (IsInput | Hidden | IsTerminal));
+	tracer_port                          = std::dynamic_pointer_cast<MidiPort> (port);
 
-	ARDOUR::AudioEngine::instance()->PortRegisteredOrUnregistered.connect
+	_midi_port_list = ListStore::create (_midi_port_cols);
+	_midi_port_combo.set_model (_midi_port_list);
+	_midi_port_combo.pack_start (_midi_port_cols.pretty_name);
+
+	AudioEngine::instance()->PortRegisteredOrUnregistered.connect
 		(_manager_connection, invalidator (*this), boost::bind (&MidiTracer::ports_changed, this), gui_context());
 
 	VBox* vbox = manage (new VBox);
@@ -78,8 +84,8 @@ MidiTracer::MidiTracer ()
 	pbox->set_spacing (6);
 	pbox->pack_start (*manage (new Label (_("Port:"))), false, false);
 
-	_port_combo.signal_changed().connect (sigc::mem_fun (*this, &MidiTracer::port_changed));
-	pbox->pack_start (_port_combo);
+	_midi_port_combo.signal_changed().connect (sigc::mem_fun (*this, &MidiTracer::port_changed));
+	pbox->pack_start (_midi_port_combo);
 	pbox->show_all ();
 	vbox->pack_start (*pbox, false, false);
 
@@ -131,30 +137,85 @@ MidiTracer::MidiTracer ()
 
 MidiTracer::~MidiTracer()
 {
+	disconnect ();
+	AudioEngine::instance ()->unregister_port (tracer_port);
+}
+
+void
+MidiTracer::on_show ()
+{
+	ArdourWindow::on_show ();
+	collect_toggle ();
+}
+
+void
+MidiTracer::on_hide ()
+{
+	ArdourWindow::on_hide ();
+	disconnect ();
 }
 
 void
 MidiTracer::ports_changed ()
 {
-	string const c = _port_combo.get_active_text ();
-	_port_combo.clear ();
-
-	ARDOUR::PortManager::PortList pl;
-	ARDOUR::AudioEngine::instance()->get_ports (ARDOUR::DataType::MIDI, pl);
-
-	if (pl.empty()) {
-		_port_combo.set_active_text ("");
-		return;
+	TreeModel::iterator r = _midi_port_combo.get_active ();
+	string              cpn;
+	if (r) {
+		cpn = (*r)[_midi_port_cols.port_name];
 	}
 
-	for (ARDOUR::PortManager::PortList::const_iterator i = pl.begin(); i != pl.end(); ++i) {
-		_port_combo.append_text ((*i)->name());
+	_midi_port_list->clear ();
+
+	PortManager::PortList pl;
+	AudioEngine::instance()->get_ports (DataType::MIDI, pl);
+
+	std::vector<std::string> pp;
+	AudioEngine::instance ()->get_physical_inputs (DataType::MIDI, pp, MidiPortFlags (0), MidiPortFlags (MidiPortControl | MidiPortVirtual));
+	/* ideally we'd also list external (JACK) ports
+	 * however there is no convenient API
+	 * `PortManager::get_ports (const string& port_name_pattern, DataType type, PortFlags flags, vector<string>& s)`
+	 * lists ALL ports and we'd need to filter any outputs (sinks), except our own sinks (which can be traced).
+	 */
+
+	size_t nth = 0;
+	size_t act = 0;
+
+	/* physical I/Os first */
+	for (auto const& pn : pp) {
+		if (!cpn.empty () && pn == cpn) {
+			act = nth;
+		}
+		++nth;
+		std::string ppn = AudioEngine::instance()->get_pretty_name_by_name (pn);
+		if (ppn.empty ()) {
+			ppn = pn.substr (pn.find (':') + 1);
+		}
+		TreeModel::Row row               = *_midi_port_list->append ();
+		row[_midi_port_cols.pretty_name] = string_compose (_("HW: %1"), ppn);
+		row[_midi_port_cols.port_name]   = pn;
 	}
 
-	if (c.empty()) {
-		_port_combo.set_active_text (pl.front()->name());
-	} else {
-		_port_combo.set_active_text (c);
+	/* Ardour owned ports */
+	for (auto const& p : pl) {
+		if (p->flags() & Hidden) {
+			continue;
+		}
+		std::string const& pn = p->name ();
+		if (!cpn.empty () && pn == cpn) {
+			act = nth;
+		}
+		++nth;
+		std::string ppn = p->pretty_name (false);
+		if (ppn.empty ()) {
+			ppn = pn.substr (pn.find (':') + 1);
+		}
+		TreeModel::Row row               = *_midi_port_list->append ();
+		row[_midi_port_cols.pretty_name] = ppn;
+		row[_midi_port_cols.port_name]   = pn;
+	}
+
+	if (nth > 0) {
+		_midi_port_combo.set_active (act);
 	}
 }
 
@@ -165,44 +226,56 @@ MidiTracer::port_changed ()
 
 	disconnect ();
 
-	if (_port_combo.get_active_text().empty()) {
+	TreeModel::iterator r = _midi_port_combo.get_active ();
+	if (!r) {
 		return;
 	}
 
-	boost::shared_ptr<ARDOUR::Port> p = AudioEngine::instance()->get_port_by_name (_port_combo.get_active_text());
+	std::string const pn = (*r)[_midi_port_cols.port_name];
+
+	std::shared_ptr<ARDOUR::Port> p = AudioEngine::instance()->get_port_by_name (pn);
 
 	if (!p) {
-		std::cerr << "port not found: " << _port_combo.get_active_text() << "\n";
+		/* connect to external port */
+		if (0 == tracer_port->connect (pn)) {
+			_midi_parser = std::shared_ptr<MIDI::Parser> (new MIDI::Parser);
+			_midi_parser->any.connect_same_thread (_parser_connection, boost::bind (&MidiTracer::tracer, this, _1, _2, _3, _4));
+			tracer_port->set_trace (_midi_parser);
+		} else {
+			std::cerr << "CANNOT TRACE PORT " << pn << "\n";
+		}
 		return;
 	}
 
-	/* The inheritance heirarchy makes this messy. AsyncMIDIPort has two
+	std::shared_ptr<MidiPort> mp = std::dynamic_pointer_cast<MidiPort> (p);
+
+	/* The inheritance hierarchy makes this messy. AsyncMIDIPort has two
 	 * available MIDI::Parsers what we could connect to, ::self_parser()
 	 * (from ARDOUR::MidiPort) and ::parser() from MIDI::Port. One day,
 	 * this mess will all go away ...
 	 */
 
-	/* Some ports have a parser avaiable (Transport Masters and ASYNC ports)
+	/* Some ports have a parser available (Transport Masters and ASYNC ports)
 	 * and some do not. If the port has a parser already, just attach to it.
 	 * If not use our local parser and tell the port that we need it to be called.
 	 */
 
-	boost::shared_ptr<AsyncMIDIPort> async = boost::dynamic_pointer_cast<AsyncMIDIPort> (p);
+	std::shared_ptr<AsyncMIDIPort> async = std::dynamic_pointer_cast<AsyncMIDIPort> (p);
 
 	if (!async) {
 
-		boost::shared_ptr<ARDOUR::MidiPort> mp = boost::dynamic_pointer_cast<ARDOUR::MidiPort> (p);
+		std::shared_ptr<MidiPort> mp = std::dynamic_pointer_cast<MidiPort> (p);
 		if (mp) {
 			if (mp->flags() & TransportMasterPort) {
-				boost::shared_ptr<TransportMaster> tm = TransportMasterManager::instance().master_by_port(boost::dynamic_pointer_cast<ARDOUR::Port> (p));
-				boost::shared_ptr<TransportMasterViaMIDI> tm_midi = boost::dynamic_pointer_cast<TransportMasterViaMIDI> (tm);
+				std::shared_ptr<TransportMaster> tm = TransportMasterManager::instance().master_by_port(std::dynamic_pointer_cast<ARDOUR::Port> (p));
+				std::shared_ptr<TransportMasterViaMIDI> tm_midi = std::dynamic_pointer_cast<TransportMasterViaMIDI> (tm);
 				if (tm_midi) {
 					tm_midi->transport_parser().any.connect_same_thread(_parser_connection, boost::bind (&MidiTracer::tracer, this, _1, _2, _3, _4));
 				}
-			}
-			else {
-				my_parser.any.connect_same_thread (_parser_connection, boost::bind (&MidiTracer::tracer, this, _1, _2, _3, _4));
-				mp->set_trace (&my_parser);
+			} else {
+				_midi_parser = std::shared_ptr<MIDI::Parser> (new MIDI::Parser);
+				_midi_parser->any.connect_same_thread (_parser_connection, boost::bind (&MidiTracer::tracer, this, _1, _2, _3, _4));
+				mp->set_trace (_midi_parser);
 				traced_port = mp;
 			}
 		}
@@ -217,10 +290,14 @@ MidiTracer::disconnect ()
 {
 	_parser_connection.disconnect ();
 
+	tracer_port->disconnect_all ();
+	tracer_port->set_trace (std::weak_ptr<MIDI::Parser>());
+
 	if (traced_port) {
-		traced_port->set_trace (0);
+		traced_port->set_trace (std::weak_ptr<MIDI::Parser>());
 		traced_port.reset ();
 	}
+	_midi_parser.reset ();
 }
 
 void
@@ -307,6 +384,9 @@ MidiTracer::tracer (Parser&, MIDI::byte* msg, size_t len, samplecnt_t now)
 			case 0xf8:
 				s += snprintf (&buf[s], bufsize, "%16s\n", "Clock");
 				break;
+			case 0xf9:
+				s += snprintf (&buf[s], bufsize, "%16s\n", "Tick");
+				break;
 			case 0xfa:
 				s += snprintf (&buf[s], bufsize, "%16s\n", "Start");
 				break;
@@ -335,18 +415,63 @@ MidiTracer::tracer (Parser&, MIDI::byte* msg, size_t len, samplecnt_t now)
 					&buf[s], bufsize, " MMC locate to %02d:%02d:%02d:%02d.%02d\n",
 					msg[7], msg[8], msg[9], msg[10], msg[11]
 					);
+			} else if (cmd == 0x47 && msg[5] == 0x03) {
+				uint8_t sh = msg[6];
+				uint8_t sm = msg[7];
+				uint8_t sl = msg[8];
+
+				bool   forward    = sh & (1<<6) ? false : true;
+				size_t left_shift = sh & 0x38;
+				size_t integral   = ((sh & 0x7) << left_shift) | (sm >> (7 - left_shift));
+				size_t fractional = ((sm << left_shift) << 7) | sl;
+
+				float shuttle_speed = integral + ((float)fractional / (1 << (14 - left_shift)));
+
+				s += snprintf (&buf[s], bufsize, " MMC Shuttle %s%f\n", forward ? "+" : "-", shuttle_speed);
 			} else {
 				std::string name;
-				if (cmd == 0x1) {
-					name = "STOP";
-				} else if (cmd == 0x3) {
-					name = "DEFERRED PLAY";
-				} else if (cmd == 0x6) {
-					name = "RECORD STROBE";
-				} else if (cmd == 0x7) {
-					name = "RECORD EXIT";
-				} else if (cmd == 0x8) {
-					name = "RECORD PAUSE";
+				switch (cmd) {
+					case 0x01:
+						name = "Stop";
+						break;
+					case 0x02:
+						name = "Play";
+						break;
+					case 0x03:
+						name = "Deferred Play";
+						break;
+					case 0x04:
+						name = "Fast Forward";
+						break;
+					case 0x05:
+						name = "Rewind";
+						break;
+					case 0x06:
+						name = "Record Strobe";
+						break;
+					case 0x07:
+						name = "Record Exit";
+						break;
+					case 0x08:
+						name = "Record Pause";
+						break;
+					case 0x09:
+						name = "Pause";
+						break;
+					case 0x0a:
+						name = "Eject";
+						break;
+					case 0x0b:
+						name = "Chase";
+						break;
+					case 0x40:
+						name = "Write (ARM Tracks)";
+						break;
+					case 0x0d:
+						name = "MMC Reset";
+						break;
+					default:
+						break;
 				}
 				if (!name.empty()) {
 					s += snprintf (&buf[s], bufsize, " MMC command %s\n", name.c_str());
@@ -431,7 +556,8 @@ MidiTracer::tracer (Parser&, MIDI::byte* msg, size_t len, samplecnt_t now)
 
 	fifo.write (&buf, 1);
 
-	if (g_atomic_int_compare_and_exchange (&_update_queued, 0, 1)) {
+	int canderef (0);
+	if (_update_queued.compare_exchange_strong (canderef, 1)) {
 		gui_context()->call_slot (invalidator (*this), boost::bind (&MidiTracer::update, this));
 	}
 }
@@ -440,7 +566,7 @@ void
 MidiTracer::update ()
 {
 	bool updated = false;
-	g_atomic_int_set (&_update_queued, 0);
+	_update_queued.store (0);
 
 	RefPtr<TextBuffer> buf (text.get_buffer());
 

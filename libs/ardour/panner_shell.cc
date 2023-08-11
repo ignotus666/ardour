@@ -66,7 +66,7 @@ using namespace std;
 using namespace ARDOUR;
 using namespace PBD;
 
-PannerShell::PannerShell (string name, Session& s, boost::shared_ptr<Pannable> p, Temporal::TimeDomain td, bool is_send)
+PannerShell::PannerShell (string name, Session& s, std::shared_ptr<Pannable> p, Temporal::TimeDomainProvider const & tdp, bool is_send)
 	: SessionObject (s, name)
 	, _pannable_route (p)
 	, _is_send (is_send)
@@ -78,7 +78,7 @@ PannerShell::PannerShell (string name, Session& s, boost::shared_ptr<Pannable> p
 	, _force_reselect (false)
 {
 	if (is_send) {
-		_pannable_internal.reset(new Pannable (s, td));
+		_pannable_internal.reset(new Pannable (s, tdp));
 		if (Config->get_link_send_and_route_panner()) {
 			_panlinked = true;
 		} else {
@@ -133,7 +133,7 @@ PannerShell::configure_io (ChanCount in, ChanCount out)
 
 	DEBUG_TRACE (DEBUG::Panning, string_compose (_("select panner: %1\n"), pi->descriptor.name.c_str()));
 
-	boost::shared_ptr<Speakers> speakers = _session.get_speakers ();
+	std::shared_ptr<Speakers> speakers = _session.get_speakers ();
 
 	if (nouts != speakers->size()) {
 		/* hmm, output count doesn't match session speaker count so
@@ -159,7 +159,7 @@ PannerShell::configure_io (ChanCount in, ChanCount out)
 }
 
 XMLNode&
-PannerShell::get_state ()
+PannerShell::get_state () const
 {
 	XMLNode* node = new XMLNode ("PannerShell");
 

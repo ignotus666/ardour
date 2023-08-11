@@ -72,7 +72,6 @@ public:
 	};
 
 	Gtk::Adjustment note_range_adjustment;
-	ArdourCanvas::Container* midi_underlay_group;
 
 	void set_note_range(VisibleNoteRange r);
 
@@ -105,7 +104,7 @@ public:
 
 	sigc::signal<void> NoteRangeChanged;
 
-	RegionView* create_region_view (boost::shared_ptr<ARDOUR::Region>, bool, bool);
+	RegionView* create_region_view (std::shared_ptr<ARDOUR::Region>, bool, bool);
 
 	bool paste (Temporal::timepos_t const & pos, const Selection& selection, PasteContext& ctx);
 
@@ -114,25 +113,31 @@ public:
 	void suspend_updates ();
 	void resume_updates ();
 
+	ArdourCanvas::Container* region_canvas () const { return _region_group; }
+
+	void parameter_changed (std::string const &);
+
 protected:
 	void setup_rec_box ();
 	void update_rec_box ();
 
+	ArdourCanvas::Container* _region_group;
+
 private:
 
 	RegionView* add_region_view_internal (
-			boost::shared_ptr<ARDOUR::Region>,
+			std::shared_ptr<ARDOUR::Region>,
 			bool wait_for_waves,
 			bool recording = false);
 
 	void display_region(MidiRegionView* region_view, bool load_model);
-	void display_track (boost::shared_ptr<ARDOUR::Track> tr);
+	void display_track (std::shared_ptr<ARDOUR::Track> tr);
 
 	void update_contents_height ();
 
 	void draw_note_lines();
 	bool update_data_note_range(uint8_t min, uint8_t max);
-	void update_contents_metrics(boost::shared_ptr<ARDOUR::Region> r);
+	void update_contents_metrics(std::shared_ptr<ARDOUR::Region> r);
 
 	void color_handler ();
 

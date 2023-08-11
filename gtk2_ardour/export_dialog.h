@@ -66,6 +66,7 @@ public:
 	enum Responses {
 		RESPONSE_RT,
 		RESPONSE_FAST,
+		RESPONSE_ANALYZE,
 		RESPONSE_CANCEL
 	};
 
@@ -75,8 +76,8 @@ protected:
 		Gtk::Dialog::on_response (response_id);
 	}
 
-	typedef boost::shared_ptr<ARDOUR::ExportHandler> HandlerPtr;
-	typedef boost::shared_ptr<ARDOUR::ExportProfileManager> ManagerPtr;
+	typedef std::shared_ptr<ARDOUR::ExportHandler> HandlerPtr;
+	typedef std::shared_ptr<ARDOUR::ExportProfileManager> ManagerPtr;
 
 	ARDOUR::ExportProfileManager::ExportType type;
 	HandlerPtr      handler;
@@ -93,7 +94,7 @@ protected:
 	boost::scoped_ptr<ExportChannelSelector>  channel_selector;
 	boost::scoped_ptr<ExportFileNotebook>     file_notebook;
 
-	boost::shared_ptr<SoundcloudExportSelector> soundcloud_selector;
+	std::shared_ptr<SoundcloudExportSelector> soundcloud_selector;
 
 	Gtk::VBox                                 warning_widget;
 	Gtk::VBox                                 progress_widget;
@@ -112,7 +113,7 @@ private:
 	void update_warnings_and_example_filename ();
 	void show_conflicting_files ();
 
-	void do_export ();
+	void do_export (bool analysis_only);
 
 	void maybe_set_session_dirty ();
 
@@ -122,12 +123,13 @@ private:
 	void show_progress ();
 	gint progress_timeout ();
 
-	typedef boost::shared_ptr<ARDOUR::ExportStatus> StatusPtr;
+	typedef std::shared_ptr<ARDOUR::ExportStatus> StatusPtr;
 
 	PublicEditor &  editor;
 	StatusPtr       status;
 
-
+	typedef std::map<samplepos_t, std::vector<std::string>> ReImportMap;
+	ReImportMap _files_to_reimport;
 
 	/* Warning area */
 
@@ -151,13 +153,15 @@ private:
 	float previous_progress; // Needed for gtk bug workaround
 
 	bool _initialized;
+	bool _analysis_only;
 
 	void soundcloud_upload_progress(double total, double now, std::string title);
 
 	/* Buttons */
 
-	Gtk::Button *           cancel_button;
-	Gtk::Button *           export_button;
+	Gtk::Button* cancel_button;
+	Gtk::Button* export_button;
+	Gtk::Button* analyze_button;
 
 };
 

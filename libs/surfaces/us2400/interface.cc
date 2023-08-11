@@ -32,7 +32,7 @@ using namespace ArdourSurface;
 using namespace US2400;
 
 static ControlProtocol*
-new_us2400_protocol (ControlProtocolDescriptor*, Session* s)
+new_us2400_protocol (Session* s)
 {
 	US2400Protocol* mcp = 0;
 
@@ -50,7 +50,7 @@ new_us2400_protocol (ControlProtocolDescriptor*, Session* s)
 }
 
 static void
-delete_us2400_protocol (ControlProtocolDescriptor*, ControlProtocol* cp)
+delete_us2400_protocol (ControlProtocol* cp)
 {
 	try
 	{
@@ -62,40 +62,15 @@ delete_us2400_protocol (ControlProtocolDescriptor*, ControlProtocol* cp)
 	}
 }
 
-/**
-	This is called on startup to check whether the lib should be loaded.
-
-	So anything that can be changed in the UI should not be used here to
-	prevent loading of the lib.
-*/
-static bool
-probe_us2400_protocol (ControlProtocolDescriptor*)
-{
-	return US2400Protocol::probe();
-}
-
-static void*
-us2400_request_buffer_factory (uint32_t num_requests)
-{
-	return US2400Protocol::request_factory (num_requests);
-}
-
-// Field names commented out by JE - 06-01-2010
 static ControlProtocolDescriptor us2400_descriptor = {
-	/*name :              */   "Tascam US-2400",
-	/*id :                */   "uri://ardour.org/surfaces/us2400:0",
-	/*ptr :               */   0,
-	/*module :            */   0,
-	/*mandatory :         */   0,
-	// actually, the surface does support feedback, but all this
-	// flag does is show a submenu on the UI, which is useless for the mackie
-	// because feedback is always on. In any case, who'd want to use the
-	// mcu without the motorised sliders doing their thing?
-	/*supports_feedback : */   false,
-	/*probe :             */   probe_us2400_protocol,
-	/*initialize :        */   new_us2400_protocol,
-	/*destroy :           */   delete_us2400_protocol,
-	/*request_buffer_factory */ us2400_request_buffer_factory
+	/* name       */ "Tascam US-2400",
+	/* id         */ "uri://ardour.org/surfaces/us2400:0",
+	/* module     */ 0,
+	/* avilable   */ 0,
+	/* probe_port */ 0,
+	/* match usb  */ 0,
+	/* initialize */ new_us2400_protocol,
+	/* destroy    */ delete_us2400_protocol,
 };
 
 extern "C" ARDOURSURFACE_API ControlProtocolDescriptor* protocol_descriptor () { return &us2400_descriptor; }

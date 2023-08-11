@@ -44,6 +44,7 @@
 #include "ardour/session.h"
 
 #include "control_protocol/control_protocol.h"
+#include "control_protocol/basic_ui.h"
 
 #include "gtkmm2ext/keyboard.h"
 #include "gtkmm2ext/utils.h"
@@ -60,6 +61,7 @@
 #include "gui_object.h"
 #include "gui_thread.h"
 #include "keyeditor.h"
+#include "library_download_dialog.h"
 #include "location_ui.h"
 #include "lua_script_manager.h"
 #include "luawindow.h"
@@ -102,6 +104,12 @@ ARDOUR_UI::set_session (Session *s)
 {
 	SessionHandlePtr::set_session (s);
 
+	if (_basic_ui) {
+		delete _basic_ui;
+	}
+
+	_basic_ui = new BasicUI (*s);
+
 	/* adjust sensitivity of menu bar options to reflect presence/absence
 	 * of session
 	 */
@@ -118,6 +126,7 @@ ARDOUR_UI::set_session (Session *s)
 	transport_ctrl.set_session (s);
 
 	update_path_label ();
+	update_sample_rate ();
 
 	if (!_session) {
 		WM::Manager::instance().set_session (s);
@@ -143,6 +152,7 @@ ARDOUR_UI::set_session (Session *s)
 	}
 
 	WM::Manager::instance().set_session (s);
+	apply_window_settings (false);
 
 	AutomationWatch::instance().set_session (s);
 
@@ -219,8 +229,6 @@ ARDOUR_UI::set_session (Session *s)
 	   back to the session XML ("Extra") state.
 	 */
 
-	AudioClock::ModeChanged.connect (sigc::mem_fun (*this, &ARDOUR_UI::store_clock_modes));
-
 	Glib::signal_idle().connect (sigc::mem_fun (*this, &ARDOUR_UI::first_idle));
 
 	start_clocking ();
@@ -273,7 +281,7 @@ ARDOUR_UI::set_session (Session *s)
 		ArdourMeter::ResetGroupPeakDisplays.connect (sigc::mem_fun(*this, &ARDOUR_UI::reset_group_peak_display));
 
 		editor_meter_peak_display.set_name ("meterbridge peakindicator");
-		editor_meter_peak_display.unset_flags (Gtk::CAN_FOCUS);
+		editor_meter_peak_display.set_can_focus (false);
 		editor_meter_peak_display.set_size_request (-1, std::max (5.f, std::min (12.f, rintf (8.f * UIConfiguration::instance().get_ui_scale()))) );
 		editor_meter_peak_display.set_corner_radius (1.0);
 
@@ -411,7 +419,7 @@ ARDOUR_UI::toggle_editor_and_mixer ()
 		if (!mwin) {
 			/* mixer's own window doesn't exist */
 			mixer->make_visible ();
-		} else if (!mwin->is_mapped ()) {
+		} else if (!mwin->get_mapped ()) {
 			/* mixer's own window exists but isn't mapped */
 			mixer->make_visible ();
 		} else {
@@ -435,7 +443,7 @@ ARDOUR_UI::toggle_editor_and_mixer ()
 		if (!ewin) {
 			/* mixer's own window doesn't exist */
 			editor->make_visible ();
-		} else if (!ewin->is_mapped ()) {
+		} else if (!ewin->get_mapped ()) {
 			/* editor's own window exists but isn't mapped */
 			editor->make_visible ();
 		} else {
@@ -1004,6 +1012,19 @@ ARDOUR_UI::create_virtual_keyboard_window ()
 	return vkbd;
 }
 
+void
+ARDOUR_UI::show_library_download_window ()
+{
+	library_download_window->show ();
+}
+
+LibraryDownloadDialog*
+ARDOUR_UI::create_library_download_window ()
+{
+	LibraryDownloadDialog* ldd = new LibraryDownloadDialog ();
+	return ldd;
+}
+
 LuaWindow*
 ARDOUR_UI::create_luawindow ()
 {
@@ -1026,6 +1047,7 @@ ARDOUR_UI::handle_locations_change (Location *)
 bool
 ARDOUR_UI::tabbed_window_state_event_handler (GdkEventWindowState* ev, void* object)
 {
+#ifndef __APPLE__
 	if (object == editor) {
 
 		if ((ev->changed_mask & GDK_WINDOW_STATE_FULLSCREEN) &&
@@ -1056,6 +1078,7 @@ ARDOUR_UI::tabbed_window_state_event_handler (GdkEventWindowState* ev, void* obj
 			}
 		}
 	}
+#endif
 
 	return false;
 }

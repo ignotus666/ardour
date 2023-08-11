@@ -19,9 +19,8 @@
 #ifndef __ardour_solo_isolate_control_h__
 #define __ardour_solo_isolate_control_h__
 
+#include <memory>
 #include <string>
-
-#include <boost/shared_ptr.hpp>
 
 #include "ardour/slavable_automation_control.h"
 #include "ardour/libardour_visibility.h"
@@ -37,7 +36,7 @@ class Muteable;
 class LIBARDOUR_API SoloIsolateControl : public SlavableAutomationControl
 {
   public:
-	SoloIsolateControl (Session& session, std::string const & name, Soloable& soloable, Temporal::TimeDomain);
+	SoloIsolateControl (Session& session, std::string const & name, Soloable& soloable, Temporal::TimeDomainProvider const &);
 
 	double get_value () const;
 
@@ -70,10 +69,10 @@ class LIBARDOUR_API SoloIsolateControl : public SlavableAutomationControl
 	bool solo_isolated() const { return self_solo_isolated() || solo_isolated_by_upstream(); }
 
 	int set_state (XMLNode const&, int);
-	XMLNode& get_state ();
+	XMLNode& get_state () const;
 
   protected:
-	void master_changed (bool from_self, PBD::Controllable::GroupControlDisposition gcd, boost::weak_ptr<AutomationControl>);
+	void master_changed (bool from_self, PBD::Controllable::GroupControlDisposition gcd, std::weak_ptr<AutomationControl>);
 	void actually_set_value (double, PBD::Controllable::GroupControlDisposition group_override);
 
   private:

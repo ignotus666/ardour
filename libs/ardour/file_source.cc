@@ -557,12 +557,6 @@ FileSource::replace_file (const std::string& newpath)
 	_name = Glib::path_get_basename (newpath);
 }
 
-void
-FileSource::inc_use_count ()
-{
-        Source::inc_use_count ();
-}
-
 bool
 FileSource::is_stub () const
 {
@@ -584,7 +578,7 @@ FileSource::is_stub () const
 int
 FileSource::rename (const string& newpath)
 {
-	Glib::Threads::Mutex::Lock lm (_lock);
+	WriterLock lm (_lock);
 	string oldpath = _path;
 
 	// Test whether newpath exists, if yes notify the user but continue.

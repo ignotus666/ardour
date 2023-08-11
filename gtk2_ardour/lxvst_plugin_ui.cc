@@ -33,8 +33,8 @@ using namespace Gtk;
 using namespace ARDOUR;
 using namespace PBD;
 
-LXVSTPluginUI::LXVSTPluginUI (boost::shared_ptr<PluginInsert> pi, boost::shared_ptr<VSTPlugin> lxvp)
-	: VSTPluginUI (pi, lxvp)
+LXVSTPluginUI::LXVSTPluginUI (std::shared_ptr<PlugInsertBase> pib, std::shared_ptr<VSTPlugin> lxvp)
+	: VSTPluginUI (pib, lxvp)
 {
 	vstfx_run_editor (_vst->state ());
 }
@@ -42,6 +42,7 @@ LXVSTPluginUI::LXVSTPluginUI (boost::shared_ptr<PluginInsert> pi, boost::shared_
 LXVSTPluginUI::~LXVSTPluginUI ()
 {
 	_resize_connection.disconnect();
+	vstfx_destroy_editor (_vst->state ());
 
 	// plugin destructor destroys the custom GUI, via the vstfx engine,
 	// and then our PluginUIWindow does the rest

@@ -29,8 +29,8 @@ Legatize::Legatize(bool shrink_only)
 Legatize::~Legatize ()
 {}
 
-Command*
-Legatize::operator()(boost::shared_ptr<ARDOUR::MidiModel> model,
+PBD::Command*
+Legatize::operator()(std::shared_ptr<ARDOUR::MidiModel> model,
                      Temporal::Beats                      position,
                      std::vector<Legatize::Notes>&        seqs)
 {

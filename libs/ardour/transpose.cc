@@ -24,8 +24,8 @@ Transpose::Transpose(int semitones)
 	: _semitones(semitones)
 {}
 
-Command*
-Transpose::operator()(boost::shared_ptr<MidiModel> model,
+PBD::Command*
+Transpose::operator()(std::shared_ptr<MidiModel> model,
                       Temporal::Beats              position,
                       std::vector<Notes>&          seqs)
 {

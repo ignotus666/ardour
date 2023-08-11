@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "temporal/beats.h"
+#include "temporal/domainswap.h"
 #include "temporal/range.h"
 
 #include "pbd/string_convert.h"
@@ -46,7 +47,7 @@ class MidiChannelFilter;
 class MidiFilter;
 class MidiModel;
 class MidiSource;
-class MidiStateTracker;
+class MidiNoteTracker;
 class Playlist;
 class Route;
 class Session;
@@ -54,17 +55,15 @@ class ThawList;
 
 template<typename T> class MidiRingBuffer;
 
-class LIBARDOUR_API MidiRegion : public Region
+class LIBARDOUR_API MidiRegion : public Region, public Temporal::TimeDomainSwapper
 {
   public:
 	~MidiRegion();
 
-	bool do_export (std::string path) const;
+	std::shared_ptr<MidiRegion> clone (std::string path = std::string()) const;
+	std::shared_ptr<MidiRegion> clone (std::shared_ptr<MidiSource>, ThawList* tl = 0) const;
 
-	boost::shared_ptr<MidiRegion> clone (std::string path = std::string()) const;
-	boost::shared_ptr<MidiRegion> clone (boost::shared_ptr<MidiSource>, ThawList* tl = 0) const;
-
-	boost::shared_ptr<MidiSource> midi_source (uint32_t n=0) const;
+	std::shared_ptr<MidiSource> midi_source (uint32_t n=0) const;
 
 	timecnt_t read_at (Evoral::EventSink<samplepos_t>& dst,
 	                   timepos_t const & position,
@@ -73,7 +72,7 @@ class LIBARDOUR_API MidiRegion : public Region
 	                   MidiCursor& cursor,
 	                   uint32_t  chan_n = 0,
 	                   NoteMode  mode = Sustained,
-	                   MidiStateTracker* tracker = 0,
+	                   MidiNoteTracker* tracker = 0,
 	                   MidiChannelFilter* filter = 0) const;
 
 	timecnt_t master_read_at (MidiRingBuffer<samplepos_t>& dst,
@@ -84,25 +83,27 @@ class LIBARDOUR_API MidiRegion : public Region
 	                          uint32_t  chan_n = 0,
 	                          NoteMode  mode = Sustained) const;
 
-	XMLNode& state ();
+	void merge (std::shared_ptr<MidiRegion const>);
+
+	XMLNode& state () const;
 	int      set_state (const XMLNode&, int version);
 
-	int separate_by_channel (std::vector< boost::shared_ptr<Region> >&) const;
+	int separate_by_channel (std::vector< std::shared_ptr<Region> >&) const;
 
 	/* automation */
 
-	boost::shared_ptr<Evoral::Control> control(const Evoral::Parameter& id, bool create=false);
+	std::shared_ptr<Evoral::Control> control(const Evoral::Parameter& id, bool create=false);
 
-	virtual boost::shared_ptr<const Evoral::Control> control(const Evoral::Parameter& id) const;
+	virtual std::shared_ptr<const Evoral::Control> control(const Evoral::Parameter& id) const;
 
 	/* export */
 
-	boost::shared_ptr<MidiModel> model();
-	boost::shared_ptr<const MidiModel> model() const;
+	bool do_export (std::string const& path) const;
+
+	std::shared_ptr<MidiModel> model();
+	std::shared_ptr<const MidiModel> model() const;
 
 	void fix_negative_start ();
-
-	void clobber_sources (boost::shared_ptr<MidiSource> source);
 
 	int render (Evoral::EventSink<samplepos_t>& dst,
 	            uint32_t                        chan_n,
@@ -116,6 +117,9 @@ class LIBARDOUR_API MidiRegion : public Region
 	                  timecnt_t const &               read_length,
 	                  MidiChannelFilter*              filter) const;
 
+	void globally_change_time_domain (Temporal::TimeDomain from, Temporal::TimeDomain to);
+	void swap_domain (Temporal::TimeDomain, Temporal::TimeDomain);
+
   protected:
 
 	virtual bool can_trim_start_before_source_start () const {
@@ -126,8 +130,8 @@ class LIBARDOUR_API MidiRegion : public Region
 	friend class RegionFactory;
 
 	MidiRegion (const SourceList&);
-	MidiRegion (boost::shared_ptr<const MidiRegion>);
-	MidiRegion (boost::shared_ptr<const MidiRegion>, timecnt_t const & offset);
+	MidiRegion (std::shared_ptr<const MidiRegion>);
+	MidiRegion (std::shared_ptr<const MidiRegion>, timecnt_t const & offset);
 
 	timecnt_t _read_at (const SourceList&, Evoral::EventSink<samplepos_t>& dst,
 	                    timepos_t const & position,
@@ -136,7 +140,7 @@ class LIBARDOUR_API MidiRegion : public Region
 	                    MidiCursor& cursor,
 	                    uint32_t chan_n = 0,
 	                    NoteMode mode = Sustained,
-	                    MidiStateTracker* tracker = 0,
+	                    MidiNoteTracker* tracker = 0,
 	                    MidiChannelFilter* filter = 0) const;
 
 	void register_properties ();

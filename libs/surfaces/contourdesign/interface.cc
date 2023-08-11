@@ -30,7 +30,7 @@ using namespace PBD;
 using namespace ArdourSurface;
 
 static ControlProtocol*
-new_contourdesign_protocol (ControlProtocolDescriptor*, Session* s)
+new_contourdesign_protocol (Session* s)
 {
 	ContourDesignControlProtocol* wmcp = new ContourDesignControlProtocol (*s);
 	wmcp->set_active (true);
@@ -38,34 +38,21 @@ new_contourdesign_protocol (ControlProtocolDescriptor*, Session* s)
 }
 
 static void
-delete_contourdesign_protocol (ControlProtocolDescriptor* /*descriptor*/, ControlProtocol* cp)
+delete_contourdesign_protocol (ControlProtocol* cp)
 {
 	delete cp;
 }
 
-static bool
-probe_contourdesign_protocol (ControlProtocolDescriptor*)
-{
-	return ContourDesignControlProtocol::probe ();
-}
-
-static void*
-contourdesign_request_buffer_factory (uint32_t num_requests)
-{
-	return ContourDesignControlProtocol::request_factory (num_requests);
-}
 
 static ControlProtocolDescriptor contourdesign_descriptor = {
-	/* name :                   */ "ContourDesign",
-	/* id :                     */ "uri://ardour.org/surfaces/contourdesign:0",
-	/* ptr :                    */ 0,
-	/* module :                 */ 0,
-	/* mandatory :              */ 0,
-	/* supports_feedback :      */ false,
-	/* probe :                  */ probe_contourdesign_protocol,
-	/* initialize :             */ new_contourdesign_protocol,
-	/* destroy :                */ delete_contourdesign_protocol,
-	/* request_buffer_factory : */ contourdesign_request_buffer_factory
+	/* name       */ "ContourDesign",
+	/* id         */ "uri://ardour.org/surfaces/contourdesign:0",
+	/* module     */ 0,
+	/* available  */ ContourDesignControlProtocol::available,
+	/* probe port */ 0,
+	/* match usb  */ ContourDesignControlProtocol::match_usb,
+	/* initialize */ new_contourdesign_protocol,
+	/* destroy    */ delete_contourdesign_protocol,
 };
 
 extern "C" ARDOURSURFACE_API ControlProtocolDescriptor* protocol_descriptor () { return &contourdesign_descriptor; }

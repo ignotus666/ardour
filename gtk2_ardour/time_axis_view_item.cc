@@ -73,7 +73,7 @@ double TimeAxisViewItem::NAME_HIGHLIGHT_THRESH;
 void
 TimeAxisViewItem::set_constant_heights ()
 {
-	NAME_FONT = Pango::FontDescription (UIConfiguration::instance().get_SmallFont());
+	NAME_FONT = Pango::FontDescription (UIConfiguration::instance().get_ArdourSmallFont());
 
 	Gtk::Window win;
 	Gtk::Label foo;
@@ -84,7 +84,7 @@ TimeAxisViewItem::set_constant_heights ()
 	int height = 0;
 
 	layout->set_font_description (NAME_FONT);
-	get_pixel_size (layout, width, height);
+	layout->get_pixel_size (width, height);
 
 	layout = foo.create_pango_layout (X_("H")); /* just the ascender */
 
@@ -303,7 +303,6 @@ TimeAxisViewItem::set_position(timepos_t const & pos, void* src, double* delta)
 	}
 
 	group->set_x_position (new_unit_pos);
-	PositionChanged (time_position, src); /* EMIT_SIGNAL */
 
 	return true;
 }
@@ -347,7 +346,6 @@ TimeAxisViewItem::set_duration (timecnt_t const & dur, void* src)
 
 	reset_width_dependent_items (end_pixel - first_pixel);
 
-	DurationChanged (dur, src); /* EMIT_SIGNAL */
 	return true;
 }
 
@@ -368,7 +366,6 @@ void
 TimeAxisViewItem::set_max_duration(timecnt_t const & dur, void* src)
 {
 	max_item_duration = dur;
-	MaxDurationChanged(max_item_duration, src); /* EMIT_SIGNAL */
 }
 
 /** @return the maximum duration that this item may have */
@@ -388,10 +385,9 @@ void
 TimeAxisViewItem::set_min_duration(timecnt_t const & dur, void* src)
 {
 	min_item_duration = dur;
-	MinDurationChanged(max_item_duration, src); /* EMIT_SIGNAL */
 }
 
-/** @return the minimum duration that this item mey have */
+/** @return the minimum duration that this item may have */
 timecnt_t
 TimeAxisViewItem::get_min_duration() const
 {
@@ -410,7 +406,6 @@ TimeAxisViewItem::set_position_locked(bool yn, void* src)
 {
 	position_locked = yn;
 	set_trim_handle_colors();
-	PositionLockChanged (position_locked, src); /* EMIT_SIGNAL */
 }
 
 /** @return true if this item is locked to its current position */
@@ -472,7 +467,6 @@ TimeAxisViewItem::set_item_name(std::string new_name, void* src)
 	if (new_name != item_name) {
 		std::string temp_name = item_name;
 		item_name = new_name;
-		NameChanged (item_name, temp_name, src); /* EMIT_SIGNAL */
 	}
 }
 
@@ -685,8 +679,7 @@ TimeAxisViewItem::get_fill_color () const
 		return UIConfiguration::instance().color ("selected region base");
 	} else if (_recregion) {
 		return UIConfiguration::instance().color ("recording rect");
-	} else if ((!UIConfiguration::instance().get_show_name_highlight() || high_enough_for_name) &&
-	           !UIConfiguration::instance().get_color_regions_using_track_color()) {
+	} else if (!UIConfiguration::instance().get_color_regions_using_track_color()) {
 		return UIConfiguration::instance().color_mod (fill_color_name, mod_name);
 	}
 	return UIConfiguration::instance().color_mod (fill_color, mod_name);
@@ -902,7 +895,7 @@ TimeAxisViewItem::manage_name_text ()
 
 /**
  * Callback used to remove this time axis item during the gtk idle loop.
- * This is used to avoid deleting the obejct while inside the remove_this_item
+ * This is used to avoid deleting the object while inside the remove_this_item
  * method.
  *
  * @param item the TimeAxisViewItem to remove.

@@ -20,6 +20,7 @@
 #define __ardour_gtk_bbt_marker_dialog_h__
 
 #include <gtkmm/box.h>
+#include <gtkmm/entry.h>
 #include <gtkmm/label.h>
 #include <gtkmm/spinbutton.h>
 
@@ -32,21 +33,28 @@
 class BBTMarkerDialog : public ArdourDialog
 {
 public:
-	BBTMarkerDialog (Temporal::timepos_t const & );
-	BBTMarkerDialog (Temporal::MusicTimePoint&, const std::string & action);
+	BBTMarkerDialog (Temporal::timepos_t const &, Temporal::BBT_Time const&);
+	BBTMarkerDialog (Temporal::MusicTimePoint&);
 
 	Temporal::timepos_t position() const;
 	Temporal::BBT_Time  bbt_value () const;
+	std::string         name() const;
 
 private:
-	void init ();
+	void init (bool add);
 	Temporal::MusicTimePoint* _point;
-	Temporal::timepos_t _position;
+	Temporal::timepos_t       _position;
+	Temporal::BBT_Time        _bbt;
 
 	Gtk::HBox       bbt_box;
 	Gtk::SpinButton bar_entry;
 	Gtk::SpinButton beat_entry;
-	Gtk::Label      entry_label;
+	Gtk::Label      bar_label;
+	Gtk::Label      beat_label;
+
+	Gtk::HBox       name_box;
+	Gtk::Entry      name_entry;
+	Gtk::Label      name_label;
 };
 
 #endif /* __ardour_gtk_bbt_marker_dialog_h__ */

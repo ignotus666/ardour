@@ -53,8 +53,8 @@ using std::min;
 AudioTriggerPropertiesBox::AudioTriggerPropertiesBox ()
 	: _length_clock (X_("regionlength"), true, "", true, false, true)
 	, _start_clock (X_("regionstart"), true, "", false, false)
-	, _bar_adjustment( 1, 0.001, 1000.0, 1.0, 4.0, 0)
-	, _bar_spinner (_bar_adjustment)
+	, _beat_adjustment( 1, 0.001, 1000.0, 1.0, 4.0, 0)
+	, _beat_spinner (_beat_adjustment)
 	, _stretch_toggle (ArdourButton::led_default_elements)
 	, _abpm_label  (ArdourButton::Text)
 	, _ignore_changes (false)
@@ -88,23 +88,24 @@ AudioTriggerPropertiesBox::AudioTriggerPropertiesBox ()
 
 	row++;
 
-	_meter_label.set_text(_("Meter:"));
-	_meter_label.set_alignment (1.0, 0.5);
-	bpm_table->attach (_meter_label,    0, 1, row, row + 1, Gtk::FILL, Gtk::SHRINK);
-	bpm_table->attach (_meter_selector, 1, 4, row, row + 1, Gtk::FILL, Gtk::SHRINK);
+	_length_label.set_text(_("Clip Length:"));
+	_length_label.set_alignment (1.0, 0.5);
+	_beat_label.set_text(_("(beats)"));
+	_beat_label.set_alignment (0.0, 0.5);
+	bpm_table->attach (_length_label,0, 1, row, row + 1, Gtk::FILL, Gtk::SHRINK);
+	bpm_table->attach (_beat_spinner, 1, 2, row, row + 1, Gtk::FILL, Gtk::SHRINK);
+	bpm_table->attach (_beat_label,   2, 4, row, row + 1, Gtk::FILL, Gtk::SHRINK);
 
 	row++;
 
-	_length_label.set_text(_("Clip Length:"));
-	_length_label.set_alignment (1.0, 0.5);
-	_bar_label.set_text(_("(bars)"));
-	_bar_label.set_alignment (0.0, 0.5);
-	bpm_table->attach (_length_label,0, 1, row, row + 1, Gtk::FILL, Gtk::SHRINK);
-	bpm_table->attach (_bar_spinner, 1, 2, row, row + 1, Gtk::FILL, Gtk::SHRINK);
-	bpm_table->attach (_bar_label,   2, 4, row, row + 1, Gtk::FILL, Gtk::SHRINK);
+	_bars_label.set_text(_("Length in Bars:"));
+	_bars_label.set_alignment (1.0, 0.5);
+	bpm_table->attach (_bars_label,   0, 1, row, row + 1, Gtk::FILL, Gtk::SHRINK);
+	_bars_display.set_alignment (0.0, 0.5);
+	bpm_table->attach (_bars_display, 1, 4, row, row + 1, Gtk::FILL, Gtk::SHRINK);
 
 	ArdourWidgets::Frame* eTempoBox = manage (new ArdourWidgets::Frame);
-	eTempoBox->set_label("Stretch Options");
+	eTempoBox->set_label(_("Stretch Options"));
 	eTempoBox->set_name("EditorDark");
 	eTempoBox->set_edge_color (0x000000ff); // black
 	eTempoBox->add (*bpm_table);
@@ -128,7 +129,7 @@ AudioTriggerPropertiesBox::AudioTriggerPropertiesBox ()
 	_table.set_spacings (4);
 	_table.set_border_width (2);
 
-	attach (*eTempoBox,    0,1, 0,1, Gtk::FILL, Gtk::SHRINK);
+	attach (*eTempoBox,    0,1, 0,1, Gtk::FILL, Gtk::EXPAND | Gtk::FILL);
 #if 0
 	attach (_table,        0,1, 1,2, Gtk::FILL, Gtk::SHRINK);
 #endif
@@ -137,13 +138,6 @@ AudioTriggerPropertiesBox::AudioTriggerPropertiesBox ()
 	_length_clock.ValueChanged.connect (sigc::mem_fun (*this, &AudioTriggerPropertiesBox::length_clock_changed));
 
 	using namespace Menu_Helpers;
-
-	_meter_selector.set_text ("??");
-	_meter_selector.set_name ("generic button");
-	_meter_selector.set_sizing_text ("4/4");
-	_meter_selector.AddMenuElem (MenuElem ("3/4", sigc::bind (sigc::mem_fun(*this, &AudioTriggerPropertiesBox::meter_changed), Temporal::Meter(3,4))));
-	_meter_selector.AddMenuElem (MenuElem ("4/4", sigc::bind (sigc::mem_fun(*this, &AudioTriggerPropertiesBox::meter_changed), Temporal::Meter(4,4))));
-	_meter_selector.AddMenuElem (MenuElem ("5/4", sigc::bind (sigc::mem_fun(*this, &AudioTriggerPropertiesBox::meter_changed), Temporal::Meter(5,4))));
 
 	_stretch_selector.set_text ("??");
 	_stretch_selector.set_name ("generic button");
@@ -154,8 +148,14 @@ AudioTriggerPropertiesBox::AudioTriggerPropertiesBox ()
 
 	_stretch_toggle.signal_clicked.connect (sigc::mem_fun (*this, &AudioTriggerPropertiesBox::toggle_stretch));
 
-	_bar_spinner.set_can_focus(false);
-	_bar_spinner.signal_changed ().connect (sigc::mem_fun (*this, &AudioTriggerPropertiesBox::bars_changed));
+	_beat_spinner.set_can_focus(false);
+	_beat_spinner.signal_changed ().connect (sigc::mem_fun (*this, &AudioTriggerPropertiesBox::beats_changed));
+
+	set_tooltip(_stretch_toggle, _("<b>If enabled</b>, the clip will be stretched to match the current timeline tempo"));
+	set_tooltip(_stretch_selector, _("Select Crisp for drum loops, Smooth for sustained notes, or Mixed if the clip has both"));
+	set_tooltip(_beat_spinner, _("Length of the clip, in beats. Changing this will change the tempo"));
+	set_tooltip(_half_button, _("Click to halve the tempo for the clip. This will result in it playing faster when stretched on the timeline"));
+	set_tooltip(_dbl_button, _("Click to double the tempo for the clip. This will result in it playing slower when stretched on the timeline"));
 }
 
 AudioTriggerPropertiesBox::~AudioTriggerPropertiesBox ()
@@ -166,7 +166,7 @@ void
 AudioTriggerPropertiesBox::MultiplyTempo(float mult)
 {
 	TriggerPtr trigger (tref.trigger());
-	boost::shared_ptr<AudioTrigger> at = boost::dynamic_pointer_cast<AudioTrigger> (trigger);
+	std::shared_ptr<AudioTrigger> at = std::dynamic_pointer_cast<AudioTrigger> (trigger);
 	if (at) {
 		at->set_segment_tempo (at->segment_tempo () * mult);
 	}
@@ -176,7 +176,7 @@ void
 AudioTriggerPropertiesBox::toggle_stretch ()
 {
 	TriggerPtr trigger (tref.trigger());
-	boost::shared_ptr<AudioTrigger> at = boost::dynamic_pointer_cast<AudioTrigger> (trigger);
+	std::shared_ptr<AudioTrigger> at = std::dynamic_pointer_cast<AudioTrigger> (trigger);
 	if (at) {
 		at->set_stretchable (!at->stretchable ());
 	}
@@ -186,7 +186,7 @@ void
 AudioTriggerPropertiesBox::set_stretch_mode (Trigger::StretchMode sm)
 {
 	TriggerPtr trigger (tref.trigger());
-	boost::shared_ptr<AudioTrigger> at = boost::dynamic_pointer_cast<AudioTrigger> (trigger);
+	std::shared_ptr<AudioTrigger> at = std::dynamic_pointer_cast<AudioTrigger> (trigger);
 	if (at) {
 		at->set_stretch_mode (sm);
 	}
@@ -205,12 +205,18 @@ void
 AudioTriggerPropertiesBox::on_trigger_changed (const PBD::PropertyChange& pc)
 {
 	TriggerPtr trigger (tref.trigger());
-	boost::shared_ptr<AudioTrigger> at = boost::dynamic_pointer_cast<AudioTrigger> (trigger);
+	std::shared_ptr<AudioTrigger> at = std::dynamic_pointer_cast<AudioTrigger> (trigger);
 	if (!at) {
 		return;
 	}
 
 	_ignore_changes = true;
+
+	bool set_sensitivities = false;
+
+	if (pc.contains (Properties::running)) {
+		set_sensitivities = true;  //can't change stretch params while we are playing so we must watch active state
+	}
 
 	if (pc.contains (Properties::start) || pc.contains (Properties::length)) {  /* NOT REACHED from current code */
 		AudioClock::Mode mode = at->box ().data_type () == ARDOUR::DataType::AUDIO ? AudioClock::Samples : AudioClock::BBT;
@@ -222,48 +228,54 @@ AudioTriggerPropertiesBox::on_trigger_changed (const PBD::PropertyChange& pc)
 		_length_clock.set (at->current_length ()); // set_duration() ?
 	}
 
-	if (pc.contains (Properties::tempo_meter) || pc.contains (Properties::follow_length)) {
+	if ( pc.contains (Properties::tempo_meter) || pc.contains (Properties::follow_length)) {
 
-		char buf[32];
+		char buf[64];
 		sprintf(buf, "%3.2f", at->segment_tempo ());
 		_abpm_label.set_text (buf);
 
-		ArdourWidgets::set_tooltip (_abpm_label, string_compose ("Clip Tempo, used for stretching.  Estimated tempo (from file) was: %1", trigger->estimated_tempo ()));
+		ArdourWidgets::set_tooltip (_abpm_label, string_compose (_("Clip Tempo, used for stretching. Estimated tempo (from file) was: %1"), trigger->estimated_tempo ()));
 
-		_meter_selector.set_text (string_compose ("%1/%2", at->meter().divisions_per_bar(), at->meter().note_value()));
+		int beats = round(at->segment_beatcnt());
 
-		_bar_adjustment.set_value(at->segment_barcnt());
+		_beat_adjustment.set_value(beats);
+
+		sprintf(buf, "%3.2f(4/4) - %3.2f(3/4)", (double)beats/4.0, (double)beats/3.0);
+		_bars_display.set_text(buf);
 	}
 
 	if (pc.contains (Properties::stretch_mode) || pc.contains (Properties::stretchable)) {
 		_stretch_toggle.set_active (at->stretchable () ? Gtkmm2ext::ExplicitActive : Gtkmm2ext::Off);
 		_stretch_selector.set_text(stretch_mode_to_string(at->stretch_mode ()));
+		set_sensitivities = true;
+	}
 
-		/* set widget sensitivity based on stretchable button state */
-		bool follow_widgets_sensitive = at->stretchable ();
+	if (set_sensitivities) {
+		_stretch_toggle.set_sensitive(!at->active());
 
-		if (follow_widgets_sensitive) {
+		/* set remaining widget sensitivity based on stretchable button state & running state */
+		bool stretch_widgets_sensitive = at->stretchable () && !at->active();
+
+		if (stretch_widgets_sensitive) {
 			_stretch_selector.set_sensitive(true);
-			_meter_selector.set_sensitive(true);
-			_bar_spinner.set_sensitive(true);
-			_bar_label.set_sensitive(true);
+			_beat_spinner.set_sensitive(true);
+			_beat_label.set_sensitive(true);
 			_length_label.set_sensitive(true);
-			_meter_label.set_sensitive(true);
 			_bpm_label.set_sensitive(true);
 			_half_button.set_sensitive(true);
 			_dbl_button.set_sensitive(true);
 			_abpm_label.set_sensitive(true);
+			_bars_display.set_sensitive(true);
 		} else {
 			_stretch_selector.set_sensitive(false);
-			_meter_selector.set_sensitive(false);
-			_bar_spinner.set_sensitive(false);
-			_bar_label.set_sensitive(false);
+			_beat_spinner.set_sensitive(false);
+			_beat_label.set_sensitive(false);
 			_length_label.set_sensitive(false);
-			_meter_label.set_sensitive(false);
 			_bpm_label.set_sensitive(false);
 			_half_button.set_sensitive(false);
 			_dbl_button.set_sensitive(false);
 			_abpm_label.set_sensitive(false);
+			_bars_display.set_sensitive(false);
 		}
 	}
 
@@ -271,33 +283,23 @@ AudioTriggerPropertiesBox::on_trigger_changed (const PBD::PropertyChange& pc)
 }
 
 void
-AudioTriggerPropertiesBox::meter_changed (Temporal::Meter m)
-{
-	TriggerPtr trigger (tref.trigger());
-	boost::shared_ptr<AudioTrigger> at = boost::dynamic_pointer_cast<AudioTrigger> (trigger);
-	if (at) {
-		at->set_segment_meter(m);
-	}
-}
-
-void
-AudioTriggerPropertiesBox::bars_changed ()
+AudioTriggerPropertiesBox::beats_changed ()
 {
 	if (_ignore_changes) {
 		return;
 	}
 
 	TriggerPtr trigger (tref.trigger());
-	boost::shared_ptr<AudioTrigger> at = boost::dynamic_pointer_cast<AudioTrigger> (trigger);
+	std::shared_ptr<AudioTrigger> at = std::dynamic_pointer_cast<AudioTrigger> (trigger);
 	if (at) {
-		at->set_segment_barcnt (_bar_adjustment.get_value());
+		at->set_segment_beatcnt (_beat_adjustment.get_value());
 	}
 }
 
 void
 AudioTriggerPropertiesBox::start_clock_changed ()
 {
-	trigger()->set_start(_start_clock.current_time());
+	trigger()->set_start(_start_clock.last_when());
 }
 
 void

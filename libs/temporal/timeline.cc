@@ -198,10 +198,13 @@ timecnt_t::compute_beats() const
 }
 
 timecnt_t
-timecnt_t::operator*(ratio_t const & r) const
+timecnt_t::scale (ratio_t const & r) const
 {
-	const int62_t v (_distance.flagged(), int_div_round (_distance.val() * r.numerator(), r.denominator()));
-	return timecnt_t (v, _position);
+	if (time_domain() == AudioTime) {
+		return timecnt_t::from_superclock (PBD::muldiv_round (_distance.val(), r.numerator(), r.denominator()), _position);
+	} else {
+		return timecnt_t::from_ticks (PBD::muldiv_round (_distance.val(), r.numerator(), r.denominator()), _position);
+	}
 }
 
 ratio_t
@@ -212,30 +215,37 @@ timecnt_t::operator/ (timecnt_t const & other) const
 	}
 
 	if (time_domain() == AudioTime) {
-		return ratio_t (distance().val(), other.samples());
+		return ratio_t (distance().val(), other.superclocks());
 	}
 
 	return ratio_t (beats().to_ticks(), other.beats().to_ticks());
 }
 
 timecnt_t
-timecnt_t::operator/(ratio_t const & r) const
-{
-	/* note: x / (N/D) => x * (D/N) => (x * D) / N */
-
-	const int62_t v (_distance.flagged(), int_div_round (_distance.val() * r.denominator(), r.numerator()));
-	return timecnt_t (v, _position);
-}
-
-timecnt_t
 timecnt_t::operator% (timecnt_t const & d) const
 {
-	return timecnt_t (_distance % d.distance(), _position);
+	if (time_domain() == d.time_domain()) {
+		return timecnt_t (_distance % d.distance(), _position);
+	} else if (time_domain() == AudioTime) {
+		timecnt_t dd = d;
+		dd.set_time_domain (AudioTime);
+		return timecnt_t (_distance % dd.distance(), _position);
+	} else {
+		assert (0); // This path should never be used because..
+		timecnt_t self = *this;
+		self.set_time_domain (AudioTime);
+		timecnt_t rv (self.distance() % d.distance(), _position);
+		rv.set_time_domain (BeatTime); // it looses precision
+		return rv;
+	}
 }
 
 timecnt_t &
 timecnt_t::operator%= (timecnt_t const & d)
 {
+	if (time_domain() != d.time_domain()) {
+		assert (0); // TODO FIXME
+	}
 	_distance %= d.distance();
 	return *this;
 }
@@ -270,6 +280,8 @@ timecnt_t::string_to (std::string const & str)
 		ss >> ticks;
 		_distance = int62_t (true, ticks);
 		break;
+	default:
+		return false;
 	}
 
 	/* eat separator character */
@@ -335,7 +347,7 @@ timecnt_t::operator- (timecnt_t const & other) const
 		if (other.time_domain() == AudioTime) {
 			return timecnt_t (_distance - other.distance(), _position);
 		} else {
-			return timecnt_t (_distance - other.samples(), _position);
+			return timecnt_t (_distance - other.superclocks(), _position);
 		}
 	}
 
@@ -349,7 +361,7 @@ timecnt_t::operator+= (timecnt_t const & other)
 		if (other.time_domain() == AudioTime) {
 			_distance += other.distance();
 		} else {
-			_distance += other.samples();
+			_distance += other.superclocks();
 		}
 	} else {
 		_distance += other.ticks ();
@@ -366,7 +378,7 @@ timecnt_t::operator+ (timepos_t const & other) const
 			/* both audio, just add and use an arbitrary position */
 			return timecnt_t (_distance + other.val(), _position);
 		} else {
-			return timecnt_t (_distance + other.samples(), _position);
+			return timecnt_t (_distance + other.superclocks(), _position);
 		}
 	}
 
@@ -380,7 +392,7 @@ timecnt_t::operator- (timepos_t const & other) const
 		if (other.time_domain() == AudioTime) {
 			return timecnt_t (_distance - other.val(), _position);
 		} else {
-			return timecnt_t (_distance - other.samples(), _position);
+			return timecnt_t (_distance - other.superclocks(), _position);
 		}
 	}
 
@@ -393,7 +405,7 @@ timecnt_t::operator-= (timecnt_t const & other)
 	if (time_domain() == other.time_domain()) {
 		_distance -= other.distance();
 	} else if (time_domain() == AudioTime) {
-		_distance -= other.samples();
+		_distance -= other.superclocks();
 	} else {
 		_distance -= other.ticks ();
 	}
@@ -577,35 +589,13 @@ timepos_t::_ticks () const
 }
 
 timepos_t
-timepos_t::operator/(ratio_t const & n) const
+timepos_t::scale (ratio_t const & n) const
 {
-	/* this cannot make the value negative, since ratio_t is always positive */
-	/* note: v / (N/D) = (v * D) / N */
-
-	return timepos_t (is_beats(), int_div_round (val() * n.denominator(), n.numerator()));
-}
-
-timepos_t
-timepos_t::operator*(ratio_t const & n) const
-{
-	/* this cannot make the value negative, since ratio_t is always positive */
-	return timepos_t (is_beats(), int_div_round (val() * n.numerator(), n.denominator()));
-}
-
-timepos_t &
-timepos_t::operator/=(ratio_t const & n)
-{
-	/* this cannot make the value negative, since ratio_t is always positive */
-	v = build (flagged(), int_div_round (val() * n.numerator(), n.denominator()));
-	return *this;
-}
-
-timepos_t &
-timepos_t::operator*=(ratio_t const & n)
-{
-	/* this cannot make the value negative, since ratio_t is always positive */
-	v = build (flagged(), int_div_round (val() * n.denominator(), n.numerator()));
-	return *this;
+	if (time_domain() == AudioTime) {
+		return timepos_t::from_superclock (PBD::muldiv_round (val(), n.numerator(), n.denominator()));
+	} else {
+		return timepos_t::from_ticks (PBD::muldiv_round (val(), n.numerator(), n.denominator()));
+	}
 }
 
 timepos_t
@@ -629,7 +619,7 @@ timepos_t::expensive_add (timepos_t const & other) const
 
 /* */
 
-/* ::distance() assumes that @param other is later on the timeline than this, and
+/* ::distance() assumes that @p other is later on the timeline than this, and
  * thus returns a positive value if this condition is satisfied.
  */
 
@@ -674,7 +664,7 @@ timepos_t::earlier (Temporal::BBT_Offset const & offset) const
 	TempoMap::SharedPtr tm (TempoMap::use());
 
 	if (is_superclock()) {
-		return timepos_t (tm->superclock_at (tm->bbt_walk (tm->bbt_at (*this), -offset)));
+		return timepos_t (tm->superclock_at (BBT_Argument (this->superclocks(), tm->bbt_walk (BBT_Argument (this->superclocks(), tm->bbt_at (*this)), -offset))));
 	}
 
 	return timepos_t (tm->bbtwalk_to_quarters (beats(), -offset));
@@ -773,7 +763,7 @@ timepos_t::shift_earlier (Temporal::BBT_Offset const & offset)
 	TempoMap::SharedPtr tm (TempoMap::use());
 
 	if (is_superclock()) {
-		v = build (false, (tm->superclock_at (tm->bbt_walk (tm->bbt_at (*this), -offset))));
+		v = build (false, (tm->superclock_at (tm->bbt_walk (BBT_Argument (this->superclocks(), tm->bbt_at (*this)), -offset))));
 	} else {
 		v = build (true, tm->bbtwalk_to_quarters (beats(), -offset).to_ticks());
 	}
@@ -790,7 +780,7 @@ timepos_t::operator+= (Temporal::BBT_Offset const & offset)
 	if (is_beats()) {
 		v = build (true, tm->bbtwalk_to_quarters (beats(), offset).to_ticks());
 	} else {
-		v = build (false, tm->superclock_at (tm->bbt_walk (tm->bbt_at (*this), offset)));
+		v = build (false, tm->superclock_at (tm->bbt_walk (BBT_Argument (this->superclocks(), tm->bbt_at (*this)), offset)));
 	}
 
 	return *this;

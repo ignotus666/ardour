@@ -32,7 +32,9 @@
 #include "pbd/error.h"
 #include "pbd/enumwriter.h"
 
+#include "ardour/location.h"
 #include "ardour/session.h"
+#include "ardour/session_playlists.h"
 #include "ardour/tempo.h"
 #include "ardour/transport_fsm.h"
 
@@ -62,7 +64,7 @@ Session::timecode_drop_frames() const
 void
 Session::sync_time_vars ()
 {
-	_current_sample_rate = (samplecnt_t) round (_nominal_sample_rate * (1.0 + (config.get_video_pullup()/100.0)));
+	_current_sample_rate = (samplecnt_t) round (_base_sample_rate * (1.0 + (config.get_video_pullup()/100.0)));
 	_samples_per_timecode_frame = (double) _current_sample_rate / (double) timecode_frames_per_second();
 	if (timecode_drop_frames()) {
 	  _frames_per_hour = (int32_t)(107892 * _samples_per_timecode_frame);
@@ -234,7 +236,7 @@ Session::convert_to_samples (AnyTime const & position)
 
 	switch (position.type) {
 	case AnyTime::BBT:
-		return Temporal::superclock_to_samples (TempoMap::use()->superclock_at (position.bbt), _current_sample_rate);
+		return Temporal::superclock_to_samples (TempoMap::use()->superclock_at (BBT_Argument (superclock_t (0), position.bbt)), _current_sample_rate);
 		break;
 
 	case AnyTime::Timecode:
@@ -295,4 +297,23 @@ Session::any_duration_to_samples (samplepos_t position, AnyTime const & duration
 	}
 
 	return duration.samples;
+}
+
+PBD::Command*
+Session::globally_change_time_domain (Temporal::TimeDomain from, Temporal::TimeDomain to)
+{
+	PBD::Command* undo_command = new Temporal::TimeDomainCommand (from, to);
+
+	{
+		std::shared_ptr<RouteList const> rl (routes.reader());
+
+		for (auto const& r : *rl) {
+			r->globally_change_time_domain (from, to);
+		}
+	}
+
+	_playlists->globally_change_time_domain (from, to);
+	_locations->globally_change_time_domain (from, to);
+
+	return undo_command;
 }

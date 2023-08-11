@@ -49,7 +49,7 @@ using namespace PBD;
 using namespace std;
 using namespace Gtkmm2ext;
 
-RegionEditor::RegionEditor (Session* s, boost::shared_ptr<Region> r)
+RegionEditor::RegionEditor (Session* s, std::shared_ptr<Region> r)
 	: ArdourDialog (_("Region"))
 	, _table (9, 2)
 	, _table_row (0)
@@ -68,8 +68,15 @@ RegionEditor::RegionEditor (Session* s, boost::shared_ptr<Region> r)
 {
 	set_session (s);
 
-	_clock_group->set_clock_mode (ARDOUR_UI::instance()->primary_clock->mode());
-	ARDOUR_UI::instance()->primary_clock->mode_changed.connect (sigc::mem_fun (*this, &RegionEditor::set_clock_mode_from_primary));
+	switch (r->time_domain()) {
+	case Temporal::AudioTime:
+		/* XXX check length of region and choose samples or minsec */
+		_clock_group->set_clock_mode (AudioClock::MinSec);
+		break;
+	default:
+		_clock_group->set_clock_mode (AudioClock::BBT);
+	}
+	// ARDOUR_UI::instance()->primary_clock->mode_changed.connect (sigc::mem_fun (*this, &RegionEditor::set_clock_mode_from_primary));
 
 	_clock_group->add (position_clock);
 	_clock_group->add (end_clock);
@@ -87,7 +94,7 @@ RegionEditor::RegionEditor (Session* s, boost::shared_ptr<Region> r)
 
 	ArdourWidgets::set_tooltip (audition_button, _("audition this region"));
 
-	audition_button.unset_flags (Gtk::CAN_FOCUS);
+	audition_button.set_can_focus (false);
 
 	audition_button.set_events (audition_button.get_events() & ~(Gdk::ENTER_NOTIFY_MASK|Gdk::LEAVE_NOTIFY_MASK));
 
@@ -175,7 +182,7 @@ RegionEditor::RegionEditor (Session* s, boost::shared_ptr<Region> r)
 	set_title (string_compose (_("Region '%1'"), _region->name()));
 
 	for (uint32_t i = 0; i < _region->sources().size(); ++i) {
-		_sources.append_text (_region->source(i)->name());
+		_sources.append (_region->source(i)->name());
 	}
 
 	_sources.set_headers_visible (false);
@@ -284,14 +291,14 @@ void
 RegionEditor::position_clock_changed ()
 {
 	bool in_command = false;
-	boost::shared_ptr<Playlist> pl = _region->playlist();
+	std::shared_ptr<Playlist> pl = _region->playlist();
 
 	if (pl) {
 		PublicEditor::instance().begin_reversible_command (_("change region start position"));
 		in_command = true;
 
 		_region->clear_changes ();
-		_region->set_position (position_clock.current_time());
+		_region->set_position (position_clock.last_when());
 		_session->add_command(new StatefulDiffCommand (_region));
 	}
 
@@ -304,14 +311,14 @@ void
 RegionEditor::end_clock_changed ()
 {
 	bool in_command = false;
-	boost::shared_ptr<Playlist> pl = _region->playlist();
+	std::shared_ptr<Playlist> pl = _region->playlist();
 
 	if (pl) {
 		PublicEditor::instance().begin_reversible_command (_("change region end position"));
 		in_command = true;
 
 		_region->clear_changes ();
-		_region->trim_end (end_clock.current_time());
+		_region->trim_end (end_clock.last_when());
 		_session->add_command(new StatefulDiffCommand (_region));
 	}
 
@@ -327,14 +334,18 @@ RegionEditor::length_clock_changed ()
 {
 	timecnt_t len = length_clock.current_duration();
 	bool in_command = false;
-	boost::shared_ptr<Playlist> pl = _region->playlist();
+	std::shared_ptr<Playlist> pl = _region->playlist();
 
 	if (pl) {
 		PublicEditor::instance().begin_reversible_command (_("change region length"));
 		in_command = true;
 
 		_region->clear_changes ();
-		_region->trim_end (_region->position() + len.decrement());
+		/* new end is actually 1 domain unit before the clock duration
+		 * would otherwise indicate
+		 */
+		const timepos_t new_end = (_region->position() + len).decrement ();
+		_region->trim_end (new_end);
 		_session->add_command(new StatefulDiffCommand (_region));
 	}
 
@@ -421,7 +432,7 @@ RegionEditor::sync_offset_absolute_clock_changed ()
 	PublicEditor::instance().begin_reversible_command (_("change region sync point"));
 
 	_region->clear_changes ();
-	_region->set_sync_position (sync_offset_absolute_clock.current_time());
+	_region->set_sync_position (sync_offset_absolute_clock.last_when());
 	_session->add_command (new StatefulDiffCommand (_region));
 
 	PublicEditor::instance().commit_reversible_command ();
@@ -433,7 +444,7 @@ RegionEditor::sync_offset_relative_clock_changed ()
 	PublicEditor::instance().begin_reversible_command (_("change region sync point"));
 
 	_region->clear_changes ();
-	_region->set_sync_position (sync_offset_relative_clock.current_time() + _region->position ());
+	_region->set_sync_position (sync_offset_relative_clock.last_when() + _region->position ());
 	_session->add_command (new StatefulDiffCommand (_region));
 
 	PublicEditor::instance().commit_reversible_command ();

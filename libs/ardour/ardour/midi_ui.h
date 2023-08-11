@@ -32,7 +32,7 @@ class Session;
 class AsyncMIDIPort;
 
 /* this is mostly a placeholder because I suspect that at some
-   point we will want to add more members to accomodate
+   point we will want to add more members to accommodate
    certain types of requests to the MIDI UI
 */
 
@@ -60,7 +60,7 @@ class LIBARDOUR_API MidiControlUI : public AbstractUI<MidiUIRequest>
   private:
 	ARDOUR::Session& _session;
 
-	bool midi_input_handler (Glib::IOCondition, boost::weak_ptr<AsyncMIDIPort>);
+	bool midi_input_handler (Glib::IOCondition, std::weak_ptr<AsyncMIDIPort>);
 	void reset_ports ();
 	void clear_ports ();
 

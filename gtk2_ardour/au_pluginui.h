@@ -50,11 +50,13 @@
 #include <gtkmm/button.h>
 #include <gtkmm/label.h>
 
+#include "widgets/eventboxext.h"
+
 #include "plugin_ui.h"
 
 namespace ARDOUR {
 	class AUPlugin;
-	class PluginInsert;
+	class PlugInsertBase;
 	class IOProcessor;
 }
 
@@ -77,7 +79,7 @@ class AUPluginUI;
 class AUPluginUI : public PlugUIBase, public Gtk::VBox
 {
 public:
-	AUPluginUI (boost::shared_ptr<ARDOUR::PluginInsert>);
+	AUPluginUI (std::shared_ptr<ARDOUR::PlugInsertBase>);
 	~AUPluginUI ();
 
 	gint get_preferred_width () { return req_width; }
@@ -113,12 +115,12 @@ public:
 
 private:
 	WindowRef wr;
-	boost::shared_ptr<ARDOUR::AUPlugin> au;
+	std::shared_ptr<ARDOUR::AUPlugin> au;
 	int prefheight;
 	int prefwidth;
 
-	Gtk::HBox     top_box;
-	Gtk::EventBox low_box;
+	Gtk::HBox top_box;
+	ArdourWidgets::EventBoxExt low_box;
 	Gtk::VBox vpacker;
 	Gtk::Label automation_mode_label;
 	Gtk::ComboBoxText automation_mode_selector;
@@ -129,6 +131,8 @@ private:
 	bool resizable;
 	int  req_width;
 	int  req_height;
+	int  alloc_width;
+	int  alloc_height;
 
 	/* Cocoa */
 

@@ -25,6 +25,7 @@
 #define __ardour_midi_model_h__
 
 #include <deque>
+#include <map>
 #include <queue>
 #include <utility>
 
@@ -33,9 +34,10 @@
 
 #include "pbd/command.h"
 
+#include "ardour/libardour_visibility.h"
+#include "ardour/automation_list.h"
 #include "ardour/automatable_sequence.h"
-#include "ardour/libardour_visibility.h"
-#include "ardour/libardour_visibility.h"
+#include "ardour/source.h"
 #include "ardour/types.h"
 #include "ardour/types.h"
 #include "ardour/variant.h"
@@ -59,15 +61,12 @@ class LIBARDOUR_API MidiModel : public AutomatableSequence<Temporal::Beats> {
 public:
 	typedef Temporal::Beats TimeType;
 
-	MidiModel (boost::shared_ptr<MidiSource>);
+	MidiModel (MidiSource&);
 
-	NoteMode note_mode() const { return (percussive() ? Percussive : Sustained); }
-	void set_note_mode(NoteMode mode) { set_percussive(mode == Percussive); };
-
-	class LIBARDOUR_API DiffCommand : public Command {
+	class LIBARDOUR_API DiffCommand : public PBD::Command {
 	public:
 
-		DiffCommand (boost::shared_ptr<MidiModel> m, const std::string& name);
+		DiffCommand (std::shared_ptr<MidiModel> m, const std::string& name);
 
 		const std::string& name () const { return _name; }
 
@@ -75,12 +74,12 @@ public:
 		virtual void undo () = 0;
 
 		virtual int set_state (const XMLNode&, int version) = 0;
-		virtual XMLNode & get_state () = 0;
+		virtual XMLNode & get_state () const = 0;
 
-		boost::shared_ptr<MidiModel> model() const { return _model; }
+		std::shared_ptr<MidiModel> model() const { return _model; }
 
 	protected:
-		boost::shared_ptr<MidiModel> _model;
+		std::shared_ptr<MidiModel> _model;
 		const std::string            _name;
 
 	};
@@ -88,8 +87,8 @@ public:
 	class LIBARDOUR_API NoteDiffCommand : public DiffCommand {
 	public:
 
-		NoteDiffCommand (boost::shared_ptr<MidiModel> m, const std::string& name) : DiffCommand (m, name) {}
-		NoteDiffCommand (boost::shared_ptr<MidiModel> m, const XMLNode& node);
+		NoteDiffCommand (std::shared_ptr<MidiModel> m, const std::string& name) : DiffCommand (m, name) {}
+		NoteDiffCommand (std::shared_ptr<MidiModel> m, const XMLNode& node);
 
 		enum Property {
 			NoteNumber,
@@ -103,7 +102,7 @@ public:
 		void undo ();
 
 		int set_state (const XMLNode&, int version);
-		XMLNode & get_state ();
+		XMLNode & get_state () const;
 
 		void add (const NotePtr note);
 		void remove (const NotePtr note);
@@ -138,7 +137,7 @@ public:
 		};
 
 		typedef std::list<NoteChange>                                    ChangeList;
-		typedef std::list< boost::shared_ptr< Evoral::Note<TimeType> > > NoteList;
+		typedef std::list< std::shared_ptr< Evoral::Note<TimeType> > > NoteList;
 
 		const ChangeList& changes()       const { return _changes; }
 		const NoteList&   added_notes()   const { return _added_notes; }
@@ -151,35 +150,35 @@ public:
 
 		std::set<NotePtr> side_effect_removals;
 
-		XMLNode &marshal_change(const NoteChange&);
+		XMLNode &marshal_change(const NoteChange&) const;
 		NoteChange unmarshal_change(XMLNode *xml_note);
 
-		XMLNode &marshal_note(const NotePtr note);
+		XMLNode &marshal_note(const NotePtr note) const;
 		NotePtr unmarshal_note(XMLNode *xml_note);
 	};
 
 	/* Currently this class only supports changes of sys-ex time, but could be expanded */
 	class LIBARDOUR_API SysExDiffCommand : public DiffCommand {
 	public:
-		SysExDiffCommand (boost::shared_ptr<MidiModel> m, const XMLNode& node);
+		SysExDiffCommand (std::shared_ptr<MidiModel> m, const XMLNode& node);
 
 		enum Property {
 			Time,
 		};
 
 		int set_state (const XMLNode&, int version);
-		XMLNode & get_state ();
+		XMLNode & get_state () const;
 
 		void remove (SysExPtr sysex);
 		void operator() ();
 		void undo ();
 
-		void change (boost::shared_ptr<Evoral::Event<TimeType> >, TimeType);
+		void change (std::shared_ptr<Evoral::Event<TimeType> >, TimeType);
 
 	private:
 		struct Change {
 			Change () : sysex_id (0) {}
-			boost::shared_ptr<Evoral::Event<TimeType> > sysex;
+			std::shared_ptr<Evoral::Event<TimeType> > sysex;
 			gint sysex_id;
 			SysExDiffCommand::Property property;
 			TimeType old_time;
@@ -191,17 +190,17 @@ public:
 
 		std::list<SysExPtr> _removed;
 
-		XMLNode & marshal_change (const Change &);
+		XMLNode & marshal_change (const Change &) const;
 		Change unmarshal_change (XMLNode *);
 	};
 
 	class LIBARDOUR_API PatchChangeDiffCommand : public DiffCommand {
 	public:
-		PatchChangeDiffCommand (boost::shared_ptr<MidiModel>, const std::string &);
-		PatchChangeDiffCommand (boost::shared_ptr<MidiModel>, const XMLNode &);
+		PatchChangeDiffCommand (std::shared_ptr<MidiModel>, const std::string &);
+		PatchChangeDiffCommand (std::shared_ptr<MidiModel>, const XMLNode &);
 
 		int set_state (const XMLNode &, int version);
-		XMLNode & get_state ();
+		XMLNode & get_state () const;
 
 		void operator() ();
 		void undo ();
@@ -247,18 +246,21 @@ public:
 		std::list<PatchChangePtr> _added;
 		std::list<PatchChangePtr> _removed;
 
-		XMLNode & marshal_change (const Change &);
+		XMLNode & marshal_change (const Change &) const;
 		Change unmarshal_change (XMLNode *);
 
-		XMLNode & marshal_patch_change (constPatchChangePtr);
+		XMLNode & marshal_patch_change (constPatchChangePtr) const;
 		PatchChangePtr unmarshal_patch_change (XMLNode *);
 	};
+
+	void create_mapping_stash (Temporal::Beats const & offset);
+	void rebuild_from_mapping_stash (Temporal::Beats const & offset);
 
 	/** Start a new NoteDiff command.
 	 *
 	 * This has no side-effects on the model or Session, the returned command
 	 * can be held on to for as long as the caller wishes, or discarded without
-	 * formality, until apply_command is called and ownership is taken.
+	 * formality, until apply_diff_command_* is called and ownership is taken.
 	 */
 	MidiModel::NoteDiffCommand* new_note_diff_command (const std::string& name = "midi edit");
 	/** Start a new SysExDiff command */
@@ -270,67 +272,78 @@ public:
 	/** Apply a command.
 	 *
 	 * Ownership of cmd is taken, it must not be deleted by the caller.
+	 * This STARTS and COMMITS an undo command.
 	 * The command will constitute one item on the undo stack.
 	 */
-	void apply_command (Session& session, Command* cmd);
+	void apply_diff_command_as_commit (Session& session, PBD::Command* cmd);
 
-	void apply_command (Session* session, Command* cmd) { if (session) { apply_command (*session, cmd); } }
+	void apply_diff_command_as_commit (Session* session, PBD::Command* cmd) { if (session) { apply_diff_command_as_commit (*session, cmd); } }
 
-	/** Apply a command as part of a larger reversible transaction
+	/** Add a command as part of a larger reversible transaction
 	 *
 	 * Ownership of cmd is taken, it must not be deleted by the caller.
-	 * The command will constitute one item on the undo stack.
+	 * The command will be incorporated into the current command.
 	 */
-	void apply_command_as_subcommand (Session& session, Command* cmd);
+	void apply_diff_command_as_subcommand (Session& session, PBD::Command* cmd);
 
-	bool sync_to_source (const Glib::Threads::Mutex::Lock& source_lock);
+	/** Apply the midi diff, but without any effect on undo
+	 *
+	 * Ownership of cmd is not changed.
+	 */
+	void apply_diff_command_only (Session& session, PBD::Command* cmd);
 
-	bool write_to(boost::shared_ptr<MidiSource>     source,
-	              const Glib::Threads::Mutex::Lock& source_lock);
+	bool sync_to_source (const Source::WriterLock& source_lock);
 
-	bool write_section_to(boost::shared_ptr<MidiSource>     source,
-	                      const Glib::Threads::Mutex::Lock& source_lock,
+	bool write_to(std::shared_ptr<MidiSource>     source,
+	              const Source::WriterLock& source_lock);
+
+	bool write_section_to(std::shared_ptr<MidiSource>     source,
+	                      const Source::WriterLock& source_lock,
 	                      Temporal::Beats                   begin = Temporal::Beats(),
 	                      Temporal::Beats                   end   = std::numeric_limits<Temporal::Beats>::max(),
 	                      bool                              offset_events = false);
 
 	// MidiModel doesn't use the normal AutomationList serialisation code
 	// since controller data is stored in the .mid
-	XMLNode& get_state();
+	XMLNode& get_state() const;
 	int set_state(const XMLNode&) { return 0; }
 
 	PBD::Signal0<void> ContentsChanged;
 	PBD::Signal1<void, Temporal::timecnt_t> ContentsShifted;
 
-	boost::shared_ptr<const MidiSource> midi_source ();
-	void set_midi_source (boost::shared_ptr<MidiSource>);
-
-	boost::shared_ptr<Evoral::Note<TimeType> > find_note (NotePtr);
+	std::shared_ptr<Evoral::Note<TimeType> > find_note (NotePtr);
 	PatchChangePtr find_patch_change (Evoral::event_id_t);
-	boost::shared_ptr<Evoral::Note<TimeType> > find_note (Evoral::event_id_t);
-	boost::shared_ptr<Evoral::Event<TimeType> > find_sysex (Evoral::event_id_t);
+	std::shared_ptr<Evoral::Note<TimeType> > find_note (Evoral::event_id_t);
+	std::shared_ptr<Evoral::Event<TimeType> > find_sysex (Evoral::event_id_t);
 
 	InsertMergePolicy insert_merge_policy () const;
 	void set_insert_merge_policy (InsertMergePolicy);
 
-	boost::shared_ptr<Evoral::Control> control_factory(const Evoral::Parameter& id);
+	std::shared_ptr<Evoral::Control> control_factory(const Evoral::Parameter& id);
 
 	void insert_silence_at_start (TimeType);
 	void transpose (NoteDiffCommand *, const NotePtr, int);
 
-protected:
+  protected:
 	int resolve_overlaps_unlocked (const NotePtr, void* arg = 0);
 
-private:
+  protected:
+	friend class NoteDiffCommand;
+	friend class SysExDiffCommand;
+	friend class PatchChangeDiffCommand;
+
+	MidiSource& midi_source() const { return _midi_source; }
+
+  private:
 	struct WriteLockImpl : public AutomatableSequence<TimeType>::WriteLockImpl {
-		WriteLockImpl(Glib::Threads::Mutex::Lock* slock, Glib::Threads::RWLock& s, Glib::Threads::Mutex& c)
+		WriteLockImpl(Source::WriterLock* slock, Glib::Threads::RWLock& s, Glib::Threads::Mutex& c)
 			: AutomatableSequence<TimeType>::WriteLockImpl(s, c)
 			, source_lock (slock)
 		{}
 		~WriteLockImpl() {
 			delete source_lock;
 		}
-		Glib::Threads::Mutex::Lock* source_lock;
+		Source::WriterLock* source_lock;
 	};
 
 public:
@@ -339,18 +352,21 @@ public:
 private:
 	friend class DeltaCommand;
 
-	void source_interpolation_changed (Evoral::Parameter, Evoral::ControlList::InterpolationStyle);
-	void source_automation_state_changed (Evoral::Parameter, AutoState);
-	void control_list_interpolation_changed (Evoral::Parameter, Evoral::ControlList::InterpolationStyle);
-	void automation_list_automation_state_changed (Evoral::Parameter, AutoState);
+	void source_interpolation_changed (Evoral::Parameter const&, AutomationList::InterpolationStyle);
+	void source_automation_state_changed (Evoral::Parameter const&, AutoState);
+	void control_list_interpolation_changed (Evoral::Parameter const&, AutomationList::InterpolationStyle);
+	void automation_list_automation_state_changed (Evoral::Parameter const&, AutoState);
 
 	void control_list_marked_dirty ();
 
 	PBD::ScopedConnectionList _midi_source_connections;
 
-	// We cannot use a boost::shared_ptr here to avoid a retain cycle
-	boost::weak_ptr<MidiSource> _midi_source;
+	MidiSource& _midi_source;
 	InsertMergePolicy _insert_merge_policy;
+
+	typedef std::map<void*,superclock_t> TempoMappingStash;
+	TempoMappingStash tempo_mapping_stash;
+
 };
 
 } /* namespace ARDOUR */

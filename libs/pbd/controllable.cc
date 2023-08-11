@@ -32,10 +32,10 @@
 using namespace PBD;
 using namespace std;
 
-PBD::Signal1<bool, boost::weak_ptr<PBD::Controllable> > Controllable::StartLearning;
-PBD::Signal1<void, boost::weak_ptr<PBD::Controllable> > Controllable::StopLearning;
-PBD::Signal1<void, boost::weak_ptr<PBD::Controllable> > Controllable::GUIFocusChanged;
-PBD::Signal1<void, boost::weak_ptr<PBD::Controllable> > Controllable::ControlTouched;
+PBD::Signal1<bool, std::weak_ptr<PBD::Controllable> > Controllable::StartLearning;
+PBD::Signal1<void, std::weak_ptr<PBD::Controllable> > Controllable::StopLearning;
+PBD::Signal1<void, std::weak_ptr<PBD::Controllable> > Controllable::GUIFocusChanged;
+PBD::Signal1<void, std::weak_ptr<PBD::Controllable> > Controllable::ControlTouched;
 
 Glib::Threads::RWLock Controllable::registry_lock;
 Controllable::Controllables Controllable::registry;
@@ -52,7 +52,7 @@ Controllable::Controllable (const string& name, Flag f)
 }
 
 XMLNode&
-Controllable::get_state ()
+Controllable::get_state () const
 {
 	XMLNode* node = new XMLNode (xml_node_name);
 
@@ -132,7 +132,7 @@ Controllable::remove (Controllable* ctl)
 	}
 }
 
-boost::shared_ptr<Controllable>
+std::shared_ptr<Controllable>
 Controllable::by_id (const ID& id)
 {
 	Glib::Threads::RWLock::ReaderLock lm (registry_lock);
@@ -142,7 +142,23 @@ Controllable::by_id (const ID& id)
 			return (*i)->shared_from_this ();
 		}
 	}
-	return boost::shared_ptr<Controllable>();
+	return std::shared_ptr<Controllable>();
+}
+
+ControllableSet
+Controllable::registered_controllables ()
+{
+	ControllableSet rv;
+	Glib::Threads::RWLock::ReaderLock lm (registry_lock);
+	for (auto const& i : registry) {
+		try {
+			rv.insert (i->shared_from_this ());
+		} catch (...) {
+			/* ignore boost::bad_weak_ptr */
+			// cout << "No shared ctrl: " << i->name() << "\n";
+		}
+	}
+	return rv;
 }
 
 void

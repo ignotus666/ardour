@@ -30,8 +30,8 @@ using namespace ArdourCanvas;
 
 Push2Layout::Push2Layout (Push2& p, Session& s, std::string const & name)
 	: Container (p.canvas())
-	, p2 (p)
-	, session (s)
+	, _p2 (p)
+	, _session (s)
 	, _name (name)
 {
 }
@@ -47,17 +47,17 @@ Push2Layout::compute_bounding_box () const
 	 * child boxes do not.
 	 */
 	_bounding_box = Rect (0, 0, display_width(), display_height());
-	_bounding_box_dirty = false;
+	set_bbox_clean ();
 }
 
 int
 Push2Layout::display_height() const
 {
-	return p2.canvas()->rows();
+	return _p2.canvas()->rows();
 }
 
 int
 Push2Layout::display_width() const
 {
-	return p2.canvas()->cols();
+	return _p2.canvas()->cols();
 }

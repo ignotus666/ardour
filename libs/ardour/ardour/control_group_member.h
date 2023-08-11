@@ -32,7 +32,9 @@ class LIBARDOUR_API ControlGroupMember
 	/* Only a ControlGroup can call this; all membership changes must be
 	   mediated by the ControlGroup, not by operating on the member.
 	*/
-	virtual void set_group (boost::shared_ptr<ControlGroup>) = 0;
+	virtual void set_group (std::shared_ptr<ControlGroup>) = 0;
+	virtual bool push_group (std::shared_ptr<ControlGroup>) = 0;
+	virtual bool pop_group () = 0;
 };
 
 } /* namespace */

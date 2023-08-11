@@ -44,13 +44,27 @@
 #ifdef ARDOURCURLDEBUG
 #define CCERR(msg) do { if (cc != CURLE_OK) { std::cerr << string_compose ("curl_easy_setopt(%1) failed: %2", msg, cc) << std::endl; } } while (0)
 #else
-#define CCERR(msg)
+#define CCERR(msg) (void) cc;
 #endif
 
 using namespace ArdourCurl;
 
 const char* HttpGet::ca_path = NULL;
 const char* HttpGet::ca_info = NULL;
+
+void
+HttpGet::ca_setopt (CURL* c)
+{
+	if (ca_info) {
+		curl_easy_setopt (c, CURLOPT_CAINFO, ca_info);
+	}
+	if (ca_path) {
+		curl_easy_setopt (c, CURLOPT_CAPATH, ca_path);
+	}
+	if (ca_info || ca_path) {
+		curl_easy_setopt (c, CURLOPT_SSL_VERIFYPEER, 1);
+	}
+}
 
 void
 HttpGet::setup_certificate_paths ()
@@ -66,36 +80,29 @@ HttpGet::setup_certificate_paths ()
 	 *
 	 * Short of this mess: we could simply bundle a .crt of
 	 * COMODO (ardour) and ghandi (freesound) and be done with it.
+	 * Alternatively, ship the Mozilla CA list, perhaps using https://mkcert.org/ .
 	 */
 	assert (!ca_path && !ca_info); // call once
 
-	if (Glib::file_test ("/etc/pki/tls/certs/ca-bundle.crt", Glib::FILE_TEST_EXISTS|Glib::FILE_TEST_IS_REGULAR)) {
+	if (Glib::file_test ("/etc/pki/tls/certs/ca-bundle.crt", Glib::FILE_TEST_IS_REGULAR)) {
 		// Fedora / RHEL, Arch
 		ca_info = "/etc/pki/tls/certs/ca-bundle.crt";
 	}
-	else if (Glib::file_test ("/etc/ssl/certs/ca-certificates.crt", Glib::FILE_TEST_EXISTS|Glib::FILE_TEST_IS_REGULAR)) {
+	else if (Glib::file_test ("/etc/ssl/certs/ca-certificates.crt", Glib::FILE_TEST_IS_REGULAR)) {
 		// Debian and derivatives
 		ca_info = "/etc/ssl/certs/ca-certificates.crt";
 	}
-	else if (Glib::file_test ("/etc/pki/tls/cert.pem", Glib::FILE_TEST_EXISTS|Glib::FILE_TEST_IS_REGULAR)) {
+	else if (Glib::file_test ("/etc/pki/tls/cert.pem", Glib::FILE_TEST_IS_REGULAR)) {
 		// GNU/TLS can keep extra stuff here
 		ca_info = "/etc/pki/tls/cert.pem";
 	}
 	// else NULL: use default (currently) "/etc/ssl/certs/ca-certificates.crt" if it exists
 
-	if (Glib::file_test ("/etc/pki/tls/certs/ca-bundle.crt", Glib::FILE_TEST_EXISTS|Glib::FILE_TEST_IS_DIR)) {
-		// we're on RHEL // https://bugzilla.redhat.com/show_bug.cgi?id=1053882
-		ca_path = "/nonexistent_path"; // don't try "/etc/ssl/certs" in case it's curl's default
-	}
-	else if (Glib::file_test ("/etc/ssl/certs", Glib::FILE_TEST_EXISTS|Glib::FILE_TEST_IS_DIR)) {
-		// Debian and derivs + OpenSuSe
-		ca_path = "/etc/ssl/certs";
-	} else {
-		ca_path = "/nonexistent_path"; // don't try -- just in case:
-	}
-
-	/* If we don't set anything defaults are used. at the time of writing we compile bundled curl on debian
-	 * and it'll default to  /etc/ssl/certs and /etc/ssl/certs/ca-certificates.crt
+	/* If we don't set anything, defaults are used. At the time of writing we compile bundled curl on debian
+	 * and it'll default to ca_path = /etc/ssl/certs and ca_info = /etc/ssl/certs/ca-certificates.crt .
+	 * That works on Debian and derivs + openSUSE. It has historically not
+	 * worked on RHEL / Fedora, but worst case the directory exists and doesn't
+	 * prevent ca_info from working. https://bugzilla.redhat.com/show_bug.cgi?id=1053882
 	 */
 }
 
@@ -159,18 +166,11 @@ HttpGet::HttpGet (bool p, bool ssl)
 	cc = curl_easy_setopt (_curl, CURLOPT_TIMEOUT, ARDOUR_CURL_TIMEOUT); CCERR ("CURLOPT_TIMEOUT");
 	cc = curl_easy_setopt (_curl, CURLOPT_NOSIGNAL, 1); CCERR ("CURLOPT_NOSIGNAL");
 	cc = curl_easy_setopt (_curl, CURLOPT_ERRORBUFFER, error_buffer); CCERR ("CURLOPT_ERRORBUFFER");
-	// cc= curl_easy_setopt (_curl, CURLOPT_FOLLOWLOCATION, 1); CCERR ("CURLOPT_FOLLOWLOCATION");
+	// cc = curl_easy_setopt (_curl, CURLOPT_FOLLOWLOCATION, 1); CCERR ("CURLOPT_FOLLOWLOCATION");
 
 	// by default use curl's default.
-	if (ssl && ca_info) {
-		curl_easy_setopt (_curl, CURLOPT_CAINFO, ca_info);
-	}
-	if (ssl && ca_path) {
-		curl_easy_setopt (_curl, CURLOPT_CAPATH, ca_path);
-	}
-
-	if (ssl && (ca_info || ca_path)) {
-		curl_easy_setopt (_curl, CURLOPT_SSL_VERIFYPEER, 1);
+	if (ssl) {
+		ca_setopt (_curl);
 	}
 }
 

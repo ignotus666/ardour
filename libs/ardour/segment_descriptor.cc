@@ -21,7 +21,7 @@
 #include "pbd/i18n.h"
 #include "pbd/xml++.h"
 
-#include "temporal/tempo.h"
+#include "temporal/types_convert.h"
 
 #include "ardour/segment_descriptor.h"
 
@@ -129,7 +129,7 @@ SegmentDescriptor::set_meter (Meter const & m)
 }
 
 XMLNode&
-SegmentDescriptor::get_state (void) const
+SegmentDescriptor::get_state () const
 {
 	XMLNode* root = new XMLNode (X_("SegmentDescriptor"));
 

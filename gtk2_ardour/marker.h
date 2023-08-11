@@ -34,6 +34,8 @@
 
 #include "canvas/fwd.h"
 #include "canvas/types.h"
+#include "canvas/circle.h"
+#include "canvas/text.h"
 
 namespace Temporal {
 	class Point;
@@ -67,12 +69,14 @@ public:
 		PunchIn,
 		PunchOut,
 		RegionCue,
-		Cue
+		Cue,
+		SelectionStart,
+		SelectionEnd,
 	};
 
 
-	ArdourMarker (PublicEditor& editor, ArdourCanvas::Item &, guint32 rgba, const std::string& text, Type,
-	              Temporal::timepos_t const & position, bool handle_events = true, RegionView* rv = 0);
+	ArdourMarker (PublicEditor& editor, ArdourCanvas::Item &, std::string const& color_name, std::string const& text, Type,
+	              Temporal::timepos_t const & position, bool handle_events = true, RegionView* rv = nullptr, bool use_tooltip = true);
 
 	virtual ~ArdourMarker ();
 
@@ -87,10 +91,11 @@ public:
 	void set_show_line (bool);
 	void set_line_height (double);
 
-	void set_position (Temporal::timepos_t const &);
-	void set_name (const std::string&);
-	void set_points_color (uint32_t rgba);
-	void set_color_rgba (uint32_t rgba);
+	virtual void reposition ();
+	virtual void set_position (Temporal::timepos_t const &);
+	void set_name (const std::string&, const std::string & tooltip = std::string());
+	void set_color (std::string const& color_name);
+	void set_points_color (std::string const& color_name);
 	void setup_line ();
 
 	ARDOUR::timepos_t position() const { return _position; }
@@ -116,6 +121,11 @@ public:
 
 	RegionView* region_view() const { return _region_view; }
 
+	/* this will be -1 for all non-cue markers; or cue_index for cue markers */
+
+	void set_cue_index(int c) { _cue_index = c; set_name(_name); }
+	int cue_index() const { return _cue_index; }
+
 protected:
 	PublicEditor& editor;
 
@@ -123,11 +133,12 @@ protected:
 
 	ArdourCanvas::Item* _parent;
 	ArdourCanvas::Item *group;
-	ArdourCanvas::Polygon *mark;
+	ArdourCanvas::Circle *_pcue;
+	ArdourCanvas::Polygon *_pmark;
 	ArdourCanvas::Text *_name_item;
 	ArdourCanvas::Points *points;
 	ArdourCanvas::Line* _track_canvas_line;
-	ArdourCanvas::Rectangle* _name_background;
+	ArdourCanvas::Rectangle* _name_flag;
 
 	std::string  _name;
 	double        unit_position;
@@ -135,13 +146,16 @@ protected:
 	double       _shift;
 	Type         _type;
 	int           name_height;
+	int           name_descent;
 	bool         _selected;
 	bool         _entered;
 	bool         _shown;
 	bool         _line_shown;
-	uint32_t     _color;
-	uint32_t      pre_enter_color;
-	uint32_t     _points_color;
+	bool         _use_tooltip;
+
+	std::string  _color;
+	std::string  _points_color;
+
 	double       _left_label_limit; ///< the number of pixels available to the left of this marker for a label
 	double       _right_label_limit; ///< the number of pixels available to the right of this marker for a label
 	double       _label_offset;
@@ -149,7 +163,8 @@ protected:
 
 	RegionView*  _region_view;
 
-	void reposition ();
+	int          _cue_index;
+
 	void setup_line_x ();
 	void setup_name_display ();
 
@@ -157,41 +172,55 @@ private:
 	/* disallow copy construction */
 	ArdourMarker (ArdourMarker const &);
 	ArdourMarker & operator= (ArdourMarker const &);
+
+	static uint32_t color (std::string const&);
+	void apply_color ();
+	void color_handler ();
+};
+
+class SelectionMarker : public ArdourMarker
+{
+  public:
+	SelectionMarker (PublicEditor& ed, ArdourCanvas::Item& parent, std::string const& color_name, Type);
 };
 
 class MetricMarker : public ArdourMarker
 {
   public:
-	MetricMarker (PublicEditor& ed, ArdourCanvas::Item& parent, guint32 rgba, const std::string& annotation, Type type, Temporal::timepos_t const & pos, bool handle_events);
+	MetricMarker (PublicEditor& ed, ArdourCanvas::Item& parent, std::string const& color_name, const std::string& annotation, Type type, Temporal::timepos_t const & pos, bool handle_events);
 	virtual Temporal::Point const & point() const = 0;
+	virtual void update() = 0;
 };
 
 class TempoMarker : public MetricMarker
 {
   public:
-	TempoMarker (PublicEditor& editor, ArdourCanvas::Item &, guint32 rgba, const std::string& text, Temporal::TempoPoint const &, samplepos_t sample, uint32_t curve_color);
+	TempoMarker (PublicEditor& editor, ArdourCanvas::Item & parent, ArdourCanvas::Item & text_parent, std::string const& color_name, const std::string& text, Temporal::TempoPoint const &, samplepos_t sample, uint32_t curve_color);
 	~TempoMarker ();
 
 	void reset_tempo (Temporal::TempoPoint const & t);
+	void update ();
+	void reposition ();
 
 	Temporal::TempoPoint const & tempo() const { return *_tempo; }
 	Temporal::Point const & point() const;
 
-	void update_height_mark (const double ratio);
 	TempoCurve& curve();
 
   private:
 	Temporal::TempoPoint const * _tempo;
 	TempoCurve* _curve;
+	ArdourCanvas::Text* _mapping_text;
 };
 
 class MeterMarker : public MetricMarker
 {
   public:
-	MeterMarker (PublicEditor& editor, ArdourCanvas::Item &, guint32 rgba, const std::string& text, Temporal::MeterPoint const &);
+	MeterMarker (PublicEditor& editor, ArdourCanvas::Item &, std::string const& color_name, const std::string& text, Temporal::MeterPoint const &);
 	~MeterMarker ();
 
 	void reset_meter (Temporal::MeterPoint const & m);
+	void update ();
 
 	Temporal::MeterPoint const & meter() const { return *_meter; }
 	Temporal::Point const & point() const;
@@ -203,16 +232,20 @@ class MeterMarker : public MetricMarker
 class BBTMarker : public MetricMarker
 {
   public:
-	BBTMarker (PublicEditor& editor, ArdourCanvas::Item &, guint32 rgba, const std::string& text, Temporal::MusicTimePoint const &);
+	BBTMarker (PublicEditor& editor, ArdourCanvas::Item &, std::string const& color_name, Temporal::MusicTimePoint const &);
 	~BBTMarker ();
 
 	void reset_point (Temporal::MusicTimePoint const &);
+	void update ();
+	void set_position (Temporal::timepos_t const &);
 
 	Temporal::MusicTimePoint const & mt_point() const { return *_point; }
 	Temporal::Point const & point() const;
 
   private:
 	Temporal::MusicTimePoint const * _point;
+	TempoMarker* tempo_marker;
+	MeterMarker* meter_marker;
 };
 
 #endif /* __gtk_ardour_marker_h__ */

@@ -24,6 +24,10 @@
 
 #include <vector>
 
+#include <glib.h>
+#include "pbd/gstdio_compat.h"
+
+#include <glibmm/convert.h>
 #include <glibmm/miscutils.h>
 #include <glibmm/timer.h>
 
@@ -66,6 +70,89 @@
 using namespace AudioGrapher;
 using std::string;
 
+/*
+ * The Export Graph is evaluated for each Timespan.
+ *
+ *  - The Graph has at least one ChannelConfig
+ *  - Each ChannnelConfig has at least one SilenceHandler.
+ *  - Each SilenceHandler feeds at least one SRC.
+ *  - Each SRC feeds at least one Intermediate or one SFC
+ *    Intermediates and SFC children are processed sequentally.
+ *  - Each Intermediate (tmp-file) runs SFC children in parallel.
+ *  - Each SFC feeds at least one Encoder.
+ *
+ *
+ * [process callback]
+ *      |
+ *      v
+ * {   ChannelConfig
+ * |    |
+ * |    \-> Interleaver -> Chunker
+ * }                          |
+ *                            v
+ *      /---------------------/
+ *      |
+ *      v
+ * {   SilenceHandler
+ * |    |
+ * |    \-> Silence Trimmer (trim and/or add)
+ * }                      |
+ *                        v
+ *      /-----------------/
+ *      |
+ *      v
+ * {   SRC
+ * |    \-> Sample Rate Conversion
+ * }                |
+ *                  v
+ *      /-----------+-------------------------------------\
+ *      |                                                 |
+ *      v                                                 |
+ * {   Intermediate (normalize or realtime)               |
+ * |    |                                                 |
+ * |    \---+------or-------+-------or-------\            |
+ * |        v               v                v            |
+ * |     Peak Reader -> Loudness Reader -> TMP File       |
+ * |                                         |            |
+ * |                                         v            |
+ * |               Threader (run SFC childs in parallel)  |
+ * }                                         |            |
+ *                                           v            |
+ *      /------------------------------------/            |
+ *      |                                                 |
+ *      v                    /----------------------------/
+ * {   SFC                   |
+ * |    |                    v
+ * |    \-> Normalizer -> Limiter
+ * |                         |
+ * |                         v
+ * |          /------or------+-or-\
+ * |         v                    |
+ * |      Chunker -> Analyzer -> -+
+ * |                              |
+ * |                    /---or----+
+ * |                    |         |
+ * |                    |         v
+ * |                    |     Demo Noise
+ * |                    |         |
+ * |                    +----<----/
+ * |                    |
+ * |                    v
+ * |      Int/Short/Float Converter & Dither
+ * }                    |
+ *      /---------------/
+ *      |
+ *      v
+ * {   Encoder
+ * |    |
+ * |    \---+------or-------+-------or------\
+ * |        v               v                v
+ * |     Int Writer    Float Writer      Pipe Writer
+ * |      (sndfile)     (sndfile)         (ffmpeg)
+ * }
+ *
+ */
+
 namespace ARDOUR {
 
 ExportGraphBuilder::ExportGraphBuilder (Session const & session)
@@ -86,8 +173,8 @@ ExportGraphBuilder::process (samplecnt_t samples, bool last_cycle)
 
 	sampleoffset_t off = 0;
 	for (ChannelMap::iterator it = channels.begin(); it != channels.end(); ++it) {
-		Sample const * process_buffer = 0;
-		it->first->read (process_buffer, samples);
+		Buffer const* buf;
+		it->first->read (buf, samples);
 
 		if (session.remaining_latency_preroll () >= _master_align + samples) {
 			/* Skip processing during pre-roll, only read/write export ringbuffers */
@@ -100,9 +187,17 @@ ExportGraphBuilder::process (samplecnt_t samples, bool last_cycle)
 			assert (off < samples);
 		}
 
-		ConstProcessContext<Sample> context(&process_buffer[off], samples - off, 1);
-		if (last_cycle) { context().set_flag (ProcessContext<Sample>::EndOfInput); }
-		it->second->process (context);
+		AudioBuffer const* ab = dynamic_cast<AudioBuffer const*> (buf);
+		MidiBuffer const*  mb;
+		if (ab) {
+			Sample const* process_buffer = ab->data ();
+			ConstProcessContext<Sample> context(&process_buffer[off], samples - off, 1);
+			if (last_cycle) { context().set_flag (ProcessContext<Sample>::EndOfInput); }
+			it->second->process (context);
+		}
+		if  ((mb = dynamic_cast<MidiBuffer const*> (buf))) {
+			it->second->process (*mb, off, samples - off, last_cycle);
+		}
 	}
 
 	return samples - off;
@@ -140,6 +235,7 @@ ExportGraphBuilder::reset ()
 	channels.clear ();
 	intermediates.clear ();
 	analysis_map.clear();
+	_exported_files.clear();
 	_realtime = false;
 	_master_align = 0;
 }
@@ -156,7 +252,7 @@ ExportGraphBuilder::cleanup (bool remove_out_files/*=false*/)
 }
 
 void
-ExportGraphBuilder::set_current_timespan (boost::shared_ptr<ExportTimespan> span)
+ExportGraphBuilder::set_current_timespan (std::shared_ptr<ExportTimespan> span)
 {
 	timespan = span;
 }
@@ -198,7 +294,7 @@ ExportGraphBuilder::add_config (FileSpec const & config, bool rt)
 	/* Split channel configurations are split into several channel configurations,
 	 * each corresponding to a file, at this stage
 	 */
-	typedef std::list<boost::shared_ptr<ExportChannelConfiguration> > ConfigList;
+	typedef std::list<std::shared_ptr<ExportChannelConfiguration> > ConfigList;
 	ConfigList file_configs;
 	new_config.channel_config->configurations_for_files (file_configs);
 
@@ -242,7 +338,7 @@ ExportGraphBuilder::add_split_config (FileSpec const & config)
 /* Encoder */
 
 template <>
-boost::shared_ptr<AudioGrapher::Sink<Sample> >
+std::shared_ptr<AudioGrapher::Sink<Sample> >
 ExportGraphBuilder::Encoder::init (FileSpec const & new_config)
 {
 	config = new_config;
@@ -256,7 +352,7 @@ ExportGraphBuilder::Encoder::init (FileSpec const & new_config)
 }
 
 template <>
-boost::shared_ptr<AudioGrapher::Sink<int> >
+std::shared_ptr<AudioGrapher::Sink<int> >
 ExportGraphBuilder::Encoder::init (FileSpec const & new_config)
 {
 	config = new_config;
@@ -265,7 +361,7 @@ ExportGraphBuilder::Encoder::init (FileSpec const & new_config)
 }
 
 template <>
-boost::shared_ptr<AudioGrapher::Sink<short> >
+std::shared_ptr<AudioGrapher::Sink<short> >
 ExportGraphBuilder::Encoder::init (FileSpec const & new_config)
 {
 	config = new_config;
@@ -314,7 +410,9 @@ ExportGraphBuilder::Encoder::destroy_writer (bool delete_out_file)
 bool
 ExportGraphBuilder::Encoder::operator== (FileSpec const & other_config) const
 {
-	return get_real_format (config) == get_real_format (other_config);
+	ExportFormatSpecification const& a = *config.format;
+	ExportFormatSpecification const& b = *other_config.format;
+	return a == b;
 }
 
 int
@@ -326,7 +424,7 @@ ExportGraphBuilder::Encoder::get_real_format (FileSpec const & config)
 
 template<typename T>
 void
-ExportGraphBuilder::Encoder::init_writer (boost::shared_ptr<AudioGrapher::SndfileWriter<T> > & writer)
+ExportGraphBuilder::Encoder::init_writer (std::shared_ptr<AudioGrapher::SndfileWriter<T> > & writer)
 {
 	unsigned channels = config.channel_config->get_n_chans();
 	int format = get_real_format (config);
@@ -335,7 +433,9 @@ ExportGraphBuilder::Encoder::init_writer (boost::shared_ptr<AudioGrapher::Sndfil
 
 	writer.reset (new AudioGrapher::SndfileWriter<T> (writer_filename, format, channels, config.format->sample_rate(), config.broadcast_info));
 	writer->FileWritten.connect_same_thread (copy_files_connection, boost::bind (&ExportGraphBuilder::Encoder::copy_files, this, _1));
-	if (format & ExportFormatBase::SF_Vorbis) {
+	if ((format & SF_FORMAT_SUBMASK) == ExportFormatBase::SF_Vorbis ||
+	    (format & SF_FORMAT_TYPEMASK) == ExportFormatBase::F_MPEG ||
+	    (format & SF_FORMAT_SUBMASK) == ExportFormatBase::SF_Opus) {
 		/* libsndfile uses range 0..1 (worst.. best) for
 		 * SFC_SET_VBR_ENCODING_QUALITY and maps
 		 * SFC_SET_COMPRESSION_LEVEL = 1.0 - VBR_ENCODING_QUALITY
@@ -349,7 +449,7 @@ ExportGraphBuilder::Encoder::init_writer (boost::shared_ptr<AudioGrapher::Sndfil
 
 template<typename T>
 void
-ExportGraphBuilder::Encoder::init_writer (boost::shared_ptr<AudioGrapher::CmdPipeWriter<T> > & writer)
+ExportGraphBuilder::Encoder::init_writer (std::shared_ptr<AudioGrapher::CmdPipeWriter<T> > & writer)
 {
 	unsigned channels = config.channel_config->get_n_chans();
 	config.filename->set_channel_config(config.channel_config);
@@ -364,14 +464,34 @@ ExportGraphBuilder::Encoder::init_writer (boost::shared_ptr<AudioGrapher::CmdPip
 
 	int quality = config.format->codec_quality ();
 
+	gchar* tmpfile_name = NULL;
+#if 1 // directly pipe to ffmpeg
+	gint fd = -1;
+#else // write to tmp-file, do not pipe to ffmpeg
+	gint fd = g_file_open_tmp ("ardour-export.XXXXXX", &tmpfile_name, NULL);
+	if (fd < 0) {
+		tmpfile_name = NULL;
+	}
+#endif
+
+	/* Note mp3 encoding adds silence at start and end
+	 * https://lame.sourceforge.io/tech-FAQ.txt
+	 */
+
 	int a=0;
 	char **argp = (char**) calloc (100, sizeof(char*));
 	char tmp[64];
 	argp[a++] = strdup(ffmpeg_exe.c_str());
 	argp[a++] = strdup ("-f");
+#if G_BYTE_ORDER == G_LITTLE_ENDIAN
 	argp[a++] = strdup ("f32le");
 	argp[a++] = strdup ("-acodec");
 	argp[a++] = strdup ("pcm_f32le");
+#else
+	argp[a++] = strdup ("f32be");
+	argp[a++] = strdup ("-acodec");
+	argp[a++] = strdup ("pcm_f32be");
+#endif
 	argp[a++] = strdup ("-ac");
 	snprintf (tmp, sizeof(tmp), "%d", channels);
 	argp[a++] = strdup (tmp);
@@ -379,9 +499,17 @@ ExportGraphBuilder::Encoder::init_writer (boost::shared_ptr<AudioGrapher::CmdPip
 	snprintf (tmp, sizeof(tmp), "%d", config.format->sample_rate());
 	argp[a++] = strdup (tmp);
 	argp[a++] = strdup ("-i");
-	argp[a++] = strdup ("pipe:0");
+	if (fd >= 0) {
+		argp[a++] = strdup (tmpfile_name);
+	} else {
+		argp[a++] = strdup ("pipe:0");
+	}
 
-	argp[a++] = strdup ("-y");
+	argp[a++] = strdup ("-f");
+	argp[a++] = strdup ("mp3");
+	argp[a++] = strdup ("-acodec");
+	argp[a++] = strdup ("mp3");
+
 	if (quality <= 0) {
 		/* variable rate, lower is better */
 		snprintf (tmp, sizeof(tmp), "%d", -quality);
@@ -405,17 +533,25 @@ ExportGraphBuilder::Encoder::init_writer (boost::shared_ptr<AudioGrapher::CmdPip
 		argp[a++] = SystemExec::format_key_value_parameter (it->first.c_str(), it->second.c_str());
 	}
 
+	argp[a++] = strdup ("-y");
+#ifdef PLATFORM_WINDOWS
+	try {
+		argp[a] = strdup (Glib::locale_from_utf8 (writer_filename).c_str());
+	} catch (Glib::ConvertError&) {
+		argp[a] = strdup (Glib::convert_with_fallback (writer_filename, "UTF-8", "ASCII", "_").c_str()); // or "CP1252"
+	}
+	++a;
+#else
 	argp[a++] = strdup (writer_filename.c_str());
+#endif
 	argp[a] = (char *)0;
 
 	/* argp is free()d in ~SystemExec,
 	 * SystemExec is deleted when writer is destroyed */
-	ARDOUR::SystemExec* exec = new ARDOUR::SystemExec (ffmpeg_exe, argp);
+	ARDOUR::SystemExec* exec = new ARDOUR::SystemExec (ffmpeg_exe, argp, true);
+
 	PBD::info << "Encode command: { " << exec->to_s () << "}" << endmsg;
-	if (exec->start (SystemExec::MergeWithStdin)) {
-		throw ExportFailed ("External encoder (ffmpeg) cannot be started.");
-	}
-	writer.reset (new AudioGrapher::CmdPipeWriter<T> (exec, writer_filename));
+	writer.reset (new AudioGrapher::CmdPipeWriter<T> (exec, writer_filename, fd, tmpfile_name));
 	writer->FileWritten.connect_same_thread (copy_files_connection, boost::bind (&ExportGraphBuilder::Encoder::copy_files, this, _1));
 }
 
@@ -445,7 +581,10 @@ ExportGraphBuilder::SFC::SFC (ExportGraphBuilder &parent, FileSpec const & new_c
 
 	normalizer->add_output (limiter);
 
-	boost::shared_ptr<AudioGrapher::ListedSource<float> > intermediate = limiter;
+	std::shared_ptr<AudioGrapher::ListedSource<float> > intermediate = limiter;
+
+	config.filename->set_channel_config (config.channel_config);
+	parent.add_export_fn (config.filename->get_path (config.format));
 
 	if (_analyse) {
 		samplecnt_t sample_rate = parent.session.nominal_sample_rate();
@@ -460,7 +599,6 @@ ExportGraphBuilder::SFC::SFC (ExportGraphBuilder &parent, FileSpec const & new_c
 		                              800 * ui_scale_factor, 200 * ui_scale_factor
 		                             ));
 
-		config.filename->set_channel_config (config.channel_config);
 		parent.add_analyser (config.filename->get_path (config.format), analyser);
 		limiter->set_result (analyser->result (true));
 
@@ -596,7 +734,18 @@ ExportGraphBuilder::SFC::operator== (FileSpec const& other_config) const
 	ExportFormatSpecification const& a = *config.format;
 	ExportFormatSpecification const& b = *other_config.format;
 
-	bool id = a.sample_format() == b.sample_format();
+	bool id;
+	if (a.analyse () || b.analyse ()) {
+		/* Show dedicated analysis result for files with different
+		 * quality or wav/bwav. This adds a dedicated SFC for each
+		 * format, rater than only running dedicated Encoders as
+		 * childs of of the same SFC.
+		 */
+		id = a == b;
+	} else {
+		/* delegate disambiguation to Encoder::operator== */
+		id = a.sample_format() == b.sample_format();
+	}
 
 	if (a.normalize_loudness () == b.normalize_loudness ()) {
 		id &= a.normalize_lufs () == b.normalize_lufs ();
@@ -933,18 +1082,33 @@ ExportGraphBuilder::ChannelConfig::ChannelConfig (ExportGraphBuilder & parent, F
 
 	ChannelList const & channel_list = config.channel_config->get_channels();
 	unsigned chan = 0;
+	unsigned n_audio = 0;
 	for (ChannelList::const_iterator it = channel_list.begin(); it != channel_list.end(); ++it, ++chan) {
 		ChannelMap::iterator map_it = channel_map.find (*it);
 		if (map_it == channel_map.end()) {
 			std::pair<ChannelMap::iterator, bool> result_pair =
-				channel_map.insert (std::make_pair (*it, IdentityVertexPtr (new IdentityVertex<Sample> ())));
+				channel_map.insert (std::make_pair (*it, AnyExportPtr (new AnyExport ())));
 			assert (result_pair.second);
 			map_it = result_pair.first;
 		}
-		map_it->second->add_output (interleaver->input (chan));
+		if ((*it)->midi ()) {
+			config.filename->set_channel_config(config.channel_config);
+			std::string writer_filename = config.filename->get_path (ExportFormatSpecPtr ()) + ".mid";
+			map_it->second->midi.init (writer_filename, parent.timespan->get_start ());
+			parent.add_export_fn (writer_filename);
+		}
+		if ((*it)->audio ()) {
+			++n_audio;
+			map_it->second->add_output (interleaver->input (chan));
+		}
 	}
 
-	add_child (new_config);
+	if (n_audio > 0) {
+		add_child (new_config);
+	} else {
+		chunker.reset ();
+		interleaver.reset ();
+	}
 }
 
 void

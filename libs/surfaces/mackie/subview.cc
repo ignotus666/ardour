@@ -60,30 +60,30 @@ SubviewFactory* SubviewFactory::instance() {
 
 SubviewFactory::SubviewFactory() {};
 
-boost::shared_ptr<Subview> SubviewFactory::create_subview(
+std::shared_ptr<Subview> SubviewFactory::create_subview(
 		Subview::Mode svm,
 		MackieControlProtocol& mcp,
-		boost::shared_ptr<ARDOUR::Stripable> subview_stripable)
+		std::shared_ptr<ARDOUR::Stripable> subview_stripable)
 {
 	switch (svm) {
 		case Subview::EQ:
-			return boost::shared_ptr<EQSubview>(new EQSubview (mcp, subview_stripable));
+			return std::shared_ptr<EQSubview>(new EQSubview (mcp, subview_stripable));
 		case Subview::Dynamics:
-			return boost::shared_ptr<DynamicsSubview>(new DynamicsSubview (mcp, subview_stripable));
+			return std::shared_ptr<DynamicsSubview>(new DynamicsSubview (mcp, subview_stripable));
 		case Subview::Sends:
-			return boost::shared_ptr<SendsSubview>(new SendsSubview (mcp, subview_stripable));
+			return std::shared_ptr<SendsSubview>(new SendsSubview (mcp, subview_stripable));
 		case Subview::TrackView:
-			return boost::shared_ptr<TrackViewSubview>(new TrackViewSubview (mcp, subview_stripable));
+			return std::shared_ptr<TrackViewSubview>(new TrackViewSubview (mcp, subview_stripable));
 		case Subview::Plugin:
-			return boost::shared_ptr<PluginSubview>(new PluginSubview (mcp, subview_stripable));
+			return std::shared_ptr<PluginSubview>(new PluginSubview (mcp, subview_stripable));
 		case Subview::None:
 		default:
-			return boost::shared_ptr<NoneSubview>(new NoneSubview (mcp, subview_stripable));
+			return std::shared_ptr<NoneSubview>(new NoneSubview (mcp, subview_stripable));
 	}
 }
 
 
-Subview::Subview(MackieControlProtocol& mcp, boost::shared_ptr<ARDOUR::Stripable> subview_stripable)
+Subview::Subview(MackieControlProtocol& mcp, std::shared_ptr<ARDOUR::Stripable> subview_stripable)
 	: _mcp(mcp)
 	, _subview_stripable(subview_stripable)
 {
@@ -106,7 +106,7 @@ Subview::reset_all_vpot_controls()
 
 		if (*iter != 0)
 		{
-			(*iter)->set_control (boost::shared_ptr<AutomationControl>());
+			(*iter)->set_control (std::shared_ptr<AutomationControl>());
 		}
 
 		iter = tmp;
@@ -123,7 +123,7 @@ void Subview::handle_vselect_event(uint32_t global_strip_position)
 		return;
 	}
 
-	boost::shared_ptr<AutomationControl> control = vpot->control ();
+	std::shared_ptr<AutomationControl> control = vpot->control ();
 	if (!control) {
 		return;
 	}
@@ -152,7 +152,7 @@ void Subview::handle_vselect_event(uint32_t global_strip_position)
 }
 
 bool
-Subview::subview_mode_would_be_ok (Subview::Mode mode, boost::shared_ptr<Stripable> r, std::string& reason_why_not)
+Subview::subview_mode_would_be_ok (Subview::Mode mode, std::shared_ptr<Stripable> r, std::string& reason_why_not)
 {
 	switch (mode) {
 	case Subview::None:
@@ -242,14 +242,14 @@ void Subview::do_parameter_display(std::string& display, const ParameterDescript
 
 
 
-NoneSubview::NoneSubview(MackieControlProtocol& mcp, boost::shared_ptr<ARDOUR::Stripable> subview_stripable)
+NoneSubview::NoneSubview(MackieControlProtocol& mcp, std::shared_ptr<ARDOUR::Stripable> subview_stripable)
 	: Subview(mcp, subview_stripable)
 {}
 
 NoneSubview::~NoneSubview()
 {}
 
-bool NoneSubview::subview_mode_would_be_ok (boost::shared_ptr<ARDOUR::Stripable> r, std::string& reason_why_not)
+bool NoneSubview::subview_mode_would_be_ok (std::shared_ptr<ARDOUR::Stripable> r, std::string& reason_why_not)
 {
 	// always possible
 	return true;
@@ -275,14 +275,14 @@ void NoneSubview::setup_vpot(
 
 
 
-EQSubview::EQSubview(MackieControlProtocol& mcp, boost::shared_ptr<ARDOUR::Stripable> subview_stripable)
+EQSubview::EQSubview(MackieControlProtocol& mcp, std::shared_ptr<ARDOUR::Stripable> subview_stripable)
 	: Subview(mcp, subview_stripable)
 {}
 
 EQSubview::~EQSubview()
 {}
 
-bool EQSubview::subview_mode_would_be_ok (boost::shared_ptr<ARDOUR::Stripable> r, std::string& reason_why_not)
+bool EQSubview::subview_mode_would_be_ok (std::shared_ptr<ARDOUR::Stripable> r, std::string& reason_why_not)
 {
 	if (r && r->eq_band_cnt() > 0) {
 		return true;
@@ -315,7 +315,7 @@ void EQSubview::setup_vpot(
 	}
 
 
-	boost::shared_ptr<AutomationControl> pc;
+	std::shared_ptr<AutomationControl> pc;
 	std::string pot_id;
 
 #ifdef MIXBUS
@@ -406,7 +406,7 @@ void EQSubview::setup_vpot(
 
 	//If a controllable was found, connect it up, and put the labels in the display.
 	if (pc) {
-		pc->Changed.connect (_subview_connections, MISSING_INVALIDATOR, boost::bind (&EQSubview::notify_change, this, boost::weak_ptr<AutomationControl>(pc), global_strip_position, false), ui_context());
+		pc->Changed.connect (_subview_connections, MISSING_INVALIDATOR, boost::bind (&EQSubview::notify_change, this, std::weak_ptr<AutomationControl>(pc), global_strip_position, false), ui_context());
 		vpot->set_control (pc);
 
 		if (!pot_id.empty()) {
@@ -416,15 +416,15 @@ void EQSubview::setup_vpot(
 		}
 
 	} else {  //no controllable was found;  just clear this knob
-		vpot->set_control (boost::shared_ptr<AutomationControl>());
+		vpot->set_control (std::shared_ptr<AutomationControl>());
 		pending_display[0] = std::string();
 		pending_display[1] = std::string();
 	}
 
-	notify_change (boost::weak_ptr<AutomationControl>(pc), global_strip_position, true);
+	notify_change (std::weak_ptr<AutomationControl>(pc), global_strip_position, true);
 }
 
-void EQSubview::notify_change (boost::weak_ptr<ARDOUR::AutomationControl> pc, uint32_t global_strip_position, bool force)
+void EQSubview::notify_change (std::weak_ptr<ARDOUR::AutomationControl> pc, uint32_t global_strip_position, bool force)
 {
 	if (!_subview_stripable) {
 		return;
@@ -438,7 +438,7 @@ void EQSubview::notify_change (boost::weak_ptr<ARDOUR::AutomationControl> pc, ui
 		return;
 	}
 
-	boost::shared_ptr<AutomationControl> control = pc.lock ();
+	std::shared_ptr<AutomationControl> control = pc.lock ();
 	if (control) {
 		float val = control->get_value();
 		do_parameter_display(pending_display[1], control->desc(), val, strip, true);
@@ -449,14 +449,14 @@ void EQSubview::notify_change (boost::weak_ptr<ARDOUR::AutomationControl> pc, ui
 
 
 
-DynamicsSubview::DynamicsSubview(MackieControlProtocol& mcp, boost::shared_ptr<ARDOUR::Stripable> subview_stripable)
+DynamicsSubview::DynamicsSubview(MackieControlProtocol& mcp, std::shared_ptr<ARDOUR::Stripable> subview_stripable)
 	: Subview(mcp, subview_stripable)
 {}
 
 DynamicsSubview::~DynamicsSubview()
 {}
 
-bool DynamicsSubview::subview_mode_would_be_ok (boost::shared_ptr<ARDOUR::Stripable> r, std::string& reason_why_not)
+bool DynamicsSubview::subview_mode_would_be_ok (std::shared_ptr<ARDOUR::Stripable> r, std::string& reason_why_not)
 {
 	if (r && r->comp_enable_controllable()) {
 		return true;
@@ -488,27 +488,27 @@ void DynamicsSubview::setup_vpot(
 		return;
 	}
 
-	boost::shared_ptr<AutomationControl> tc = _subview_stripable->comp_threshold_controllable ();
-	boost::shared_ptr<AutomationControl> sc = _subview_stripable->comp_speed_controllable ();
-	boost::shared_ptr<AutomationControl> mc = _subview_stripable->comp_mode_controllable ();
-	boost::shared_ptr<AutomationControl> kc = _subview_stripable->comp_makeup_controllable ();
-	boost::shared_ptr<AutomationControl> ec = _subview_stripable->comp_enable_controllable ();
+	std::shared_ptr<AutomationControl> tc = _subview_stripable->comp_threshold_controllable ();
+	std::shared_ptr<AutomationControl> sc = _subview_stripable->comp_speed_controllable ();
+	std::shared_ptr<AutomationControl> mc = _subview_stripable->comp_mode_controllable ();
+	std::shared_ptr<AutomationControl> kc = _subview_stripable->comp_makeup_controllable ();
+	std::shared_ptr<AutomationControl> ec = _subview_stripable->comp_enable_controllable ();
 
 #ifdef MIXBUS32C	//Mixbus32C needs to spill the filter controls into the comp section
-	boost::shared_ptr<AutomationControl> hpfc = _subview_stripable->filter_freq_controllable (true);
-	boost::shared_ptr<AutomationControl> lpfc = _subview_stripable->filter_freq_controllable (false);
-	boost::shared_ptr<AutomationControl> fec = _subview_stripable->filter_enable_controllable (true); // shared HP/LP
+	std::shared_ptr<AutomationControl> hpfc = _subview_stripable->filter_freq_controllable (true);
+	std::shared_ptr<AutomationControl> lpfc = _subview_stripable->filter_freq_controllable (false);
+	std::shared_ptr<AutomationControl> fec = _subview_stripable->filter_enable_controllable (true); // shared HP/LP
 #endif
 
 	/* we will control the global_strip_position-th available parameter, from the list in the
 	 * order shown above.
 	 */
 
-	std::vector<std::pair<boost::shared_ptr<AutomationControl>, std::string > > available;
+	std::vector<std::pair<std::shared_ptr<AutomationControl>, std::string > > available;
 	std::vector<AutomationType> params;
 
 	if (tc) { available.push_back (std::make_pair (tc, "Thresh")); }
-	if (sc) { available.push_back (std::make_pair (sc, mc ? _subview_stripable->comp_speed_name (mc->get_value()) : "Speed")); }
+	if (sc) { available.push_back (std::make_pair (sc, mc ? mc->get_user_string () : "Speed")); }
 	if (mc) { available.push_back (std::make_pair (mc, "Mode")); }
 	if (kc) { available.push_back (std::make_pair (kc, "Makeup")); }
 	if (ec) { available.push_back (std::make_pair (ec, "on/off")); }
@@ -521,18 +521,18 @@ void DynamicsSubview::setup_vpot(
 
 	if (global_strip_position >= available.size()) {
 		/* this knob is not needed to control the available parameters */
-		vpot->set_control (boost::shared_ptr<AutomationControl>());
+		vpot->set_control (std::shared_ptr<AutomationControl>());
 		pending_display[0] = std::string();
 		pending_display[1] = std::string();
 		return;
 	}
 
-	boost::shared_ptr<AutomationControl> pc;
+	std::shared_ptr<AutomationControl> pc;
 
 	pc = available[global_strip_position].first;
 	std::string pot_id = available[global_strip_position].second;
 
-	pc->Changed.connect (_subview_connections, MISSING_INVALIDATOR, boost::bind (&DynamicsSubview::notify_change, this, boost::weak_ptr<AutomationControl>(pc), global_strip_position, false, true), ui_context());
+	pc->Changed.connect (_subview_connections, MISSING_INVALIDATOR, boost::bind (&DynamicsSubview::notify_change, this, std::weak_ptr<AutomationControl>(pc), global_strip_position, false, true), ui_context());
 	vpot->set_control (pc);
 
 	if (!pot_id.empty()) {
@@ -541,11 +541,11 @@ void DynamicsSubview::setup_vpot(
 		pending_display[0] = std::string();
 	}
 
-	notify_change (boost::weak_ptr<AutomationControl>(pc), global_strip_position, true, false);
+	notify_change (std::weak_ptr<AutomationControl>(pc), global_strip_position, true, false);
 }
 
 void
-DynamicsSubview::notify_change (boost::weak_ptr<ARDOUR::AutomationControl> pc, uint32_t global_strip_position, bool force, bool propagate_mode)
+DynamicsSubview::notify_change (std::weak_ptr<ARDOUR::AutomationControl> pc, uint32_t global_strip_position, bool force, bool propagate_mode)
 {
 	if (!_subview_stripable)
 	{
@@ -560,7 +560,7 @@ DynamicsSubview::notify_change (boost::weak_ptr<ARDOUR::AutomationControl> pc, u
 		return;
 	}
 
-	boost::shared_ptr<AutomationControl> control= pc.lock ();
+	std::shared_ptr<AutomationControl> control= pc.lock ();
 	bool reset_all = false;
 
 	if (propagate_mode && reset_all) {
@@ -571,7 +571,7 @@ DynamicsSubview::notify_change (boost::weak_ptr<ARDOUR::AutomationControl> pc, u
 	if (control) {
 		float val = control->get_value();
 		if (control == _subview_stripable->comp_mode_controllable ()) {
-			pending_display[1] = _subview_stripable->comp_mode_name (val);
+			pending_display[1] = control->get_user_string ();
 		} else {
 			do_parameter_display(pending_display[1], control->desc(), val, strip, true);
 		}
@@ -582,14 +582,15 @@ DynamicsSubview::notify_change (boost::weak_ptr<ARDOUR::AutomationControl> pc, u
 
 
 
-SendsSubview::SendsSubview(MackieControlProtocol& mcp, boost::shared_ptr<ARDOUR::Stripable> subview_stripable)
+SendsSubview::SendsSubview(MackieControlProtocol& mcp, std::shared_ptr<ARDOUR::Stripable> subview_stripable)
 	: Subview(mcp, subview_stripable)
+	, _current_bank(0)
 {}
 
 SendsSubview::~SendsSubview()
 {}
 
-bool SendsSubview::subview_mode_would_be_ok (boost::shared_ptr<ARDOUR::Stripable> r, std::string& reason_why_not)
+bool SendsSubview::subview_mode_would_be_ok (std::shared_ptr<ARDOUR::Stripable> r, std::string& reason_why_not)
 {
 	if (r && r->send_level_controllable (0)) {
 		return true;
@@ -614,18 +615,18 @@ void SendsSubview::setup_vpot(
 		Pot* vpot,
 		std::string pending_display[2])
 {
-	const uint32_t global_strip_position = _mcp.global_index (*strip);
-	store_pointers(strip, vpot, pending_display, global_strip_position);
+	const uint32_t global_strip_position = _mcp.global_index (*strip) + _current_bank;
+	store_pointers(strip, vpot, pending_display, global_strip_position - _current_bank);
 
 	if (!_subview_stripable) {
 		return;
 	}
 
-	boost::shared_ptr<AutomationControl> pc = _subview_stripable->send_level_controllable (global_strip_position);
+	std::shared_ptr<AutomationControl> pc = _subview_stripable->send_level_controllable (global_strip_position);
 
 	if (!pc) {
 		/* nothing to control */
-		vpot->set_control (boost::shared_ptr<AutomationControl>());
+		vpot->set_control (std::shared_ptr<AutomationControl>());
 		pending_display[0] = std::string();
 		pending_display[1] = std::string();
 		return;
@@ -649,12 +650,12 @@ SendsSubview::notify_send_level_change (uint32_t global_strip_position, bool for
 	Strip* strip = 0;
 	Pot* vpot = 0;
 	std::string* pending_display = 0;
-	if (!retrieve_pointers(&strip, &vpot, &pending_display, global_strip_position))
+	if (!retrieve_pointers(&strip, &vpot, &pending_display, global_strip_position - _current_bank))
 	{
 		return;
 	}
 
-	boost::shared_ptr<AutomationControl> control = _subview_stripable->send_level_controllable (global_strip_position);
+	std::shared_ptr<AutomationControl> control = _subview_stripable->send_level_controllable (global_strip_position);
 	if (!control) {
 		return;
 	}
@@ -672,6 +673,11 @@ SendsSubview::notify_send_level_change (uint32_t global_strip_position, bool for
 
 void SendsSubview::handle_vselect_event(uint32_t global_strip_position)
 {
+	/* adjust global_strip_position to make sure we're accessing the
+	 * correct controllable since we might be banked within the subview.
+	 */
+	global_strip_position += _current_bank;
+
 	/* Send mode: press enables/disables the relevant
 		* send, but the vpot is bound to the send-level so we
 		* need to lookup the enable/disable control
@@ -686,12 +692,12 @@ void SendsSubview::handle_vselect_event(uint32_t global_strip_position)
 	Strip* strip = 0;
 	Pot* vpot = 0;
 	std::string* pending_display = 0;
-	if (!retrieve_pointers(&strip, &vpot, &pending_display, global_strip_position))
+	if (!retrieve_pointers(&strip, &vpot, &pending_display, global_strip_position - _current_bank))
 	{
 		return;
 	}
 
-	boost::shared_ptr<AutomationControl> control = _subview_stripable->send_enable_controllable(global_strip_position);
+	std::shared_ptr<AutomationControl> control = _subview_stripable->send_enable_controllable(global_strip_position);
 
 	if (control) {
 		bool currently_enabled = (bool) control->get_value();
@@ -717,16 +723,46 @@ void SendsSubview::handle_vselect_event(uint32_t global_strip_position)
 	}
 }
 
+bool SendsSubview::handle_cursor_left_press()
+{
+	if (_current_bank >= 1)
+	{
+		_current_bank -= 1;
+	}
+	mcp().redisplay_subview_mode();
+
+	return true;
+}
+
+bool SendsSubview::handle_cursor_right_press()
+{
+	uint32_t num_sends = 0;
+	if (_subview_stripable->send_name(0).size() > 0) {
+		bool more_sends = true;
+		while (more_sends) {
+			if (_subview_stripable->send_name(num_sends).size() > 0) {
+				num_sends++;
+			} else {
+				more_sends = false;
+			}
+		}
+	}
+	if (num_sends > _current_bank + 1) {
+		_current_bank += 1;
+		mcp().redisplay_subview_mode();
+	}
+	return true;
+}
 
 
-TrackViewSubview::TrackViewSubview(MackieControlProtocol& mcp, boost::shared_ptr<ARDOUR::Stripable> subview_stripable)
+TrackViewSubview::TrackViewSubview(MackieControlProtocol& mcp, std::shared_ptr<ARDOUR::Stripable> subview_stripable)
 	: Subview(mcp, subview_stripable)
 {}
 
 TrackViewSubview::~TrackViewSubview()
 {}
 
-bool TrackViewSubview::subview_mode_would_be_ok (boost::shared_ptr<ARDOUR::Stripable> r, std::string& reason_why_not)
+bool TrackViewSubview::subview_mode_would_be_ok (std::shared_ptr<ARDOUR::Stripable> r, std::string& reason_why_not)
 {
 	if (r)  {
 		return true;
@@ -756,7 +792,7 @@ void TrackViewSubview::setup_vpot(
 
 	if (global_strip_position > 4) {
 		/* nothing to control */
-		vpot->set_control (boost::shared_ptr<AutomationControl>());
+		vpot->set_control (std::shared_ptr<AutomationControl>());
 		pending_display[0] = std::string();
 		pending_display[1] = std::string();
 		return;
@@ -766,8 +802,8 @@ void TrackViewSubview::setup_vpot(
 		return;
 	}
 
-	boost::shared_ptr<AutomationControl> pc;
-	boost::shared_ptr<Track> track = boost::dynamic_pointer_cast<Track> (_subview_stripable);
+	std::shared_ptr<AutomationControl> pc;
+	std::shared_ptr<Track> track = std::dynamic_pointer_cast<Track> (_subview_stripable);
 
 	switch (global_strip_position) {
 	case 0:
@@ -838,8 +874,8 @@ TrackViewSubview::notify_change (AutomationType type, uint32_t global_strip_posi
 		return;
 	}
 
-	boost::shared_ptr<AutomationControl> control;
-	boost::shared_ptr<Track> track = boost::dynamic_pointer_cast<Track> (_subview_stripable);
+	std::shared_ptr<AutomationControl> control;
+	std::shared_ptr<Track> track = std::dynamic_pointer_cast<Track> (_subview_stripable);
 	bool screen_hold = false;
 
 	switch (type) {
@@ -878,10 +914,10 @@ TrackViewSubview::notify_change (AutomationType type, uint32_t global_strip_posi
 
 
 
-PluginSubview::PluginSubview(MackieControlProtocol& mcp, boost::shared_ptr<ARDOUR::Stripable> subview_stripable)
+PluginSubview::PluginSubview(MackieControlProtocol& mcp, std::shared_ptr<ARDOUR::Stripable> subview_stripable)
 	: Subview(mcp, subview_stripable)
 {
-	_plugin_subview_state = boost::shared_ptr<PluginSelect>(new PluginSelect (*this));
+	_plugin_subview_state = std::shared_ptr<PluginSelect>(new PluginSelect (*this));
 	connect_processors_changed_signal();
 }
 
@@ -890,7 +926,7 @@ PluginSubview::~PluginSubview()
 
 void PluginSubview::connect_processors_changed_signal()
 {
-	boost::shared_ptr<Route> route = boost::dynamic_pointer_cast<Route> (_subview_stripable);
+	std::shared_ptr<Route> route = std::dynamic_pointer_cast<Route> (_subview_stripable);
 	if (route)
 	{
 		route->processors_changed.connect(_subview_connections, MISSING_INVALIDATOR, boost::bind (&PluginSubview::handle_processors_changed, this), ui_context());
@@ -902,10 +938,10 @@ void PluginSubview::handle_processors_changed()
 	_mcp.redisplay_subview_mode();
 }
 
-bool PluginSubview::subview_mode_would_be_ok (boost::shared_ptr<ARDOUR::Stripable> r, std::string& reason_why_not)
+bool PluginSubview::subview_mode_would_be_ok (std::shared_ptr<ARDOUR::Stripable> r, std::string& reason_why_not)
 {
 	if (r) {
-		boost::shared_ptr<Route> route = boost::dynamic_pointer_cast<Route> (r);
+		std::shared_ptr<Route> route = std::dynamic_pointer_cast<Route> (r);
 		if (route && route->nth_plugin(0)) {
 			return true;
 		}
@@ -955,7 +991,7 @@ bool PluginSubview::handle_cursor_left_press()
 	return _plugin_subview_state->handle_cursor_left_press();
 }
 
-void PluginSubview::set_state(boost::shared_ptr<PluginSubviewState> new_state)
+void PluginSubview::set_state(std::shared_ptr<PluginSubviewState> new_state)
 {
 	_plugin_subview_state = new_state;
 
@@ -996,13 +1032,6 @@ PluginSubviewState::shorten_display_text(const std::string& text, std::string::s
 	return PBD::short_version (text, target_length);
 }
 
-bool PluginSubviewState::handle_cursor_right_press()
-{
-	_current_bank = _current_bank + 1;
-	bank_changed();
-	return true;
-}
-
 bool PluginSubviewState::handle_cursor_left_press()
 {
 	if (_current_bank >= 1)
@@ -1022,6 +1051,7 @@ uint32_t PluginSubviewState::calculate_virtual_strip_position(uint32_t strip_ind
 
 PluginSelect::PluginSelect(PluginSubview& context)
   : PluginSubviewState(context)
+  , _bank_size(_context.mcp().n_strips())
 {}
 
 PluginSelect::~PluginSelect()
@@ -1032,20 +1062,20 @@ void PluginSelect::setup_vpot(
 		Pot* vpot,
 		std::string pending_display[2],
 		uint32_t global_strip_position,
-		boost::shared_ptr<ARDOUR::Stripable> subview_stripable)
+		std::shared_ptr<ARDOUR::Stripable> subview_stripable)
 {
 	if (!subview_stripable) {
 		return;
 	}
 
-	boost::shared_ptr<Route> route = boost::dynamic_pointer_cast<Route> (subview_stripable);
+	std::shared_ptr<Route> route = std::dynamic_pointer_cast<Route> (subview_stripable);
 	if (!route) {
 		return;
 	}
 
 	uint32_t virtual_strip_position = calculate_virtual_strip_position(global_strip_position);
 
-	boost::shared_ptr<Processor> plugin = route->nth_plugin(virtual_strip_position);
+	std::shared_ptr<Processor> plugin = route->nth_plugin(virtual_strip_position);
 
 	if (plugin) {
 		DEBUG_TRACE (DEBUG::MackieControl, string_compose ("plugin of strip %1 is %2\n", global_strip_position, plugin->display_name()));
@@ -1059,26 +1089,50 @@ void PluginSelect::setup_vpot(
 }
 
 void PluginSelect::handle_vselect_event(uint32_t global_strip_position,
-		boost::shared_ptr<ARDOUR::Stripable> subview_stripable)
+		std::shared_ptr<ARDOUR::Stripable> subview_stripable)
 {
+	/* adjust global_strip_position to make sure we're accessing the
+	 * correct controllable since we might be banked within the subview.
+	 */
+	global_strip_position += _current_bank;
+
 	/* PluginSelect mode: press selects the plugin shown on the strip's LCD */
 	if (!subview_stripable) {
 		return;
 	}
 
-	boost::shared_ptr<Route> route = boost::dynamic_pointer_cast<Route> (subview_stripable);
+	std::shared_ptr<Route> route = std::dynamic_pointer_cast<Route> (subview_stripable);
 	if (!route) {
 		return;
 	}
 
 	uint32_t virtual_strip_position = calculate_virtual_strip_position(global_strip_position);
 
-	boost::shared_ptr<Processor> processor = route->nth_plugin(virtual_strip_position);
-	boost::shared_ptr<PluginInsert> plugin = boost::dynamic_pointer_cast<PluginInsert>(processor);
+	std::shared_ptr<Processor> processor = route->nth_plugin(virtual_strip_position);
+	std::shared_ptr<PluginInsert> plugin = std::dynamic_pointer_cast<PluginInsert>(processor);
 	processor->ShowUI();
 	if (plugin) {
-		_context.set_state (boost::shared_ptr<PluginEdit> (new PluginEdit (_context, boost::weak_ptr<PluginInsert>(plugin))));
+		_context.set_state (std::shared_ptr<PluginEdit> (new PluginEdit (_context, std::weak_ptr<PluginInsert>(plugin))));
 	}
+}
+
+bool PluginSelect::handle_cursor_right_press()
+{
+	std::shared_ptr<Route> route = std::dynamic_pointer_cast<Route> (_context.subview_stripable());
+	if (!route) {
+		return true;
+	}
+	std::shared_ptr<Processor> plugin = route->nth_plugin(0);
+	uint32_t num_plugins = 0;
+	while (plugin) {
+		plugin = route->nth_plugin(++num_plugins);
+	}
+
+	if (num_plugins > (_current_bank + 1) * _bank_size) {
+		_current_bank = _current_bank + 1;
+		bank_changed();
+	}
+	return true;
 }
 
 void PluginSelect::bank_changed()
@@ -1088,7 +1142,7 @@ void PluginSelect::bank_changed()
 
 
 
-PluginEdit::PluginEdit(PluginSubview& context, boost::weak_ptr<PluginInsert> weak_subview_plugin_insert)
+PluginEdit::PluginEdit(PluginSubview& context, std::weak_ptr<PluginInsert> weak_subview_plugin_insert)
   : PluginSubviewState(context)
   , _weak_subview_plugin_insert(weak_subview_plugin_insert)
 {
@@ -1105,9 +1159,9 @@ PluginEdit::~PluginEdit()
 
 void PluginEdit::init()
 {
-	boost::shared_ptr<PluginInsert> plugin_insert = _weak_subview_plugin_insert.lock();
-	_weak_subview_plugin = boost::weak_ptr<ARDOUR::Plugin>(plugin_insert->plugin());
-	boost::shared_ptr<ARDOUR::Plugin> subview_plugin = _weak_subview_plugin.lock();
+	std::shared_ptr<PluginInsert> plugin_insert = _weak_subview_plugin_insert.lock();
+	_weak_subview_plugin = std::weak_ptr<ARDOUR::Plugin>(plugin_insert->plugin());
+	std::shared_ptr<ARDOUR::Plugin> subview_plugin = _weak_subview_plugin.lock();
 	_plugin_input_parameter_indices.clear();
 
 	if (!subview_plugin) {
@@ -1128,24 +1182,24 @@ void PluginEdit::init()
 	}
 }
 
-boost::shared_ptr<AutomationControl> PluginEdit::parameter_control(uint32_t global_strip_position) const
+std::shared_ptr<AutomationControl> PluginEdit::parameter_control(uint32_t global_strip_position) const
 {
 	uint32_t virtual_strip_position = calculate_virtual_strip_position(global_strip_position);
 	if (virtual_strip_position >= _plugin_input_parameter_indices.size()) {
-		return boost::shared_ptr<AutomationControl>();
+		return std::shared_ptr<AutomationControl>();
 	}
 
-	boost::shared_ptr<PluginInsert> plugin_insert = _weak_subview_plugin_insert.lock();
-	boost::shared_ptr<ARDOUR::Plugin> subview_plugin = _weak_subview_plugin.lock();
+	std::shared_ptr<PluginInsert> plugin_insert = _weak_subview_plugin_insert.lock();
+	std::shared_ptr<ARDOUR::Plugin> subview_plugin = _weak_subview_plugin.lock();
 	if (!plugin_insert || !subview_plugin) {
-		return boost::shared_ptr<AutomationControl>();
+		return std::shared_ptr<AutomationControl>();
 	}
 
 	uint32_t plugin_parameter_index = _plugin_input_parameter_indices[virtual_strip_position];
 	bool ok = false;
 	uint32_t controlid = subview_plugin->nth_parameter(plugin_parameter_index, ok);
 	if (!ok) {
-		return boost::shared_ptr<AutomationControl>();
+		return std::shared_ptr<AutomationControl>();
 	}
 	return plugin_insert->automation_control(Evoral::Parameter(PluginAutomation, 0, controlid));
 }
@@ -1153,14 +1207,14 @@ boost::shared_ptr<AutomationControl> PluginEdit::parameter_control(uint32_t glob
 bool PluginEdit::plugin_went_away() const
 {
 	// is shared_ptr reset?
-	boost::shared_ptr<PluginInsert> plugin_insert = _weak_subview_plugin_insert.lock();
-	boost::shared_ptr<ARDOUR::Plugin> subview_plugin = _weak_subview_plugin.lock();
+	std::shared_ptr<PluginInsert> plugin_insert = _weak_subview_plugin_insert.lock();
+	std::shared_ptr<ARDOUR::Plugin> subview_plugin = _weak_subview_plugin.lock();
 	if (!plugin_insert || !subview_plugin) {
 		return true;
 	}
 
 	// is plugin not registered with stripable any more?
-	boost::shared_ptr<Route> route = boost::dynamic_pointer_cast<Route> (_context.subview_stripable());
+	std::shared_ptr<Route> route = std::dynamic_pointer_cast<Route> (_context.subview_stripable());
 	if (!route) {
 		return true;
 	}
@@ -1175,7 +1229,7 @@ bool PluginEdit::plugin_went_away() const
 
 void PluginEdit::switch_to_plugin_select_state()
 {
-	_context.set_state (boost::shared_ptr <PluginSelect>(new PluginSelect (_context)));
+	_context.set_state (std::shared_ptr <PluginSelect>(new PluginSelect (_context)));
 }
 
 void PluginEdit::setup_vpot(
@@ -1183,17 +1237,17 @@ void PluginEdit::setup_vpot(
 		Pot* vpot,
 		std::string pending_display[2],
 		uint32_t global_strip_position,
-		boost::shared_ptr<ARDOUR::Stripable> subview_stripable)
+		std::shared_ptr<ARDOUR::Stripable> subview_stripable)
 {
 	if (plugin_went_away()) {
 		switch_to_plugin_select_state();
 		return;
 	}
 
-	boost::shared_ptr<AutomationControl> c = parameter_control(global_strip_position);
+	std::shared_ptr<AutomationControl> c = parameter_control(global_strip_position);
 
 	if (!c) {
-		vpot->set_control (boost::shared_ptr<AutomationControl>());
+		vpot->set_control (std::shared_ptr<AutomationControl>());
 		pending_display[0] = std::string();
 		pending_display[1] = std::string();
 		return;
@@ -1208,7 +1262,7 @@ void PluginEdit::setup_vpot(
 
 void PluginEdit::notify_parameter_change(Strip* strip, Pot* vpot, std::string pending_display[2], uint32_t global_strip_position)
 {
-	boost::shared_ptr<AutomationControl> control = parameter_control(global_strip_position);
+	std::shared_ptr<AutomationControl> control = parameter_control(global_strip_position);
 	if (!control)
 	{
 		return;
@@ -1223,8 +1277,17 @@ void PluginEdit::notify_parameter_change(Strip* strip, Pot* vpot, std::string pe
 	}
 }
 
-void PluginEdit::handle_vselect_event(uint32_t global_strip_position, boost::shared_ptr<ARDOUR::Stripable> subview_stripable)
+void PluginEdit::handle_vselect_event(uint32_t global_strip_position, std::shared_ptr<ARDOUR::Stripable> subview_stripable)
 {
+}
+
+bool PluginEdit::handle_cursor_right_press()
+{
+	if (_plugin_input_parameter_indices.size() > (_current_bank + 1) * _bank_size) {
+		_current_bank = _current_bank + 1;
+		bank_changed();
+	}
+	return true;
 }
 
 void PluginEdit::bank_changed()

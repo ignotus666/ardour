@@ -28,15 +28,15 @@
 namespace ARDOUR {
 
 template<class T> void
-SessionPlaylists::foreach (T *obj, void (T::*func)(boost::shared_ptr<Playlist>))
+SessionPlaylists::foreach (T *obj, void (T::*func)(std::shared_ptr<Playlist>))
 {
 	Glib::Threads::Mutex::Lock lm (lock);
-	for (List::iterator i = playlists.begin(); i != playlists.end(); i++) {
+	for (PlaylistSet::iterator i = playlists.begin(); i != playlists.end(); i++) {
 		if (!(*i)->hidden()) {
 			(obj->*func) (*i);
 		}
 	}
-	for (List::iterator i = unused_playlists.begin(); i != unused_playlists.end(); i++) {
+	for (PlaylistSet::iterator i = unused_playlists.begin(); i != unused_playlists.end(); i++) {
 		if (!(*i)->hidden()) {
 			(obj->*func) (*i);
 		}

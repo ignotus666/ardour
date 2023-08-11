@@ -61,7 +61,7 @@ Maschine2Knob::Maschine2Knob (PBD::EventLoop* el, Item* parent)
 	text->set_font_description (fd);
 	text->set_position (Duple (-_radius, _radius + 2));
 	text->set_color (0xffffffff);
-	_bounding_box_dirty = true;
+	set_bbox_dirty ();
 }
 
 Maschine2Knob::~Maschine2Knob ()
@@ -149,20 +149,20 @@ Maschine2Knob::compute_bounding_box () const
 {
 	if (!_canvas || _radius == 0) {
 		_bounding_box = Rect ();
-		_bounding_box_dirty = false;
+		set_bbox_clean ();
 		return;
 	}
 
-	if (_bounding_box_dirty) {
+	if (bbox_dirty()) {
 		_bounding_box = Rect (- _radius, - _radius, _radius, _radius);
-		_bounding_box_dirty = false;
+		set_bbox_clean ();
 	}
 
 	/* Item::bounding_box() will add children */
 }
 
 void
-Maschine2Knob::set_controllable (boost::shared_ptr<AutomationControl> c)
+Maschine2Knob::set_controllable (std::shared_ptr<AutomationControl> c)
 {
 	watch_connection.disconnect ();
 
@@ -196,7 +196,7 @@ Maschine2Knob::encoder_changed (int delta)
 		return;
 	}
 	const double d = delta * 0.5 / _ctrl->range ();
-	boost::shared_ptr<AutomationControl> ac = _controllable;
+	std::shared_ptr<AutomationControl> ac = _controllable;
 	ac->set_value (ac->interface_to_internal (std::min (ac->upper(), std::max (ac->lower(), ac->internal_to_interface (ac->get_value()) + d))), PBD::Controllable::UseGroup);
 }
 
@@ -223,6 +223,7 @@ Maschine2Knob::controllable_changed ()
 
 			case ARDOUR::GainAutomation:
 			case ARDOUR::BusSendLevel:
+			case ARDOUR::InsertReturnLevel:
 			case ARDOUR::TrimAutomation:
 				snprintf (buf, sizeof (buf), "%+4.1f dB", accurate_coefficient_to_dB (_controllable->get_value()));
 				text->set (buf);

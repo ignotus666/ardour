@@ -30,26 +30,12 @@ namespace Evoral {
 
 Control::Control(const Parameter&               parameter,
                  const ParameterDescriptor&     desc,
-                 boost::shared_ptr<ControlList> list)
+                 std::shared_ptr<ControlList> list)
 	: _parameter(parameter)
 	, _user_value(desc.normal)
 {
 	set_list (list);
 }
-
-
-/** Get the currently effective value (ie the one that corresponds to current output)
- */
-double
-Control::get_double (bool from_list, Temporal::timepos_t const & when) const
-{
-	if (from_list) {
-		return _list->eval (when);
-	} else {
-		return _user_value;
-	}
-}
-
 
 void
 Control::set_double (double value, Temporal::timepos_t const & when, bool to_list)
@@ -67,7 +53,7 @@ Control::set_double (double value, Temporal::timepos_t const & when, bool to_lis
 
 
 void
-Control::set_list(boost::shared_ptr<ControlList> list)
+Control::set_list(std::shared_ptr<ControlList> list)
 {
 	_list_marked_dirty_connection.disconnect ();
 

@@ -27,8 +27,8 @@
 using namespace ARDOUR;
 using namespace PBD;
 
-PolarityProcessor::PolarityProcessor (Session& s, boost::shared_ptr<PhaseControl> control)
-	: Processor(s, "Polarity", Temporal::AudioTime)
+PolarityProcessor::PolarityProcessor (Session& s, std::shared_ptr<PhaseControl> control)
+	: Processor(s, "Polarity", Temporal::TimeDomainProvider (Temporal::AudioTime))
 	, _control (control)
 {
 }
@@ -74,7 +74,7 @@ PolarityProcessor::run (BufferSet& bufs, samplepos_t /*start_sample*/, samplepos
 }
 
 XMLNode&
-PolarityProcessor::state ()
+PolarityProcessor::state () const
 {
 	XMLNode& node (Processor::state ());
 	node.set_property("type", "polarity");

@@ -20,10 +20,8 @@
 #define __libardour_control_group_h__
 
 #include <map>
+#include <memory>
 #include <vector>
-
-#include <boost/shared_ptr.hpp>
-#include <boost/enable_shared_from_this.hpp>
 
 #include <glibmm/threads.h>
 
@@ -36,7 +34,11 @@
 
 namespace ARDOUR {
 
-class LIBARDOUR_API ControlGroup : public boost::enable_shared_from_this<ControlGroup>
+class CoreSelection;
+class RouteGroup;
+class Stripable;
+
+class LIBARDOUR_API ControlGroup : public std::enable_shared_from_this<ControlGroup>
 {
   public:
 	ControlGroup (Evoral::Parameter p);
@@ -47,12 +49,16 @@ class LIBARDOUR_API ControlGroup : public boost::enable_shared_from_this<Control
 		Inverted = 0x2,
 	};
 
-	int add_control (boost::shared_ptr<AutomationControl>);
-	int remove_control (boost::shared_ptr<AutomationControl>);
+	void fill_from_stripable_list (StripableList&, Evoral::Parameter const &);
 
-	ControlList controls () const;
+	int add_control (std::shared_ptr<AutomationControl>, bool push = false);
+	int remove_control (std::shared_ptr<AutomationControl>, bool pop = false);
 
-	void clear ();
+	void pop_all ();
+
+	AutomationControlList controls () const;
+
+	void clear (bool pop = false);
 
 	void set_active (bool);
 	bool active() const { return _active; }
@@ -62,7 +68,7 @@ class LIBARDOUR_API ControlGroup : public boost::enable_shared_from_this<Control
 
 	Evoral::Parameter parameter() const { return _parameter; }
 
-	virtual void set_group_value (boost::shared_ptr<AutomationControl>, double val);
+	virtual void set_group_value (std::shared_ptr<AutomationControl>, double val);
 	virtual void pre_realtime_queue_stuff (double val);
 
 	bool use_me (PBD::Controllable::GroupControlDisposition gcd) const {
@@ -78,8 +84,10 @@ class LIBARDOUR_API ControlGroup : public boost::enable_shared_from_this<Control
 		}
 	}
 
+	typedef std::map<PBD::ID,std::shared_ptr<AutomationControl> > ControlMap;
+	ControlMap::size_type size() const { Glib::Threads::RWLock::ReaderLock lm (controls_lock); return _controls.size(); }
+
   protected:
-	typedef std::map<PBD::ID,boost::shared_ptr<AutomationControl> > ControlMap;
 	Evoral::Parameter _parameter;
 	mutable Glib::Threads::RWLock controls_lock;
 	ControlMap _controls;
@@ -88,16 +96,16 @@ class LIBARDOUR_API ControlGroup : public boost::enable_shared_from_this<Control
 	PBD::ScopedConnectionList member_connections;
 	bool propagating;
 
-	void control_going_away (boost::weak_ptr<AutomationControl>);
+	void control_going_away (std::weak_ptr<AutomationControl>);
 };
 
 
 class LIBARDOUR_API GainControlGroup : public ControlGroup
 {
   public:
-	GainControlGroup();
+	GainControlGroup (ARDOUR::AutomationType = GainAutomation);
 
-	void set_group_value (boost::shared_ptr<AutomationControl>, double val);
+	void set_group_value (std::shared_ptr<AutomationControl>, double val);
 
   private:
 	gain_t get_max_factor (gain_t);

@@ -63,39 +63,13 @@ namespace Gtkmm2ext {
 	LIBGTKMM2EXT_API int pixel_width (const std::string& str, const Pango::FontDescription& font);
 	LIBGTKMM2EXT_API void pixel_size (const std::string& str, const Pango::FontDescription& font, int& width, int& height);
 
-	LIBGTKMM2EXT_API void get_ink_pixel_size (Glib::RefPtr<Pango::Layout>,
-	                                          int& width, int& height);
-
-
-	LIBGTKMM2EXT_API void get_pixel_size (Glib::RefPtr<Pango::Layout>,
-	                                      int& width, int& height);
-
-	LIBGTKMM2EXT_API void set_size_request_to_display_given_text (Gtk::Widget& w,
-	                                                              const gchar* text,
-	                                                              gint         hpadding,
-	                                                              gint         vpadding);
-
-	LIBGTKMM2EXT_API void set_size_request_to_display_given_text_width (Gtk::Widget& w,
-	                                                                    const gchar* htext,
-	                                                                    gint         hpadding,
-	                                                                    gint         vpadding);
-
-	LIBGTKMM2EXT_API void set_height_request_to_display_any_text (Gtk::Widget& w, gint vpadding);
+	LIBGTKMM2EXT_API void get_ink_pixel_size (Glib::RefPtr<Pango::Layout>, int& width, int& height);
+	LIBGTKMM2EXT_API void get_ink_pixel_size_with_descent (Glib::RefPtr<Pango::Layout>, int& width, int& height, int& descent);
 
 	LIBGTKMM2EXT_API void set_size_request_to_display_given_text (Gtk::Widget&       w,
 	                                                              std::string const& text,
 	                                                              gint               hpadding,
 	                                                              gint               vpadding);
-
-	LIBGTKMM2EXT_API void set_size_request_to_display_given_text (Gtk::Widget& w,
-	                                                              const std::vector<std::string>&,
-	                                                              gint hpadding,
-	                                                              gint vpadding);
-
-	LIBGTKMM2EXT_API void set_size_request_to_display_given_text (Gtk::Widget& w,
-	                                                              const std::vector<std::string>&,
-	                                                              const std::string& hpadding,
-	                                                              gint vpadding);
 
 
 	LIBGTKMM2EXT_API Glib::RefPtr<Gdk::Pixbuf> pixbuf_from_string (const std::string& name,
@@ -139,7 +113,7 @@ namespace Gtkmm2ext {
 	LIBGTKMM2EXT_API int physical_screen_height (Glib::RefPtr<Gdk::Window>);
 	LIBGTKMM2EXT_API int physical_screen_width (Glib::RefPtr<Gdk::Window>);
 
-	LIBGTKMM2EXT_API void container_clear (Gtk::Container&);
+	LIBGTKMM2EXT_API void container_clear (Gtk::Container&, bool and_delete = false);
 
 	/* C++ API for rounded rectangles */
 

@@ -1117,7 +1117,7 @@ int TranzportControlProtocol::lights_show_normal()
 	/* Track only */
 
 	if (route_table[0]) {
-		boost::shared_ptr<AudioTrack> at = boost::dynamic_pointer_cast<AudioTrack> (route_table[0]);
+		std::shared_ptr<AudioTrack> at = std::dynamic_pointer_cast<AudioTrack> (route_table[0]);
 		lights_pending[LightTrackrec]  = at && at->record_enabled();
 		lights_pending[LightTrackmute] = route_get_muted(0);
 		lights_pending[LightTracksolo] = route_get_soloed(0);
@@ -1921,7 +1921,7 @@ TranzportControlProtocol::print_noretry (int row, int col, const char *text)
 }
 
 XMLNode&
-TranzportControlProtocol::get_state ()
+TranzportControlProtocol::get_state () const
 {
 	return ControlProtocol::get_state();
 }

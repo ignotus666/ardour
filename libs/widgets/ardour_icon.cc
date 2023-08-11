@@ -1299,6 +1299,51 @@ icon_latency_clock (cairo_t* cr, const int width, const int height, const uint32
 	cairo_fill (cr);
 }
 
+static void
+icon_file_folder (cairo_t* cr, const int width, const int height, const uint32_t fg_color)
+{
+	const double x  = width * .5;
+	const double y  = height * .5;
+
+	const double lw = DEFAULT_LINE_WIDTH;
+	const double lc = fmod (lw * .5, 1.0);
+
+	const double x0 = rint (x) - lc;
+	const double y0 = rint (y + std::min (x, y) * .05) - lc;
+	const double ww = rint (std::min (x, y) * .65);
+	const double hh = rint (std::min (x, y) * .65);
+
+	const double w2 = rint (std::min (x, y) * .40);
+	const double hl = rint (std::min (x, y) * .50);
+	const double h2 = rint (std::min (x, y) * .30);
+	const double oo = std::min (x, y) * .20;
+
+	cairo_move_to (cr, x0 - ww, y0 + hh);
+	cairo_line_to (cr, x0 - ww, y0 - hh);
+	cairo_line_to (cr, x0 - oo, y0 - hh);
+	cairo_line_to (cr, x0     , y0 - hl);
+
+	cairo_line_to (cr, x0 + w2, y0 - hl);
+	cairo_line_to (cr, x0 + w2, y0 - h2);
+	cairo_line_to (cr, x0 + ww, y0 - h2);
+
+	cairo_line_to (cr, x0 + w2, y0 + hh);
+	cairo_line_to (cr, x0 - ww, y0 + hh);
+	cairo_line_to (cr, x0 - w2, y0 - h2);
+	cairo_line_to (cr, x0 + w2, y0 - h2);
+
+#if 1
+	cairo_set_line_cap (cr, CAIRO_LINE_CAP_BUTT);
+	cairo_set_line_join (cr, CAIRO_LINE_JOIN_BEVEL);
+  Gtkmm2ext::set_source_rgba (cr, fg_color);
+  cairo_set_line_width (cr, lw);
+	cairo_stroke (cr);
+#else
+	VECTORICONSTROKE (lw, fg_color);
+#endif
+}
+
+
 /*****************************************************************************/
 
 bool
@@ -1442,6 +1487,9 @@ ArdourWidgets::ArdourIcon::render (cairo_t*                                   cr
 		case LatencyClock: /* unused */
 			icon_latency_clock (cr, width, height, fg_color);
 			break;
+		case Folder:
+			icon_file_folder (cr, width, height, fg_color);
+			break;
 		case NoIcon:
 			rv = false;
 			break;
@@ -1476,13 +1524,15 @@ ArdourWidgets::ArdourIcon::expose_with_text (GdkEventExpose* ev, Gtk::Widget* w,
 	gdk_cairo_rectangle (cr, &ev->area);
 	cairo_clip (cr);
 
-	int width  = win->get_width ();
-	int height = win->get_height ();
+	int const width  = win->get_width ();
+	int const height = win->get_height ();
+
 
 	Glib::RefPtr<Gtk::Style> style = w->get_style ();
 
-	Gdk::Color     fg (style->get_fg (Gtk::STATE_NORMAL));
-	const uint32_t fg_color = RGBA_TO_UINT (fg.get_red () / 255., fg.get_green () / 255, fg.get_blue () / 255, 255);
+	Gdk::Color fg (style->get_fg (Gtk::STATE_NORMAL));
+	int const  alpha    = icon == ShadedPlusSign ? 0x80 : 0xff;
+	uint32_t   fg_color = RGBA_TO_UINT (fg.get_red () / 255., fg.get_green () / 255, fg.get_blue () / 255, alpha);
 
 	Glib::RefPtr<Pango::Layout> layout = Pango::Layout::create (w->get_pango_context ());
 	layout->set_font_description (style->get_font ());
@@ -1504,6 +1554,8 @@ ArdourWidgets::ArdourIcon::expose_with_text (GdkEventExpose* ev, Gtk::Widget* w,
 	} else {
 		text_height = 0;
 	}
+
+	fg_color |= 0xff; /* restore alpha */
 
 	ArdourIcon::render (cr, icon, win->get_width (), win->get_height () - text_height, Gtkmm2ext::ExplicitActive, fg_color);
 

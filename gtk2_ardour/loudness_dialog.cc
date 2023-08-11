@@ -171,7 +171,7 @@ LoudnessDialog::LoudnessDialog (Session* s, TimelineRange const& ar, bool as)
 	Table* t = manage (new Table (11, 8, false));
 	t->set_spacings (4);
 
-	l = manage (new Label (_("Preset:"), ALIGN_LEFT));
+	l = manage (new Label (_("Preset:"), ALIGN_START));
 	t->attach (*l, 0, 1, ROW, SHRINK | FILL);
 	t->attach (_preset_dropdown, 1, 3, ROW);
 
@@ -179,10 +179,10 @@ LoudnessDialog::LoudnessDialog (Session* s, TimelineRange const& ar, bool as)
 	t->attach (_remove_preset, 4, 5, ROW, SHRINK | FILL);
 
 	/* horiz space */
-	l = manage (new Label (" ", ALIGN_LEFT));
+	l = manage (new Label (" ", ALIGN_START));
 	t->attach (*l, 5, 6, ROW, SHRINK, SHRINK, 6, 0);
 
-	l = manage (new Label (" ", ALIGN_LEFT));
+	l = manage (new Label (" ", ALIGN_START));
 	t->attach (*l, 6, 7, ROW);
 
 	t->attach (_show_report_button, 7, 8, ROW, SHRINK | FILL);
@@ -207,12 +207,12 @@ LoudnessDialog::LoudnessDialog (Session* s, TimelineRange const& ar, bool as)
 
 	++row; // spacer
 
-	l = manage (new Label (_("Gain to normalize:"), ALIGN_LEFT));
+	l = manage (new Label (_("Gain to normalize:"), ALIGN_START));
 	t->attach (*l, 0, 2, ROW); ++row;
-	l = manage (new Label (_("Previous output gain:"), ALIGN_LEFT));
+	l = manage (new Label (_("Previous output gain:"), ALIGN_START));
 	t->attach (*l, 0, 2, ROW); ++row;
 
-	l = manage (new Label (_("Total gain:"), ALIGN_LEFT));
+	l = manage (new Label (_("Total gain:"), ALIGN_START));
 	t->attach (*l, 0, 2, ROW);
 
 	row = 2;
@@ -253,22 +253,22 @@ LoudnessDialog::LoudnessDialog (Session* s, TimelineRange const& ar, bool as)
 		  "<b>When disabled</b>, the gain is applied directly to the output of the master-bus. This results in an efficient and reliable volume adjustment."
 		 ));
 
-	_dbfs_label.set_alignment (ALIGN_RIGHT);
-	_dbtp_label.set_alignment (ALIGN_RIGHT);
-	_lufs_i_label.set_alignment (ALIGN_RIGHT);
-	_lufs_s_label.set_alignment (ALIGN_RIGHT);
-	_lufs_m_label.set_alignment (ALIGN_RIGHT);
+	_dbfs_label.set_alignment (ALIGN_END);
+	_dbtp_label.set_alignment (ALIGN_END);
+	_lufs_i_label.set_alignment (ALIGN_END);
+	_lufs_s_label.set_alignment (ALIGN_END);
+	_lufs_m_label.set_alignment (ALIGN_END);
 
-	_delta_dbfs_label.set_alignment (ALIGN_RIGHT);
-	_delta_dbtp_label.set_alignment (ALIGN_RIGHT);
-	_delta_lufs_i_label.set_alignment (ALIGN_RIGHT);
-	_delta_lufs_s_label.set_alignment (ALIGN_RIGHT);
-	_delta_lufs_m_label.set_alignment (ALIGN_RIGHT);
+	_delta_dbfs_label.set_alignment (ALIGN_END);
+	_delta_dbtp_label.set_alignment (ALIGN_END);
+	_delta_lufs_i_label.set_alignment (ALIGN_END);
+	_delta_lufs_s_label.set_alignment (ALIGN_END);
+	_delta_lufs_m_label.set_alignment (ALIGN_END);
 
-	_gain_norm_label.set_alignment (ALIGN_RIGHT);
-	_gain_out_label.set_alignment (ALIGN_RIGHT);
-	_gain_total_label.set_alignment (ALIGN_RIGHT);
-	_gain_exceeds_label.set_alignment (ALIGN_RIGHT);
+	_gain_norm_label.set_alignment (ALIGN_END);
+	_gain_out_label.set_alignment (ALIGN_END);
+	_gain_total_label.set_alignment (ALIGN_END);
+	_gain_exceeds_label.set_alignment (ALIGN_END);
 
 	HBox* hb = manage (new (HBox));
 	hb->pack_start (_loudness_graph, true, false);
@@ -284,12 +284,12 @@ LoudnessDialog::LoudnessDialog (Session* s, TimelineRange const& ar, bool as)
 	t->set_spacings (4);
 	l = manage (new Label ());
 	l->set_markup (_("<b>Loudness Analysis</b>\n"));
-	l->set_alignment (ALIGN_LEFT, ALIGN_TOP);
+	l->set_alignment (ALIGN_START, ALIGN_START);
 	t->attach (*l, 0, 1, 0, 1, EXPAND | FILL, FILL, 8, 2);
 
 	l = manage (new Label ());
 	l->set_line_wrap ();
-	l->set_alignment (ALIGN_LEFT, ALIGN_TOP);
+	l->set_alignment (ALIGN_START, ALIGN_START);
 	l->set_markup (_(
 	    "This allows the user to analyze and conform the loudness of the signal at the master-bus "
 	    "output of the complete session, as it would be exported. "
@@ -298,7 +298,7 @@ LoudnessDialog::LoudnessDialog (Session* s, TimelineRange const& ar, bool as)
 
 	l = manage (new Label ());
 	l->set_line_wrap ();
-	l->set_alignment (ALIGN_LEFT, ALIGN_TOP);
+	l->set_alignment (ALIGN_START, ALIGN_START);
 	l->set_markup (_(
 	    "By default, a faster-than-realtime export is used to assess the loudness of the "
 	    "session. If any outboard gear is used, a <i>realtime</i> export is available, to "
@@ -442,18 +442,16 @@ LoudnessDialog::analyze ()
 
 	ExportTimespanPtr tsp = _session->get_export_handler ()->add_timespan ();
 
-	boost::shared_ptr<ExportChannelConfiguration> ccp = _session->get_export_handler ()->add_channel_config ();
-	boost::shared_ptr<ARDOUR::ExportFilename>     fnp = _session->get_export_handler ()->add_filename ();
-	boost::shared_ptr<ExportFormatSpecification>  fmp = _session->get_export_handler ()->add_format ();
+	std::shared_ptr<ExportChannelConfiguration> ccp = _session->get_export_handler ()->add_channel_config ();
+	std::shared_ptr<ARDOUR::ExportFilename>     fnp = _session->get_export_handler ()->add_filename ();
+	std::shared_ptr<ExportFormatSpecification>  fmp = _session->get_export_handler ()->add_format ();
 
 	/* setup format */
-	fmp->set_tag (false);
 	fmp->set_sample_format (ExportFormatBase::SF_Float);
 	fmp->set_sample_rate (ExportFormatBase::SR_Session);
 	fmp->set_format_id (ExportFormatBase::F_None);
 	fmp->set_type (ExportFormatBase::T_None);
 	fmp->set_extension ("wav");
-	fmp->set_soundcloud_upload (false);
 	fmp->set_analyse (true);
 
 	/* setup range */
@@ -472,7 +470,7 @@ LoudnessDialog::analyze ()
 	}
 
 	/* do audio export */
-	boost::shared_ptr<AudioGrapher::BroadcastInfo> b;
+	std::shared_ptr<AudioGrapher::BroadcastInfo> b;
 	_session->get_export_handler ()->reset ();
 	_session->get_export_handler ()->add_export_config (tsp, ccp, fmp, fnp, b);
 	_session->get_export_handler ()->do_export ();
@@ -624,11 +622,11 @@ LoudnessDialog::apply_preset ()
 void
 LoudnessDialog::update_sensitivity ()
 {
-	_dbfs_spinbutton.set_sensitive (_dbfs_btn.get_active () && _dbfs_btn.sensitive ());
-	_dbtp_spinbutton.set_sensitive (_dbtp_btn.get_active () && _dbtp_btn.sensitive ());
-	_lufs_i_spinbutton.set_sensitive (_lufs_i_btn.get_active () && _dbtp_btn.sensitive ());
-	_lufs_s_spinbutton.set_sensitive (_lufs_s_btn.get_active () && _lufs_s_btn.sensitive ());
-	_lufs_m_spinbutton.set_sensitive (_lufs_m_btn.get_active () && _lufs_m_btn.sensitive ());
+	_dbfs_spinbutton.set_sensitive (_dbfs_btn.get_active () && _dbfs_btn.is_sensitive ());
+	_dbtp_spinbutton.set_sensitive (_dbtp_btn.get_active () && _dbtp_btn.is_sensitive ());
+	_lufs_i_spinbutton.set_sensitive (_lufs_i_btn.get_active () && _dbtp_btn.is_sensitive ());
+	_lufs_s_spinbutton.set_sensitive (_lufs_s_btn.get_active () && _lufs_s_btn.is_sensitive ());
+	_lufs_m_spinbutton.set_sensitive (_lufs_m_btn.get_active () && _lufs_m_btn.is_sensitive ());
 }
 
 void
@@ -742,19 +740,19 @@ LoudnessDialog::calculate_gain ()
     set = true;                          \
   }
 
-	if (_dbfs_btn.get_active () && _dbfs_btn.sensitive ()) {
+	if (_dbfs_btn.get_active () && _dbfs_btn.is_sensitive ()) {
 		MIN_IF_SET (dbfs, _dbfs);
 	}
-	if (_dbtp_btn.get_active () && _dbtp_btn.sensitive ()) {
+	if (_dbtp_btn.get_active () && _dbtp_btn.is_sensitive ()) {
 		MIN_IF_SET (dbtp, _dbtp);
 	}
-	if (_lufs_i_btn.get_active () && _lufs_i_btn.sensitive ()) {
+	if (_lufs_i_btn.get_active () && _lufs_i_btn.is_sensitive ()) {
 		MIN_IF_SET (lufs_i, _lufs_i);
 	}
-	if (_lufs_s_btn.get_active () && _lufs_s_btn.sensitive ()) {
+	if (_lufs_s_btn.get_active () && _lufs_s_btn.is_sensitive ()) {
 		MIN_IF_SET (lufs_s, _lufs_s);
 	}
-	if (_lufs_m_btn.get_active () && _lufs_m_btn.sensitive ()) {
+	if (_lufs_m_btn.get_active () && _lufs_m_btn.is_sensitive ()) {
 		MIN_IF_SET (lufs_m, _lufs_m);
 	}
 
@@ -776,7 +774,7 @@ LoudnessDialog::calculate_gain ()
 	_gain_norm_label.set_text (string_compose (_("%1 dB"), std::setprecision (2), std::showpos, std::fixed, _gain_norm));
 	if (!in_range) {
 		_gain_exceeds_label.set_text (_("exceeds"));
-		_gain_total_label.set_markup (_("<b>    \u00B140 dB</b>"));
+		_gain_total_label.set_markup (_(u8"<b>    \u00B140 dB</b>"));
 	} else {
 		_gain_exceeds_label.set_text (X_(""));
 		_gain_total_label.set_markup (string_compose (_("<b>%1 dB</b>"), std::setw (7), std::setprecision (2), std::showpos, std::fixed, gain_db ()));
@@ -808,46 +806,34 @@ LoudnessDialog::test_conformity ()
 	uint32_t c_warn = UIConfigurationBase::instance ().color ("alert:yellow"); // Warning / yellow
 	uint32_t c_fail = UIConfigurationBase::instance ().color ("alert:red");    // Fail / red
 
-	Gdk::Color color_good = ARDOUR_UI_UTILS::gdk_color_from_rgba (c_good);
-	Gdk::Color color_warn = ARDOUR_UI_UTILS::gdk_color_from_rgba (c_warn);
-	Gdk::Color color_fail = ARDOUR_UI_UTILS::gdk_color_from_rgba (c_fail);
+	Gdk::Color color_good = Gtkmm2ext::gdk_color_from_rgba (c_good);
+	Gdk::Color color_warn = Gtkmm2ext::gdk_color_from_rgba (c_warn);
+	Gdk::Color color_fail = Gtkmm2ext::gdk_color_from_rgba (c_fail);
 
 	for (size_t i = 1; i < n_pset; ++i) {
 		CLoudnessPreset const& preset = _lp[i];
-		Label* l = manage (new Label (preset.label + ":", ALIGN_LEFT));
+		Label* l = manage (new Label (preset.label + ":", ALIGN_START));
 		t->attach (*l, col, col + 1, row, row + 1, EXPAND | FILL, SHRINK, 2, 0);
 
 		if (lufs_i > preset.LUFS_range[0]
 		    || (preset.enable[0] && dbfs > preset.level[0])
 		    || (preset.enable[1] && dbtp > preset.level[1])
 		   ) {
-#ifdef PLATFORM_WINDOWS
-			l = manage (new Label ("X", ALIGN_CENTER)); // cross mark
-#else
-			l = manage (new Label ("\u274C", ALIGN_CENTER)); // cross mark
-#endif
-			l->modify_font (UIConfiguration::instance ().get_BigFont ());
+			l = manage (new Label (u8"\u274C", ALIGN_CENTER)); // cross mark
+			l->modify_font (UIConfiguration::instance ().get_ArdourBigFont ());
 			l->modify_fg (Gtk::STATE_NORMAL, color_fail);
 			set_tooltip (*l, "The signal is too loud.");
 		} else if (lufs_i < preset.LUFS_range[1]) {
-#ifdef PLATFORM_WINDOWS
-			l = manage (new Label ("\u2713", ALIGN_CENTER)); // check mark
-#else
-			l = manage (new Label ("\U0001F509", ALIGN_CENTER)); // speaker icon w/1 bar
-#endif
-			l->modify_font (UIConfiguration::instance ().get_BigFont ());
+			l = manage (new Label (u8"\U0001F509", ALIGN_CENTER)); // speaker icon w/1 bar
+			l->modify_font (UIConfiguration::instance ().get_ArdourBigFont ());
 			l->modify_fg (Gtk::STATE_NORMAL, color_warn);
 			set_tooltip (*l, "The signal is too quiet, but satisfies the max. loudness spec.");
 		} else {
-#ifdef __APPLE__
-			l = manage (new Label ("\u2713", ALIGN_CENTER)); // check mark
-#else
-			l = manage (new Label ("\u2714", ALIGN_CENTER)); // heavy check mark
-#endif
-			l->modify_font (UIConfiguration::instance ().get_BigFont ());
+			l = manage (new Label (u8"\u2714", ALIGN_CENTER)); // heavy check mark
+			l->modify_font (UIConfiguration::instance ().get_ArdourBigFont ());
 			l->modify_fg (Gtk::STATE_NORMAL, color_good);
 			set_tooltip (*l, "Signal loudness is within the spec.");
-			Gtkmm2ext::set_size_request_to_display_given_text (*l, "\u274C\u2713", 0, 0);
+			Gtkmm2ext::set_size_request_to_display_given_text (*l, u8"\u274C\u2713", 0, 0);
 		}
 
 		t->attach (*l, col + 1, col + 2, row, row + 1, SHRINK, SHRINK, 2, 0);

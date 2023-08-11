@@ -40,6 +40,7 @@
 #include "ardour/session.h"
 #include "ardour/filesystem_paths.h"
 #include "ardour/audio_buffer.h"
+#include "ardour/plugin_insert.h"
 
 #include "pbd/i18n.h"
 
@@ -52,8 +53,6 @@ VSTPlugin::VSTPlugin (AudioEngine& engine, Session& session, VSTHandle* handle)
 	, _handle (handle)
 	, _state (0)
 	, _plugin (0)
-	, _pi (0)
-	, _num (0)
 	, _transport_sample (0)
 	, _transport_speed (0.f)
 	, _eff_bypassed (false)
@@ -66,8 +65,6 @@ VSTPlugin::VSTPlugin (const VSTPlugin& other)
 	, _handle (other._handle)
 	, _state (other._state)
 	, _plugin (other._plugin)
-	, _pi (other._pi)
-	, _num (other._num)
 	, _midi_out_buf (other._midi_out_buf)
 	, _transport_sample (0)
 	, _transport_speed (0.f)
@@ -468,7 +465,13 @@ VSTPlugin::load_plugin_preset (PresetRecord r)
 	sscanf (r.uri.c_str(), "VST:%d:%d", &id, &index);
 #endif
 	_state->want_program = index;
-	LoadPresetProgram (); /* EMIT SIGNAL */ /* used for macvst */
+	if (!has_editor () || 0 == plugin_insert ()->window_proxy ()) {
+		vststate_maybe_set_program (_state);
+		_state->want_chunk = 0;
+		_state->want_program = -1;
+	} else {
+		LoadPresetProgram (); /* EMIT SIGNAL */ /* used for macvst */
+	}
 	return true;
 }
 
@@ -479,7 +482,7 @@ VSTPlugin::load_user_preset (PresetRecord r)
 	   non-direct-dispatch thing.
 	*/
 
-	boost::shared_ptr<XMLTree> t (presets_tree ());
+	std::shared_ptr<XMLTree> t (presets_tree ());
 	if (t == 0) {
 		return false;
 	}
@@ -510,7 +513,13 @@ VSTPlugin::load_user_preset (PresetRecord r)
 					_state->wanted_chunk = raw_data;
 					_state->wanted_chunk_size = size;
 					_state->want_chunk = 1;
-					LoadPresetProgram (); /* EMIT SIGNAL */ /* used for macvst */
+					if (!has_editor () || (plugin_insert () && 0 == plugin_insert ()->window_proxy ())) {
+						vststate_maybe_set_program (_state);
+						_state->want_chunk = 0;
+						_state->want_program = -1;
+					} else {
+						LoadPresetProgram (); /* EMIT SIGNAL */ /* used for macvst */
+					}
 					return true;
 				}
 			}
@@ -546,7 +555,7 @@ VSTPlugin::load_user_preset (PresetRecord r)
 string
 VSTPlugin::do_save_preset (string name)
 {
-	boost::shared_ptr<XMLTree> t (presets_tree ());
+	std::shared_ptr<XMLTree> t (presets_tree ());
 	if (t == 0) {
 		return "";
 	}
@@ -610,7 +619,7 @@ VSTPlugin::do_save_preset (string name)
 void
 VSTPlugin::do_remove_preset (string name)
 {
-	boost::shared_ptr<XMLTree> t (presets_tree ());
+	std::shared_ptr<XMLTree> t (presets_tree ());
 	if (t == 0) {
 		return;
 	}
@@ -879,7 +888,7 @@ VSTPlugin::find_presets ()
 
 	/* User presets from our XML file */
 
-	boost::shared_ptr<XMLTree> t (presets_tree ());
+	std::shared_ptr<XMLTree> t (presets_tree ());
 
 	if (t) {
 		XMLNode* root = t->root ();

@@ -46,7 +46,7 @@ while [ $# -gt 0 ] ; do
 			PROGRAM_NAME=Mixbus
 			PROGRAM_KEY=Mixbus
 			PRODUCT_NAME=Mixbus
-			MANUAL_NAME="mixbus${major_version}-live-manual"
+			MANUAL_NAME="mixbus-live-manual"
 			shift ;;
 		--mixbus32c)
 			MIXBUS=1
@@ -57,7 +57,7 @@ while [ $# -gt 0 ] ; do
 			PROGRAM_KEY=Mixbus32C
 			PROGRAM_NAME=Mixbus32C-${PROGRAM_VERSION}
 			PROGRAM_VERSION=""
-			MANUAL_NAME="mixbus32c-${major_version}-live-manual"
+			MANUAL_NAME="mixbus32c-live-manual"
 			shift ;;
 		--chanstrip) HARRISONCHANNELSTRIP=$2 ; shift; shift ;;
 	esac
@@ -91,7 +91,7 @@ fi
 export SRCCACHE
 
 if [ "$(id -u)" = "0" ]; then
-	apt-get -y install nsis curl wget
+	apt-get -y install nsis curl wget ca-certificates rsync zip unzip
 fi
 
 
@@ -143,6 +143,8 @@ cp build/libs/canvas/canvas-*.dll $DESTDIR/bin/
 cp build/libs/widgets/widgets-*.dll $DESTDIR/bin/
 cp build/libs/waveview/waveview-*.dll $DESTDIR/bin/
 cp build/libs/pbd/pbd-*.dll $DESTDIR/bin/
+cp build/libs/ctrl-interface/midi_surface/ardour*.dll $DESTDIR/bin/
+cp build/libs/ctrl-interface/control_protocol/ardour*.dll $DESTDIR/bin/
 cp build/libs/ptformat/ptformat-*.dll $DESTDIR/bin/
 cp build/libs/audiographer/audiographer-*.dll $DESTDIR/bin/
 cp build/libs/fst/ardour-vst-scanner.exe $DESTDIR/bin/ || true
@@ -184,9 +186,6 @@ for file in $PREFIX/lib/lv2/*.lv2; do
 	mkdir -p $ALIBDIR/LV2/$BN
 	cp $PREFIX/lib/lv2/${BN}/*.ttl $ALIBDIR/LV2/${BN}/
 done
-
-
-mv $ALIBDIR/surfaces/ardourcp*.dll $DESTDIR/bin/
 
 # TODO use -static-libgcc -static-libstdc++ -- but for .exe files only
 if update-alternatives --query ${XPREFIX}-gcc | grep Value: | grep -q win32; then
@@ -250,9 +249,27 @@ fi
 ### include static gdb - re-zipped binaries from
 ### http://sourceforge.net/projects/mingw/files/MinGW/Extension/gdb/gdb-7.6.1-1/gdb-7.6.1-1-mingw32-bin.tar.lzma
 ### http://sourceforge.net/projects/mingw-w64/files/Toolchains%20targetting%20Win64/Personal%20Builds/mingw-builds/4.9.1/threads-win32/sjlj/x86_64-4.9.1-release-win32-sjlj-rt_v3-rev1.7z
-if ! grep " using ./waf configure" build/config.log | grep -q -- "--optimize"; then
+
+BUILDTYPE=""
+VERSIONINFO="Optimized Version."
+
+if [ "$DEBUG" = "T" ]; then
+  BUILDTYPE="-dbg"
 	PACKAGE_GDB=1
+	VERSIONINFO="Debug Build."
 fi
+if [ "$FREEBI" = "T" ]; then
+  BUILDTYPE="-demo"
+	VERSIONINFO="Optimized Demo Version."
+fi
+if [ "$DEBUG$FREEBI" = "TT" ]; then
+  BUILDTYPE="-demo-dbg"
+	PACKAGE_GDB=1
+	VERSIONINFO="Demo Version."
+fi
+
+OUTFILE="${TMPDIR}/${PRODUCT_NAME}-${ARDOURVERSION}${BUILDTYPE}-${WARCH}-Setup.exe"
+
 if test -n "$PACKAGE_GDB"; then
 	download gdb-static-win3264.tar.xz http://robin.linuxaudio.org/gdb-static-win3264.tar.xz
 	cd ${SRCCACHE}
@@ -265,11 +282,6 @@ if test -n "$PACKAGE_GDB"; then
 cd bin
 START ..\\gdb\\bin\\gdb.exe -iex "set logging overwrite on" -iex "set height 0" -iex "set logging on %UserProfile%\\${PRODUCT_NAME}-debug.log" -iex "target exec ${PRODUCT_EXE}" -iex "run"
 EOF
-	OUTFILE="${TMPDIR}/${PRODUCT_NAME}-${ARDOURVERSION}-dbg-${WARCH}-Setup.exe"
-	VERSIONINFO="Debug Version."
-else
-	OUTFILE="${TMPDIR}/${PRODUCT_NAME}-${ARDOURVERSION}-${WARCH}-Setup.exe"
-	VERSIONINFO="Optimized Version."
 fi
 
 ################################################################################
@@ -308,7 +320,7 @@ if test x$WITH_GRATIS_X42_LV2 != x ; then
 
 	echo "Adding gratis x42 Plugins"
 
-	for proj in x42-midifilter x42-stereoroute setBfree x42-avldrums x42-limiter x42-tuner; do
+	for proj in x42-autotune x42-midifilter x42-stereoroute setBfree x42-avldrums x42-limiter x42-tuner; do
 		X42_VERSION=$(curl -s -S http://x42-plugins.com/x42/win/${proj}.latest.txt)
 		rsync -a -q --partial \
 			rsync://x42-plugins.com/x42/win/${proj}-lv2-${WARCH}-${X42_VERSION}.zip \
@@ -355,22 +367,34 @@ if test -n "$MIXBUS"; then
 	curl -s -S --fail -#  \
 		-z "${SRCCACHE}/MixbusBundledMedia.zip" \
 		-o "${SRCCACHE}/MixbusBundledMedia.zip" \
-		"http://rsrc.harrisonconsoles.com/mixbus/mb8/content/MixbusBundledMedia.zip"
+		"http://builder.harrisonconsoles.com/pub/share/MixbusBundledMedia.zip"
 
 	if test -f "${SRCCACHE}/MixbusBundledMedia.zip"; then
 		echo "Adding Mixbus Bundled Content"
-		rm -f $DESTDIR/share/media/*.*
-		unzip -q -d "$DESTDIR/share/media/" "${SRCCACHE}/MixbusBundledMedia.zip"
+		rm -f $DESTDIR/share/${LOWERCASE_DIRNAME}/media/*.*
+		unzip -q -o -d "$DESTDIR/share/${LOWERCASE_DIRNAME}/media/" "${SRCCACHE}/MixbusBundledMedia.zip"
+	fi
+else
+        echo "Fetching Ardour bundled media"
+	curl -s -S --fail -#  \
+		-z "${SRCCACHE}/ArdourBundledMedia.zip" \
+		-o "${SRCCACHE}/ArdourBundledMedia.zip" \
+		"http://stuff.ardour.org/loops/ArdourBundledMedia.zip"
+
+	if test -f "${SRCCACHE}/ArdourBundledMedia.zip"; then
+		echo "Adding Ardour Bundled Content"
+		rm -f $DESTDIR/share/${LOWERCASE_DIRNAME}/media/*.*
+		unzip -q -o -d "$DESTDIR/share/${LOWERCASE_DIRNAME}/media/" "${SRCCACHE}/ArdourBundledMedia.zip"
 	fi
 fi
 
 ################################################################################
 
 if test x$DEMO_SESSION_URL != x ; then
-	mkdir -p $DESTDIR/share/sessions
+	mkdir -p $DESTDIR/share/${LOWERCASE_DIRNAME}/sessions
 	DEMO_SESSIONS=$(curl -s -S --fail $DEMO_SESSION_URL/index.txt)
 	for demo in $DEMO_SESSIONS; do
-		curl -s -S --fail -# -o $DESTDIR/share/sessions/$demo $DEMO_SESSION_URL/$demo
+		curl -s -S --fail -# -o $DESTDIR/share/${LOWERCASE_DIRNAME}/sessions/$demo $DEMO_SESSION_URL/$demo
 	done
 fi
 
@@ -422,10 +446,10 @@ if test -n "$MIXBUS"; then
 
 # TODO: proper welcome/finish text.
 	cat >> $NSISFILE << EOF
-!define MUI_FINISHPAGE_TITLE "Welcome to Harrison Mixbus"
-!define MUI_FINISHPAGE_TEXT "Thanks for your purchase of Mixbus!\$\\r\$\\nYou will find the Mixbus application in the Start Menu (or the All Apps panel for Windows 8) \$\\r\$\\nClick the link below to view the Mixbus manual, and learn ways to get involved with the Mixbus community."
-!define MUI_FINISHPAGE_LINK "Mixbus Manual"
-!define MUI_FINISHPAGE_LINK_LOCATION "http://www.harrisonconsoles.com/mixbus/${MANUAL_NAME}/"
+!define MUI_FINISHPAGE_TITLE "Welcome to Harrison ${PROGRAM_NAME}"
+!define MUI_FINISHPAGE_TEXT "Thanks for your purchase of ${PROGRAM_NAME}!\$\\r\$\\nYou will find the ${PROGRAM_NAME} application in the Start Menu (or the All Apps panel for Windows 8) \$\\r\$\\nClick the link below to view the ${PROGRAM_NAME} manual, and learn ways to get involved with the Mixbus community."
+!define MUI_FINISHPAGE_LINK "${PROGRAM_NAME} Manual"
+!define MUI_FINISHPAGE_LINK_LOCATION "https://rsrc.harrisonconsoles.com/mixbus/${MANUAL_NAME}/"
 !define MUI_FINISHPAGE_NOREBOOTSUPPORT
 EOF
 

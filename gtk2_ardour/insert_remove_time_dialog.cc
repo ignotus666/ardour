@@ -73,24 +73,22 @@ InsertRemoveTimeDialog::InsertRemoveTimeDialog (PublicEditor& e, bool remove)
 	table->attach (duration_clock, 1, 2, 1, 2);
 
 	//if a Range is selected, assume the user wants to insert/remove the length of the range
-	if ( _editor.get_selection().time.length() != 0 ) {
+	if (!_editor.get_selection().time.length().is_zero ()) {
 		position_clock.set (_editor.get_selection().time.start_time(), true);
-		duration_clock.set (_editor.get_selection().time.end_time(), true,  timecnt_t (_editor.get_selection().time.start_time()));
-		duration_clock.set_bbt_reference (_editor.get_selection().time.start_time());
+		duration_clock.set_duration (_editor.get_selection().time.length(), true);
 	} else {
 		timepos_t const pos = _editor.get_preferred_edit_position (EDIT_IGNORE_MOUSE);
 		position_clock.set (pos, true);
-		duration_clock.set_bbt_reference (pos);
-		duration_clock.set (timepos_t());
+		duration_clock.set_duration (timecnt_t (pos), true);
 	}
 
 	if (!remove) {
 		Label* intersected_label = manage (new Label (_("Intersected regions should:")));
 		intersected_label->set_alignment (1, 0.5);
 		table->attach (*intersected_label, 0, 1, 2, 3, FILL | EXPAND);
-		_intersected_combo.append_text (_("stay in position"));
-		_intersected_combo.append_text (_("move"));
-		_intersected_combo.append_text (_("be split"));
+		_intersected_combo.append (_("stay in position"));
+		_intersected_combo.append (_("move"));
+		_intersected_combo.append (_("be split"));
 		_intersected_combo.set_active (0);
 		table->attach (_intersected_combo, 1, 2, 2, 3);
 	}
@@ -117,7 +115,7 @@ InsertRemoveTimeDialog::InsertRemoveTimeDialog (PublicEditor& e, bool remove)
 	indent->set_padding (0, 0, 12, 0);
 	indent->add (_move_locked_markers);
 	get_vbox()->pack_start (*indent);
-	tempo_label.set_markup (_("Move tempo and meter changes\n<i>(may cause oddities in the tempo map)</i>"));
+	tempo_label.set_markup (_("Move tempo and time signature changes\n<i>(may cause oddities in the tempo map)</i>"));
 	HBox* tempo_box = manage (new HBox);
 	tempo_box->set_spacing (6);
 	tempo_box->pack_start (_move_tempos, false, false);
@@ -193,13 +191,13 @@ InsertRemoveTimeDialog::move_locked_markers () const
 timepos_t
 InsertRemoveTimeDialog::position () const
 {
-	return position_clock.current_time();
+	return position_clock.last_when();
 }
 
 timecnt_t
 InsertRemoveTimeDialog::distance () const
 {
-	return duration_clock.current_duration (position_clock.current_time());
+	return duration_clock.current_duration (position_clock.last_when());
 }
 
 void

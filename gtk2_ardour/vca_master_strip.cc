@@ -27,6 +27,7 @@
 #include "ardour/vca.h"
 #include "ardour/vca_manager.h"
 
+#include "gtkmm2ext/colors.h"
 #include "gtkmm2ext/doi.h"
 #include "gtkmm2ext/keyboard.h"
 #include "widgets/tooltips.h"
@@ -37,7 +38,6 @@
 #include "gui_thread.h"
 #include "mixer_ui.h"
 #include "ui_config.h"
-#include "utils.h"
 #include "vca_master_strip.h"
 
 #include "pbd/i18n.h"
@@ -51,7 +51,9 @@ using std::string;
 
 PBD::Signal1<void,VCAMasterStrip*> VCAMasterStrip::CatchDeletion;
 
-VCAMasterStrip::VCAMasterStrip (Session* s, boost::shared_ptr<VCA> v)
+static bool no_propagate (GdkEventButton*) { return false; }
+
+VCAMasterStrip::VCAMasterStrip (Session* s, std::shared_ptr<VCA> v)
 	: SessionHandlePtr (s)
 	, _vca (v)
 	, gain_meter (s, 254) /* magic number, don't adjust blindly */
@@ -62,23 +64,30 @@ VCAMasterStrip::VCAMasterStrip (Session* s, boost::shared_ptr<VCA> v)
 	/* set color for the VCA, if not already done. */
 
 	if (!_vca->presentation_info().color_set()) {
-		_vca->presentation_info().set_color (ARDOUR_UI_UTILS::gdk_color_to_rgba (unique_random_color()));
+		if (UIConfiguration::instance().get_use_palette_for_new_vca ()) {
+			_vca->presentation_info().set_color (Gtkmm2ext::gdk_color_to_rgba (AxisView::round_robin_palette_color ()));
+		} else {
+			string cp = UIConfiguration::instance().get_stripable_color_palette ();
+			Gdk::ArrayHandle_Color gc = ColorSelection::palette_from_string (cp);
+			std::vector<Gdk::Color> c (gc);
+			_vca->presentation_info().set_color (gdk_color_to_rgba (c[0]));
+		}
 	}
 
-	control_slave_ui.set_stripable (boost::dynamic_pointer_cast<Stripable> (v));
+	control_slave_ui.set_stripable (std::dynamic_pointer_cast<Stripable> (v));
 
-	gain_meter.set_controls (boost::shared_ptr<Route>(),
-	                         boost::shared_ptr<PeakMeter>(),
-	                         boost::shared_ptr<Amp>(),
+	gain_meter.set_controls (std::shared_ptr<Route>(),
+	                         std::shared_ptr<PeakMeter>(),
+	                         std::shared_ptr<Amp>(),
 	                         _vca->gain_control());
 
 	solo_button.set_name ("solo button");
-	set_tooltip (solo_button, _("Solo slaves"));
+	set_tooltip (solo_button, _("Solo assigned channels"));
 	solo_button.signal_button_release_event().connect (sigc::mem_fun (*this, &VCAMasterStrip::solo_release), false);
 
 	mute_button.set_name ("mute button");
 	mute_button.set_text (_("M"));
-	set_tooltip (mute_button, _("Mute slaves"));
+	set_tooltip (mute_button, _("Mute assigned channels"));
 	mute_button.signal_button_release_event().connect (sigc::mem_fun (*this, &VCAMasterStrip::mute_release), false);
 
 	hide_button.set_icon (ArdourIcon::HideEye);
@@ -109,10 +118,11 @@ VCAMasterStrip::VCAMasterStrip (Session* s, boost::shared_ptr<VCA> v)
 	/* horizontally centered, with a little space (5%) at the top */
 	vertical_button.set_angle (90);
 	vertical_button.set_layout_font (UIConfiguration::instance().get_NormalBoldFont());
-	vertical_button.signal_button_release_event().connect (sigc::mem_fun (*this, &VCAMasterStrip::vertical_button_press));
+	vertical_button.signal_button_press_event().connect (sigc::ptr_fun (&no_propagate), false);
+	vertical_button.signal_button_release_event().connect (sigc::mem_fun (*this, &VCAMasterStrip::vertical_button_release), false);
 	vertical_button.set_fallthrough_to_parent (true);
 	vertical_button.set_active_color (_vca->presentation_info().color ());
-	set_tooltip (vertical_button, _("Click to show slaves only")); /* tooltip updated dynamically */
+	set_tooltip (vertical_button, _("Click to show assigned channels only")); /* tooltip updated dynamically */
 
 	global_vpacker.set_border_width (0);
 	global_vpacker.set_spacing (0);
@@ -151,7 +161,7 @@ VCAMasterStrip::VCAMasterStrip (Session* s, boost::shared_ptr<VCA> v)
 	update_vca_name ();
 	solo_changed ();
 	mute_changed ();
-	spill_change (boost::shared_ptr<VCA>());
+	spill_change (std::shared_ptr<VCA>());
 
 	Mixer_UI::instance()->show_spill_change.connect (sigc::mem_fun (*this, &VCAMasterStrip::spill_change));
 
@@ -173,7 +183,7 @@ VCAMasterStrip::~VCAMasterStrip ()
 {
 	if ((_session && !_session->deletion_in_progress()) && Mixer_UI::instance()->showing_spill_for (_vca)) {
 		/* cancel spill for this VCA */
-		Mixer_UI::instance()->show_spill (boost::shared_ptr<Stripable>());
+		Mixer_UI::instance()->show_spill (std::shared_ptr<Stripable>());
 	}
 
 	delete delete_dialog;
@@ -187,14 +197,14 @@ VCAMasterStrip::self_delete ()
 {
 	if ((_session && !_session->deletion_in_progress()) && Mixer_UI::instance()->showing_spill_for (_vca)) {
 		/* cancel spill for this VCA */
-		Mixer_UI::instance()->show_spill (boost::shared_ptr<Stripable>());
+		Mixer_UI::instance()->show_spill (std::shared_ptr<Stripable>());
 	}
 	/* Drop reference immediately, delete self when idle */
 	_vca.reset ();
-	gain_meter.set_controls (boost::shared_ptr<Route>(),
-	                         boost::shared_ptr<PeakMeter>(),
-	                         boost::shared_ptr<Amp>(),
-	                         boost::shared_ptr<GainControl>());
+	gain_meter.set_controls (std::shared_ptr<Route>(),
+	                         std::shared_ptr<PeakMeter>(),
+	                         std::shared_ptr<Amp>(),
+	                         std::shared_ptr<GainControl>());
 	delete_when_idle (this);
 }
 
@@ -380,7 +390,7 @@ VCAMasterStrip::solo_changed ()
 }
 
 bool
-VCAMasterStrip::vertical_button_press (GdkEventButton* ev)
+VCAMasterStrip::vertical_button_release (GdkEventButton* ev)
 {
 	if (ev->button == 1 && ev->type == GDK_2BUTTON_PRESS) {
 		start_name_edit ();
@@ -475,14 +485,14 @@ void
 VCAMasterStrip::spill ()
 {
 	if (Mixer_UI::instance()->showing_spill_for (_vca)) {
-		Mixer_UI::instance()->show_spill (boost::shared_ptr<Stripable>());
+		Mixer_UI::instance()->show_spill (std::shared_ptr<Stripable>());
 	} else {
 		Mixer_UI::instance()->show_spill (_vca);
 	}
 }
 
 void
-VCAMasterStrip::spill_change (boost::shared_ptr<Stripable> vca)
+VCAMasterStrip::spill_change (std::shared_ptr<Stripable> vca)
 {
 	if (vca != _vca) {
 		vertical_button.set_active_state (Gtkmm2ext::Off);
@@ -547,14 +557,14 @@ VCAMasterStrip::drop_all_slaves ()
 	_vca->Drop (); /* EMIT SIGNAL */
 
 	if (Mixer_UI::instance()->showing_spill_for (_vca)) {
-		Mixer_UI::instance()->show_spill (boost::shared_ptr<Stripable>());
+		Mixer_UI::instance()->show_spill (std::shared_ptr<Stripable>());
 	}
 }
 
 Gdk::Color
 VCAMasterStrip::color () const
 {
-	return ARDOUR_UI_UTILS::gdk_color_from_rgba (_vca->presentation_info().color ());
+	return Gtkmm2ext::gdk_color_from_rgba (_vca->presentation_info().color ());
 }
 
 string
@@ -591,7 +601,7 @@ VCAMasterStrip::presentation_info () const
 	return _vca->presentation_info();
 }
 
-boost::shared_ptr<Stripable>
+std::shared_ptr<Stripable>
 VCAMasterStrip::stripable () const
 {
 	return _vca;

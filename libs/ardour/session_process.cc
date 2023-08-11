@@ -44,8 +44,10 @@
 #include "ardour/debug.h"
 #include "ardour/disk_reader.h"
 #include "ardour/graph.h"
+#include "ardour/io_plug.h"
 #include "ardour/port.h"
 #include "ardour/process_thread.h"
+#include "ardour/rt_tasklist.h"
 #include "ardour/scene_changer.h"
 #include "ardour/session.h"
 #include "ardour/transport_fsm.h"
@@ -85,16 +87,16 @@ Session::process (pframes_t nframes)
 {
 	TimerRAII tr (dsp_stats[OverallProcess]);
 
-	samplepos_t transport_at_start = _transport_sample;
-
-	setup_thread_local_variables ();
-
-	_silent = false;
-
 	if (processing_blocked()) {
 		_silent = true;
 		return;
+	} else {
+		_silent = false;
 	}
+
+	samplepos_t transport_at_start = _transport_sample;
+
+	setup_thread_local_variables ();
 
 	if (non_realtime_work_pending()) {
 		DEBUG_TRACE (DEBUG::Butler, string_compose ("non-realtime work pending: %1 (%2%3%4)\n", enum_2_string (post_transport_work()), std::hex, post_transport_work(), std::dec));
@@ -108,25 +110,45 @@ Session::process (pframes_t nframes)
 
 	_engine.main_thread()->get_buffers ();
 
+	std::shared_ptr<GraphChain> io_graph_chain = _io_graph_chain[0];
+	if (io_graph_chain) {
+		PortManager::falloff_cache_calc (nframes, nominal_sample_rate ());
+		_process_graph->process_io_plugs (io_graph_chain, nframes, 0);
+		io_graph_chain.reset (); /* drop reference */
+	}
+
 	(this->*process_function) (nframes);
+
+	io_graph_chain = _io_graph_chain[1];
+	if (io_graph_chain) {
+		_process_graph->process_io_plugs (io_graph_chain, nframes, 0);
+		io_graph_chain.reset (); /* drop reference */
+	}
 
 	/* realtime-safe meter-position and processor-order changes
 	 *
 	 * ideally this would be done in
 	 * Route::process_output_buffers() but various functions
-	 * callig it hold a _processor_lock reader-lock
+	 * calling it hold a _processor_lock reader-lock
 	 */
 	bool one_or_more_routes_declicking = false;
 	{
 		ProcessorChangeBlocker pcb (this);
-		boost::shared_ptr<RouteList> r = routes.reader ();
-		for (RouteList::const_iterator i = r->begin(); i != r->end(); ++i) {
-			if ((*i)->apply_processor_changes_rt()) {
+		std::shared_ptr<RouteList const> r = routes.reader ();
+		for (auto const& i : *r) {
+			if (i->apply_processor_changes_rt()) {
 				_rt_emit_pending = true;
 			}
-			if ((*i)->declick_in_progress()) {
+			if (i->declick_in_progress()) {
 				one_or_more_routes_declicking = true;
 			}
+		}
+	}
+
+	if (_update_send_delaylines) {
+		std::shared_ptr<RouteList const> r = routes.reader ();
+		for (auto const& i : *r) {
+			i->update_send_delaylines ();
 		}
 	}
 
@@ -183,7 +205,7 @@ Session::no_roll (pframes_t nframes)
 
 	samplepos_t end_sample = _transport_sample + floor (nframes * _transport_fsm->transport_speed());
 	int ret = 0;
-	boost::shared_ptr<RouteList> r = routes.reader ();
+	std::shared_ptr<RouteList const> r = routes.reader ();
 
 	if (_click_io) {
 		_click_io->silence (nframes);
@@ -196,19 +218,20 @@ Session::no_roll (pframes_t nframes)
 
 	_global_locate_pending = locate_pending ();
 
-	if (_process_graph) {
+	std::shared_ptr<GraphChain> graph_chain = _graph_chain;
+	if (graph_chain) {
 		DEBUG_TRACE(DEBUG::ProcessThreads,"calling graph/no-roll\n");
-		_process_graph->routes_no_roll( nframes, _transport_sample, end_sample, non_realtime_work_pending());
+		_process_graph->routes_no_roll(graph_chain, nframes, _transport_sample, end_sample, non_realtime_work_pending());
 	} else {
 		PT_TIMING_CHECK (10);
-		for (RouteList::iterator i = r->begin(); i != r->end(); ++i) {
+		for (auto const& i : *r) {
 
-			if ((*i)->is_auditioner()) {
+			if (i->is_auditioner()) {
 				continue;
 			}
 
-			if ((*i)->no_roll (nframes, _transport_sample, end_sample, non_realtime_work_pending())) {
-				error << string_compose(_("Session: error in no roll for %1"), (*i)->name()) << endmsg;
+			if (i->no_roll (nframes, _transport_sample, end_sample, non_realtime_work_pending())) {
+				error << string_compose(_("Session: error in no roll for %1"), i->name()) << endmsg;
 				ret = -1;
 				break;
 			}
@@ -227,7 +250,7 @@ int
 Session::process_routes (pframes_t nframes, bool& need_butler)
 {
 	TimerRAII tr (dsp_stats[Roll]);
-	boost::shared_ptr<RouteList> r = routes.reader ();
+	std::shared_ptr<RouteList const> r = routes.reader ();
 
 	const samplepos_t start_sample = _transport_sample;
 	const samplepos_t end_sample = _transport_sample + floor (nframes * _transport_fsm->transport_speed());
@@ -243,32 +266,33 @@ Session::process_routes (pframes_t nframes, bool& need_butler)
 
 	_global_locate_pending = locate_pending();
 
-	if (_process_graph) {
+	std::shared_ptr<GraphChain> graph_chain = _graph_chain;
+	if (graph_chain) {
 		DEBUG_TRACE(DEBUG::ProcessThreads,"calling graph/process-routes\n");
-		if (_process_graph->process_routes (nframes, start_sample, end_sample, need_butler) < 0) {
+		if (_process_graph->process_routes (graph_chain, nframes, start_sample, end_sample, need_butler) < 0) {
 			stop_transport ();
 			return -1;
 		}
 	} else {
 
-		for (RouteList::iterator i = r->begin(); i != r->end(); ++i) {
+		for (auto const& i : *r) {
 
 			int ret;
 
-			if ((*i)->is_auditioner()) {
+			if (i->is_auditioner()) {
 				continue;
 			}
 
 			bool b = false;
 
-			if ((ret = (*i)->roll (nframes, start_sample, end_sample, b)) < 0) {
+			if ((ret = i->roll (nframes, start_sample, end_sample, b)) < 0) {
 				cerr << "ERR1 STOP\n";
 				TFSM_STOP (false, false);
 				return -1;
 			}
 
 			if (b) {
-				DEBUG_TRACE (DEBUG::Butler, string_compose ("%1 rolled and needs butler\n", (*i)->name()));
+				DEBUG_TRACE (DEBUG::Butler, string_compose ("%1 rolled and needs butler\n", i->name()));
 				need_butler = true;
 			}
 		}
@@ -283,10 +307,10 @@ Session::get_track_statistics ()
 	float pworst = 1.0f;
 	float cworst = 1.0f;
 
-	boost::shared_ptr<RouteList> rl = routes.reader();
-	for (RouteList::iterator i = rl->begin(); i != rl->end(); ++i) {
+	std::shared_ptr<RouteList const> rl = routes.reader();
+	for (auto const& i : *rl) {
 
-		boost::shared_ptr<Track> tr = boost::dynamic_pointer_cast<Track> (*i);
+		std::shared_ptr<Track> tr = std::dynamic_pointer_cast<Track> (i);
 
 		if (!tr || tr->is_private_route()) {
 			continue;
@@ -296,8 +320,8 @@ Session::get_track_statistics ()
 		cworst = min (cworst, tr->capture_buffer_load());
 	}
 
-	g_atomic_int_set (&_playback_load, (uint32_t) floor (pworst * 100.0f));
-	g_atomic_int_set (&_capture_load, (uint32_t) floor (cworst * 100.0f));
+	_playback_load.store ((uint32_t) floor (pworst * 100.0f));
+	_capture_load.store ((uint32_t) floor (cworst * 100.0f));
 
 	if (actively_recording()) {
 		set_dirty();
@@ -324,9 +348,9 @@ Session::compute_audible_delta (samplepos_t& pos_and_delta) const
 samplecnt_t
 Session::calc_preroll_subcycle (samplecnt_t ns) const
 {
-	boost::shared_ptr<RouteList> r = routes.reader ();
-	for (RouteList::const_iterator i = r->begin(); i != r->end(); ++i) {
-		samplecnt_t route_offset = (*i)->playback_latency ();
+	std::shared_ptr<RouteList const> r = routes.reader ();
+	for (auto const& i : *r) {
+		samplecnt_t route_offset = i->playback_latency ();
 		if (_remaining_latency_preroll > route_offset + ns) {
 			/* route will no-roll for complete pre-roll cycle */
 			continue;
@@ -377,6 +401,7 @@ Session::process_with_events (pframes_t nframes)
 		immediate_events.pop_front ();
 		process_event (ev);
 	}
+
 	/* only count-in when going to roll at speed 1.0 */
 	if (_transport_fsm->transport_speed() != 1.0 && _count_in_samples > 0) {
 		_count_in_samples = 0;
@@ -389,6 +414,7 @@ Session::process_with_events (pframes_t nframes)
 
 	// DEBUG_TRACE (DEBUG::Transport, string_compose ("Running count in/latency preroll of %1 & %2\n", _count_in_samples, _remaining_latency_preroll));
 
+	TriggerBox::begin_process_cycle();
 	maybe_find_pending_cue ();
 
 	while (_count_in_samples > 0 || _remaining_latency_preroll > 0) {
@@ -696,6 +722,7 @@ Session::process_without_events (pframes_t nframes)
 
 	click (_transport_sample, nframes);
 
+	TriggerBox::begin_process_cycle();
 	maybe_find_pending_cue ();
 
 	if (process_routes (nframes, session_needs_butler)) {
@@ -732,29 +759,18 @@ void
 Session::process_audition (pframes_t nframes)
 {
 	SessionEvent* ev;
-	boost::shared_ptr<RouteList> r = routes.reader ();
+	std::shared_ptr<RouteList const> r = routes.reader ();
 
-	for (RouteList::iterator i = r->begin(); i != r->end(); ++i) {
-		if (!(*i)->is_auditioner()) {
-			(*i)->silence (nframes);
+	std::shared_ptr<GraphChain> graph_chain = _graph_chain;
+	if (graph_chain) {
+		/* Ideally we'd use Session::rt_tasklist, since dependency is irrelevant. */
+		_process_graph->silence_routes (graph_chain, nframes);
+	} else {
+		for (auto const& i : *r) {
+			if (!i->is_auditioner()) {
+				i->silence (nframes);
+			}
 		}
-	}
-
-	if (_process_graph) {
-		_process_graph->swap_process_chain ();
-	}
-
-	/* run the auditioner, and if it says we need butler service, ask for it */
-
-	if (auditioner->play_audition (nframes) > 0) {
-		DEBUG_TRACE (DEBUG::Butler, "auditioner needs butler, call it\n");
-		_butler->summon ();
-	}
-
-	/* if using a monitor section, run it because otherwise we don't hear anything */
-
-	if (_monitor_out && auditioner->needs_monitor()) {
-		_monitor_out->monitor_run (_transport_sample, _transport_sample + nframes, nframes);
 	}
 
 	/* handle pending events */
@@ -772,6 +788,19 @@ Session::process_audition (pframes_t nframes)
 		SessionEvent *ev = immediate_events.front ();
 		immediate_events.pop_front ();
 		process_event (ev);
+	}
+
+	/* run the auditioner, and if it says we need butler service, ask for it */
+
+	if (auditioner->play_audition (nframes) > 0) {
+		DEBUG_TRACE (DEBUG::Butler, "auditioner needs butler, call it\n");
+		_butler->summon ();
+	}
+
+	/* if using a monitor section, run it because otherwise we don't hear anything */
+
+	if (_monitor_out && auditioner->needs_monitor()) {
+		_monitor_out->monitor_run (_transport_sample, _transport_sample + nframes, nframes);
 	}
 
 	if (!auditioner->auditioning()) {
@@ -990,8 +1019,8 @@ Session::process_event (SessionEvent* ev)
 		break;
 
 	case SessionEvent::RangeStop:
-		cerr << "RANGE STOP\n";
-		TFSM_STOP (ev->yes_or_no, false);
+		// cerr << "RANGE STOP\n";
+		TFSM_STOP (ev->yes_or_no, true);
 		remove = false;
 		del = false;
 		break;
@@ -1004,13 +1033,13 @@ Session::process_event (SessionEvent* ev)
 		break;
 
 	case SessionEvent::Overwrite:
-		if (boost::shared_ptr<Track> track = ev->track.lock()) {
+		if (std::shared_ptr<Track> track = ev->track.lock()) {
 			overwrite_some_buffers (track, ev->overwrite);
 		}
 		break;
 
 	case SessionEvent::OverwriteAll:
-			overwrite_some_buffers (boost::shared_ptr<Track>(), ev->overwrite);
+			overwrite_some_buffers (std::shared_ptr<Track>(), ev->overwrite);
 		break;
 
 	case SessionEvent::TransportStateChange:
@@ -1045,7 +1074,7 @@ Session::process_event (SessionEvent* ev)
 		break;
 
 	case SessionEvent::SetTimecodeTransmission:
-		g_atomic_int_set (&_suspend_timecode_transmission, ev->yes_or_no ? 0 : 1);
+		_suspend_timecode_transmission.store (ev->yes_or_no ? 0 : 1);
 		break;
 
 	case SessionEvent::SyncCues:
@@ -1064,6 +1093,30 @@ Session::process_event (SessionEvent* ev)
 
 	if (del) {
 		delete ev;
+	}
+}
+
+void
+Session::handle_slots_empty_status (std::weak_ptr<Route> const & wr)
+{
+	std::shared_ptr<Route> r = wr.lock();
+
+	if (!r) {
+		return;
+	}
+
+	if (r->triggerbox()) {
+		if (r->triggerbox()->empty()) {
+			/* signal was emitted, and no slots are used now, so
+			   there was change from >0 slots to 0 slots
+			*/
+			tb_with_filled_slots--;
+		} else {
+			/* signal was emitted, some slots are used now, so
+			   there was a change from 0 slots to > 0
+			*/
+			tb_with_filled_slots++;
+		}
 	}
 }
 
@@ -1092,6 +1145,14 @@ Session::compute_stop_limit () const
 		return max_samplepos;
 	}
 
+	/* if there are any triggerboxen with slots filled, we ignore the end
+	 * marker
+	 */
+
+	if (tb_with_filled_slots) {
+		return max_samplepos;
+	}
+
 	return current_end_sample ();
 }
 
@@ -1115,9 +1176,9 @@ Session::emit_route_signals ()
 	// TODO use RAII to allow using these signals in other places
 	BatchUpdateStart(); /* EMIT SIGNAL */
 	ProcessorChangeBlocker pcb (this);
-	boost::shared_ptr<RouteList> r = routes.reader ();
-	for (RouteList::const_iterator ci = r->begin(); ci != r->end(); ++ci) {
-		(*ci)->emit_pending_signals ();
+	std::shared_ptr<RouteList const> r = routes.reader ();
+	for (auto const& i : *r) {
+		i->emit_pending_signals ();
 	}
 	BatchUpdateEnd(); /* EMIT SIGNAL */
 }
@@ -1300,7 +1361,7 @@ Session::plan_master_strategy (pframes_t nframes, double master_speed, samplepos
 		return desired;
 	}
 
-	/* When calling TransportMasterStart, sould aim for
+	/* When calling TransportMasterStart, should aim for
 	 *   delta >= _remaining_latency_preroll
 	 * This way there can be silent pre-roll of exactly the delta time.
 	 *
@@ -1422,7 +1483,7 @@ Session::plan_master_strategy (pframes_t nframes, double master_speed, samplepos
 			 * session (so far).
 			 */
 
-			locate_target += wlp + lrintf (ntracks() * sample_rate() * (1.5 * (g_atomic_int_get (&_current_usecs_per_track) / 1000000.0)));
+			locate_target += wlp + lrintf (ntracks() * sample_rate() * (1.5 * (_current_usecs_per_track.load () / 1000000.0)));
 
 			DEBUG_TRACE (DEBUG::Slave, string_compose ("After locate-to-catch-master, still too far off (%1). Locate again to %2\n", delta, locate_target));
 
@@ -1480,7 +1541,7 @@ Session::plan_master_strategy (pframes_t nframes, double master_speed, samplepos
 
 		samplepos_t locate_target = master_transport_sample;
 
-		locate_target += wlp + lrintf (ntracks() * sample_rate() * (1.5 * (g_atomic_int_get (&_current_usecs_per_track) / 1000000.0)));
+		locate_target += wlp + lrintf (ntracks() * sample_rate() * (1.5 * (_current_usecs_per_track.load () / 1000000.0)));
 
 		DEBUG_TRACE (DEBUG::Slave, string_compose ("request locate to master position %1\n", locate_target));
 
@@ -1589,10 +1650,7 @@ Session::implement_master_strategy ()
 void
 Session::sync_cues ()
 {
-	std::cerr << "Need to sync cues!\n";
-
 	_locations->apply (*this, &Session::sync_cues_from_list);
-
 }
 
 struct LocationByTime
@@ -1628,15 +1686,17 @@ Session::sync_cues_from_list (Locations::LocationList const & locs)
 }
 
 int32_t
-Session::first_cue_within (samplepos_t s, samplepos_t e)
+Session::first_cue_within (samplepos_t s, samplepos_t e, bool& was_recorded)
 {
 	int32_t active_cue = _active_cue.load ();
+
+	was_recorded = false;
 
 	if (active_cue >= 0) {
 		return active_cue;
 	}
 
-	if (!(Config->get_cue_behavior() & FollowCues)) {
+	if (!(config.get_cue_behavior() & FollowCues)) {
 		return -1;
 	}
 
@@ -1645,6 +1705,7 @@ Session::first_cue_within (samplepos_t s, samplepos_t e)
 
 	if (si != _cue_events.end()) {
 		if (si->time < e) {
+			was_recorded = true;
 			return si->cue;
 		}
 	}
@@ -1653,16 +1714,126 @@ Session::first_cue_within (samplepos_t s, samplepos_t e)
 }
 
 void
-Session::cue_marker_change (Location* loc)
+Session::cue_marker_change (Location* /* ignored */)
 {
 	SessionEvent* ev = new SessionEvent (SessionEvent::SyncCues, SessionEvent::Add, SessionEvent::Immediate, 0, 0.0);
 	queue_event (ev);
 }
 
 void
-Session::cue_bang (int32_t cue)
+Session::trigger_cue_row (int32_t cue)
 {
 	_pending_cue.store (cue);
+	request_transport_speed (1.0);
+}
+
+
+bool
+Session::bang_trigger_at (int32_t route_index, int32_t row_index)
+{
+	/* this is a convenience function for simple control surfaces to bang a trigger without any regards to banking */
+
+	int index = 0;
+	StripableList sl;
+	get_stripables (sl);
+	sl.sort (Stripable::Sorter ());
+	for (StripableList::iterator s = sl.begin (); s != sl.end (); ++s) {
+		std::shared_ptr<Route>     r = std::dynamic_pointer_cast<Route> (*s);
+		if (!r || !r->triggerbox ()) {
+			continue;
+		}
+		/* we're only interested in Trigger Tracks */
+		if (!(r->presentation_info ().trigger_track ())) {
+			continue;
+		}
+		if (index == route_index) {
+			r->triggerbox()->bang_trigger_at(row_index);
+			return true;
+		}
+		index++;
+	}
+	return false;
+}
+
+bool
+Session::unbang_trigger_at (int32_t route_index, int32_t row_index)
+{
+	/* this is a convenience function for simple control surfaces to un-bang a trigger without any regards to banking */
+
+	int index = 0;
+	StripableList sl;
+	get_stripables (sl);
+	sl.sort (Stripable::Sorter ());
+	for (StripableList::iterator s = sl.begin (); s != sl.end (); ++s) {
+		std::shared_ptr<Route>     r = std::dynamic_pointer_cast<Route> (*s);
+		if (!r || !r->triggerbox ()) {
+			continue;
+		}
+		/* we're only interested in Trigger Tracks */
+		if (!(r->presentation_info ().trigger_track ())) {
+			continue;
+		}
+		if (index == route_index) {
+			r->triggerbox()->unbang_trigger_at(row_index);
+			return true;
+		}
+		index++;
+	}
+	return false;
+}
+
+std::shared_ptr<TriggerBox>
+Session::triggerbox_at (int32_t route_index) const
+{
+	int index = 0;
+	StripableList sl;
+	get_stripables (sl);
+	sl.sort (Stripable::Sorter ());
+	for (StripableList::iterator s = sl.begin (); s != sl.end (); ++s) {
+		std::shared_ptr<Route>     r = std::dynamic_pointer_cast<Route> (*s);
+		if (!r || !r->triggerbox ()) {
+			continue;
+		}
+		/* we're only interested in Trigger Tracks */
+		if (!(r->presentation_info ().trigger_track ())) {
+			continue;
+		}
+		if (index == route_index) {
+			return r->triggerbox();
+		}
+		index++;
+	}
+	return std::shared_ptr<TriggerBox>();
+}
+
+int
+Session::num_triggerboxes () const
+{
+	int count = 0;
+	StripableList sl;
+	get_stripables (sl);
+	for (StripableList::iterator s = sl.begin (); s != sl.end (); ++s) {
+		std::shared_ptr<Route>     r = std::dynamic_pointer_cast<Route> (*s);
+		if (!r || !r->triggerbox ()) {
+			continue;
+		}
+		/* we're only interested in Trigger Tracks */
+		if (!(r->presentation_info ().trigger_track ())) {
+			continue;
+		}
+		count++;
+	}
+	return count;
+}
+
+TriggerPtr
+Session::trigger_at (int32_t route_index, int32_t trigger_index) const
+{
+	std::shared_ptr<TriggerBox> tb = triggerbox_at(route_index);
+	if (tb) {
+		return tb->trigger(trigger_index);
+	}
+	return TriggerPtr();
 }
 
 void
@@ -1671,6 +1842,12 @@ Session::maybe_find_pending_cue ()
 	int32_t ac = _pending_cue.exchange (-1);
 	if (ac >= 0) {
 		_active_cue.store (ac);
+
+		if (TriggerBox::cue_recording()) {
+			CueRecord cr (ac, _transport_sample);
+			TriggerBox::cue_records.write (&cr, 1);
+			/* failure is acceptable, but unlikely */
+		}
 	}
 }
 

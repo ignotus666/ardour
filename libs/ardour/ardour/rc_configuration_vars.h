@@ -40,6 +40,9 @@ CONFIG_VARIABLE (AutoConnectOption, output_auto_connect, "output-auto-connect", 
 CONFIG_VARIABLE (AutoConnectOption, input_auto_connect, "input-auto-connect", AutoConnectPhysical)
 CONFIG_VARIABLE (bool, strict_io, "strict-io", true)
 
+/* 0: off, no varispeed, q: 8..96 - resampler adds (resampler_quality - 1) samples latency */
+CONFIG_VARIABLE (uint32_t, port_resampler_quality, "port-resampler-quality", 17)
+
 /* Connect all physical inputs to a dummy port, this makes raw input data available.
  * `jack_port_get_buffer (jack_port_by_name (c, "system:capture_1") , n_samples);`
  * nees to work for input-monitoring (recorder page).
@@ -61,6 +64,7 @@ CONFIG_VARIABLE (bool, trace_midi_output, "trace-midi-output", false)
 CONFIG_VARIABLE (bool, send_mtc, "send-mtc", false)
 CONFIG_VARIABLE (bool, send_mmc, "send-mmc", false)
 CONFIG_VARIABLE (bool, send_midi_clock, "send-midi-clock", false)
+CONFIG_VARIABLE (double, midi_clock_resolution, "midi-clock-resolution", 1.) /* 0 implies do not round, 1 implies round to integer, non-zero is the smallest fractional resolution, in bpm */
 CONFIG_VARIABLE (bool, mmc_control, "mmc-control", true)
 CONFIG_VARIABLE (bool, midi_feedback, "midi-feedback", false)
 CONFIG_VARIABLE (int32_t, mmc_receive_device_id, "mmc-receive-device-id", 0x7f)
@@ -85,6 +89,7 @@ CONFIG_VARIABLE (float, ltc_output_volume, "ltc-output-volume", 0.125893)
 
 CONFIG_VARIABLE (uint32_t, feedback_interval_ms,  "feedback-interval-ms", 100)
 CONFIG_VARIABLE (bool, use_tranzport,  "use-tranzport", false)
+CONFIG_VARIABLE (bool, auto_enable_surfaces, "auto-enable-surfaces", true)
 
 /* disk operations */
 
@@ -113,6 +118,7 @@ CONFIG_VARIABLE (bool, region_boundaries_from_onscreen_tracks, "region-boundarie
 CONFIG_VARIABLE (FadeShape, default_fade_shape, "default-fade-shape", FadeConstantPower)
 CONFIG_VARIABLE (RangeSelectionAfterSplit, range_selection_after_split, "range-selection-after-split", PreserveSel)
 CONFIG_VARIABLE (RegionSelectionAfterSplit, region_selection_after_split, "region-selection-after-split", None)
+CONFIG_VARIABLE (bool, interview_editing, "interview-editing", false)
 
 /* monitoring, mute, solo etc */
 
@@ -157,15 +163,13 @@ CONFIG_VARIABLE (bool, use_click_emphasis, "use-click-emphasis", true)
  */
 CONFIG_VARIABLE (bool, skip_playback, "skip-playback", true)
 CONFIG_VARIABLE (bool, plugins_stop_with_transport, "plugins-stop-with-transport", false)
-CONFIG_VARIABLE (bool, recording_resets_xrun_count, "recording-resets-xrun-count,", false)
+CONFIG_VARIABLE (bool, recording_resets_xrun_count, "recording-resets-xrun-count", false)
 CONFIG_VARIABLE (bool, stop_recording_on_xrun, "stop-recording-on-xrun", false)
 CONFIG_VARIABLE (bool, create_xrun_marker, "create-xrun-marker", false)
 CONFIG_VARIABLE (bool, stop_at_session_end, "stop-at-session-end", false)
 CONFIG_VARIABLE (float, preroll_seconds, "preroll-seconds", -2.0f)
 CONFIG_VARIABLE (bool, loop_is_mode, "loop-is-mode", false)
 CONFIG_VARIABLE (LoopFadeChoice, loop_fade_choice, "loop-fade-choice", XFadeLoop)
-CONFIG_VARIABLE (samplecnt_t, preroll, "preroll", 0)
-CONFIG_VARIABLE (samplecnt_t, postroll, "postroll", 0)
 CONFIG_VARIABLE (float, shuttle_speed_factor, "shuttle-speed-factor", 1.0f) // used for MMC shuttle
 CONFIG_VARIABLE (float, shuttle_speed_threshold, "shuttle-speed-threshold", 5.0f) // used for MMC shuttle
 CONFIG_VARIABLE (ShuttleUnits, shuttle_units, "shuttle-units", Percentage)
@@ -176,7 +180,6 @@ CONFIG_VARIABLE (AutoReturnTarget, auto_return_target_list, "auto-return-target-
 CONFIG_VARIABLE (bool, reset_default_speed_on_stop, "reset-default-speed-on-stop", false)
 CONFIG_VARIABLE (bool, rewind_ffwd_like_tape_decks, "rewind-ffwd-like-tape-decks", true)
 CONFIG_VARIABLE (bool, auto_return_after_rewind_ffwd, "auto-return-after-rewind-ffwd", false)
-CONFIG_VARIABLE (CueBehavior, cue_behavior, "cue-behavior", FollowCues)
 
 /* metering */
 
@@ -184,9 +187,6 @@ CONFIG_VARIABLE (float, meter_falloff, "meter-falloff", 13.3f)
 CONFIG_VARIABLE (MeterType, meter_type_master, "meter-type-master", MeterK14)
 CONFIG_VARIABLE (MeterType, meter_type_track, "meter-type-track", MeterPeak)
 CONFIG_VARIABLE (MeterType, meter_type_bus, "meter-type-bus", MeterPeak)
-
-/* triggers */
-CONFIG_VARIABLE (bool, enable_triggers, "enable-triggers", false)
 
 /* miscellany */
 
@@ -196,7 +196,8 @@ CONFIG_VARIABLE (bool, copy_demo_sessions, "copy-demo-sessions", true)
 CONFIG_VARIABLE (std::string, auditioner_output_left, "auditioner-output-left", "default")
 CONFIG_VARIABLE (std::string, auditioner_output_right, "auditioner-output-right", "default")
 CONFIG_VARIABLE (bool, replicate_missing_region_channels, "replicate-missing-region-channels", true)
-CONFIG_VARIABLE (bool, hiding_groups_deactivates_groups, "hiding-groups-deactivates-groups", true)
+CONFIG_VARIABLE (bool, hiding_groups_deactivates_groups, "deprecated-hiding-groups-deactivates-groups", false)  /*deprecated*/
+CONFIG_VARIABLE (bool, group_override_inverts, "group-override-inverts", true)
 CONFIG_VARIABLE (bool, verify_remove_last_capture, "verify-remove-last-capture", true)
 CONFIG_VARIABLE (bool, save_history, "save-history", true)
 CONFIG_VARIABLE (int32_t, saved_history_depth, "save-history-depth", 20)
@@ -212,7 +213,8 @@ CONFIG_VARIABLE_SPECIAL (std::string, default_session_parent_dir, "default-sessi
 #else
 CONFIG_VARIABLE_SPECIAL (std::string, default_session_parent_dir, "default-session-parent-dir", "~", poor_mans_glob)
 #endif
-CONFIG_VARIABLE (std::string, sample_lib_path, "sample-lib-path", "")
+CONFIG_VARIABLE (std::string, clip_library_dir, "clip-library-dir", "@default@") /* writable folder */
+CONFIG_VARIABLE (std::string, sample_lib_path, "sample-lib-path", "") /* custom paths */
 CONFIG_VARIABLE (bool, allow_special_bus_removal, "allow-special-bus-removal", false)
 CONFIG_VARIABLE (int32_t, processor_usage, "processor-usage", -1)
 CONFIG_VARIABLE (int32_t, cpu_dma_latency, "cpu-dma-latency", -1) /* >=0 to enable */
@@ -220,9 +222,9 @@ CONFIG_VARIABLE (gain_t, max_gain, "max-gain", 2.0) /* +6.0dB */
 CONFIG_VARIABLE (uint32_t, max_recent_sessions, "max-recent-sessions", 10)
 CONFIG_VARIABLE (uint32_t, max_recent_templates, "max-recent-templates", 10)
 CONFIG_VARIABLE (double, automation_thinning_factor, "automation-thinning-factor", 20.0)
-CONFIG_VARIABLE (std::string, freesound_download_dir, "freesound-download-dir", Glib::get_home_dir() + "/Freesound/snd")
 CONFIG_VARIABLE (samplecnt_t, range_location_minimum, "range-location-minimum", 128) /* samples */
 CONFIG_VARIABLE (EditMode, edit_mode, "edit-mode", Slide)
+CONFIG_VARIABLE (RippleMode, ripple_mode, "ripple-mode", RippleSelected)
 CONFIG_VARIABLE (Temporal::TimeDomain, default_automation_time_domain, "default-automation-time-domain", Temporal::BeatTime)
 
 /* plugin related */
@@ -241,6 +243,7 @@ CONFIG_VARIABLE (bool, conceal_vst2_if_vst3_exists, "conceal-vst2-if-vst3-exists
 CONFIG_VARIABLE (bool, show_vst3_micro_edit_inline, "show-vst3-micro-edit-inline", true)
 CONFIG_VARIABLE (bool, ask_replace_instrument, "ask-replace-instrument", true)
 CONFIG_VARIABLE (bool, ask_setup_instrument, "ask-setup-instrument", true)
+CONFIG_VARIABLE (bool, setup_sidechain, "setup-sidechain", false)
 CONFIG_VARIABLE (uint32_t, plugin_scan_timeout, "plugin-scan-timeout", 150) /* deci-seconds */
 CONFIG_VARIABLE (uint32_t, limit_n_automatables, "limit-n-automatables", 512)
 CONFIG_VARIABLE (uint32_t, plugin_cache_version, "plugin-cache-version", 0)
@@ -258,13 +261,12 @@ CONFIG_VARIABLE (DenormalModel, denormal_model, "denormal-model", DenormalFTZDAZ
 
 /* web addresses used in the program */
 
-CONFIG_VARIABLE (std::string, osx_pingback_url, "osx-pingback-url", "http://community.ardour.org/pingback/osx/")
-CONFIG_VARIABLE (std::string, linux_pingback_url, "linux-pingback-url", "http://community.ardour.org/pingback/linux/")
-CONFIG_VARIABLE (std::string, windows_pingback_url, "windows-pingback-url", "http://community.ardour.org/pingback/windows/")
+CONFIG_VARIABLE (std::string, pingback_url, "pingback-url", "http://community.ardour.org/pingback/ignored/")
 CONFIG_VARIABLE (std::string, tutorial_manual_url, "tutorial-manual-url", "http://ardour.org/tutorial")
 CONFIG_VARIABLE (std::string, reference_manual_url, "reference-manual-url", "http://manual.ardour.org/")
 CONFIG_VARIABLE (std::string, updates_url, "updates-url", "http://ardour.org/whatsnew.html")
-CONFIG_VARIABLE (std::string, donate_url, "donate-url", "http://ardour.org/donate")
+CONFIG_VARIABLE (std::string, donate_url, "donate-url", "http://community.ardour.org/donate")
+CONFIG_VARIABLE (std::string, resource_index_url, "resource-index-url", "http://ardour.org/libraries.xml")
 
 /* video timeline configuration */
 CONFIG_VARIABLE (std::string, xjadeo_binary, "xjadeo-binary", "")
@@ -275,9 +277,9 @@ CONFIG_VARIABLE (std::string, video_server_docroot, "video-server-docroot", "/")
 #else
 CONFIG_VARIABLE (std::string, video_server_docroot, "video-server-docroot", "C:\\")
 #endif
-CONFIG_VARIABLE (bool, show_video_export_info, "show-video-export-info", true)
 CONFIG_VARIABLE (bool, show_video_server_dialog, "show-video-server-dialog", false)
 
 /* export */
 CONFIG_VARIABLE (float, export_preroll, "export-preroll", 2.0) // seconds
 CONFIG_VARIABLE (float, export_silence_threshold, "export-silence-threshold", -90) // dB
+CONFIG_VARIABLE (float, ppqn_factor_for_export, "ppqn-factor-for-export", 1) // Temporal::ticks_per_beat

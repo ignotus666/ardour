@@ -22,19 +22,21 @@
 #ifndef __ardour_gtk_midi_tracer_h__
 #define __ardour_gtk_midi_tracer_h__
 
+#include <atomic>
+
 #include <gtkmm/textview.h>
 #include <gtkmm/scrolledwindow.h>
 #include <gtkmm/togglebutton.h>
 #include <gtkmm/adjustment.h>
 #include <gtkmm/spinbutton.h>
 #include <gtkmm/label.h>
+#include <gtkmm/liststore.h>
 #include <gtkmm/comboboxtext.h>
 #include <gtkmm/box.h>
 
 #include "pbd/signals.h"
 #include "pbd/ringbuffer.h"
 #include "pbd/pool.h"
-#include "pbd/g_atomic_compat.h"
 
 #include "midi++/types.h"
 #include "ardour_window.h"
@@ -53,6 +55,10 @@ public:
 	MidiTracer ();
 	~MidiTracer();
 
+protected:
+	void on_show ();
+	void on_hide ();
+
 private:
 	Gtk::TextView text;
 	Gtk::ScrolledWindow scroller;
@@ -70,10 +76,10 @@ private:
 	 *  equal to 0 when an update is not queued.  May temporarily be negative if a
 	 *  update is handled before it was noted that it had just been queued.
 	 */
-	GATOMIC_QUAL gint _update_queued;
+	std::atomic<int> _update_queued;
 
 	PBD::RingBuffer<char *> fifo;
-	Pool buffer_pool;
+	PBD::Pool buffer_pool;
 	static const size_t buffer_size = 256;
 
 	void tracer (MIDI::Parser&, MIDI::byte*, size_t, MIDI::samplecnt_t);
@@ -83,7 +89,22 @@ private:
 	Gtk::CheckButton base_button;
 	Gtk::CheckButton collect_button;
 	Gtk::CheckButton delta_time_button;
-	Gtk::ComboBoxText _port_combo;
+	Gtk::ComboBox    _midi_port_combo;
+
+	class MidiPortCols : public Gtk::TreeModelColumnRecord
+	{
+		public:
+			MidiPortCols ()
+			{
+				add (pretty_name);
+				add (port_name);
+			}
+			Gtk::TreeModelColumn<std::string> pretty_name;
+			Gtk::TreeModelColumn<std::string> port_name;
+	};
+
+	MidiPortCols                 _midi_port_cols;
+	Glib::RefPtr<Gtk::ListStore> _midi_port_list;
 
 	void base_toggle ();
 	void autoscroll_toggle ();
@@ -95,10 +116,10 @@ private:
 	void disconnect ();
 	PBD::ScopedConnection _parser_connection;
 	PBD::ScopedConnection _manager_connection;
-	MIDI::Parser my_parser;
+	std::shared_ptr<MIDI::Parser> _midi_parser;
 
-	boost::shared_ptr<ARDOUR::Port>	tracer_port;
-	boost::shared_ptr<ARDOUR::MidiPort> traced_port;
+	std::shared_ptr<ARDOUR::MidiPort> tracer_port;
+	std::shared_ptr<ARDOUR::MidiPort> traced_port;
 
 	static unsigned int window_count;
 };

@@ -27,6 +27,7 @@
 #include "pbd/gstdio_compat.h"
 #include <glibmm/miscutils.h>
 
+#include "pbd/convert.h"
 #include "pbd/xml++.h"
 #include "pbd/file_utils.h"
 #include "pbd/replace_all.h"
@@ -75,6 +76,23 @@ RCConfiguration::RCConfiguration ()
 	_control_protocol_state (0)
       , _transport_master_state (0)
 {
+
+/* Uncomment the following to get a list of all config variables */
+
+#if 0
+#undef  CONFIG_VARIABLE
+#undef  CONFIG_VARIABLE_SPECIAL
+#define CONFIG_VARIABLE(Type,var,name,value) _my_variables.insert (std::make_pair ((name), &(var)));
+#define CONFIG_VARIABLE_SPECIAL(Type,var,name,value,mutator) _my_variables.insert (std::make_pair ((name), &(var)));
+#include "ardour/rc_configuration_vars.h"
+#undef  CONFIG_VARIABLE
+#undef  CONFIG_VARIABLE_SPECIAL
+
+	for (auto const & s : _my_variables) {
+		std::cerr << s.first << std::endl;
+	}
+#endif
+
 }
 
 RCConfiguration::~RCConfiguration ()
@@ -189,13 +207,13 @@ RCConfiguration::instant_xml(const string& node_name)
 
 
 XMLNode&
-RCConfiguration::get_state ()
+RCConfiguration::get_state () const
 {
 	XMLNode* root;
 
 	root = new XMLNode("Ardour");
 
-	root->add_child_nocopy (get_variables ());
+	root->add_child_nocopy (get_variables (X_("Config")));
 
 	root->add_child_nocopy (SessionMetadata::Metadata()->get_user_state());
 
@@ -213,11 +231,11 @@ RCConfiguration::get_state ()
 }
 
 XMLNode&
-RCConfiguration::get_variables ()
+RCConfiguration::get_variables (std::string const & node_name) const
 {
 	XMLNode* node;
 
-	node = new XMLNode ("Config");
+	node = new XMLNode (node_name);
 
 #undef  CONFIG_VARIABLE
 #undef  CONFIG_VARIABLE_SPECIAL

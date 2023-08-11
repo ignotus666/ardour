@@ -44,6 +44,10 @@
 class CAComponentDescription;
 #endif
 
+namespace PBD {
+	class Searchpath;
+}
+
 namespace ARDOUR {
 
 class Plugin;
@@ -101,7 +105,7 @@ public:
 	static uint32_t cache_version ();
 	bool cache_valid () const;
 
-	void scan_log (std::vector<boost::shared_ptr<PluginScanLogEntry> >&) const;
+	void scan_log (std::vector<std::shared_ptr<PluginScanLogEntry> >&) const;
 	void clear_stale_log ();
 
 	bool whitelist (ARDOUR::PluginType, std::string const&, bool force);
@@ -181,7 +185,7 @@ public:
 	PBD::Signal3<void, ARDOUR::PluginType, std::string, std::string> PluginTagChanged; //PluginType t, string id, string tag
 
 private:
-	typedef boost::shared_ptr<PluginScanLogEntry> PSLEPtr;
+	typedef std::shared_ptr<PluginScanLogEntry> PSLEPtr;
 
 	struct PSLEPtrSort {
 		bool operator() (PSLEPtr const& a, PSLEPtr const& b) const {
@@ -324,12 +328,8 @@ private:
 	void lxvst_refresh (bool cache_only);
 	void vst3_refresh (bool cache_only);
 
-	void add_lrdf_data (const std::string &path);
-	void add_ladspa_presets ();
-	void add_windows_vst_presets ();
-	void add_mac_vst_presets ();
-	void add_lxvst_presets ();
-	void add_presets (std::string domain);
+	void add_lrdf_data (PBD::Searchpath const&);
+	void add_lrdf_presets (std::string domain);
 
 #ifdef AUDIOUNIT_SUPPORT
 	void au_refresh (bool cache_only = false);

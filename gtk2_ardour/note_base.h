@@ -21,11 +21,13 @@
 #ifndef __gtk_ardour_note_base_h__
 #define __gtk_ardour_note_base_h__
 
-#include <boost/shared_ptr.hpp>
+#include <memory>
 
 #include "temporal/beats.h"
 #include "canvas/types.h"
 #include "gtkmm2ext/colors.h"
+
+#include "ardour/types.h"
 
 #include "rgb_macros.h"
 #include "ui_config.h"
@@ -43,7 +45,8 @@ namespace ArdourCanvas {
 	class Text;
 }
 
-/** Base class for canvas notes (sustained note rectangles and hit diamonds).
+/** Base class for canvas notes (sustained note rectangles, percussive hit diamonds,
+ * and velocity lollipops)
  *
  * This is not actually a canvas item itself to avoid the dreaded diamond
  * inheritance pattern, since various types of canvas items (Note (rect), Hit
@@ -64,7 +67,7 @@ class NoteBase : public sigc::trackable
   public:
 	typedef Evoral::Note<Temporal::Beats> NoteType;
 
-	NoteBase (MidiRegionView& region, bool, const boost::shared_ptr<NoteType> note = boost::shared_ptr<NoteType>());
+	NoteBase (MidiRegionView& region, bool, const std::shared_ptr<NoteType> note = std::shared_ptr<NoteType>());
 	virtual ~NoteBase ();
 
 	void set_item (ArdourCanvas::Item *);
@@ -84,6 +87,7 @@ class NoteBase : public sigc::trackable
 	virtual void move_event(double dx, double dy) = 0;
 
 	uint32_t base_color();
+	static uint32_t base_color (int velocity, ARDOUR::ColorMode color_mode, Gtkmm2ext::Color, int channel, bool selected);
 
 	void show_velocity();
 	void hide_velocity();
@@ -104,10 +108,13 @@ class NoteBase : public sigc::trackable
 	virtual ArdourCanvas::Coord x1 () const = 0;
 	virtual ArdourCanvas::Coord y1 () const = 0;
 
+	virtual void set_velocity (double) {}
+	virtual double visual_velocity() const = 0;
+
 	float mouse_x_fraction() const { return _mouse_x_fraction; }
 	float mouse_y_fraction() const { return _mouse_y_fraction; }
 
-	const boost::shared_ptr<NoteType> note() const { return _note; }
+	const std::shared_ptr<NoteType> note() const { return _note; }
 	MidiRegionView& region_view() const { return _region; }
 
 	static void set_colors ();
@@ -125,7 +132,7 @@ class NoteBase : public sigc::trackable
 
 	/// hue circle divided into 16 equal-looking parts, courtesy Thorsten Wilms
 	static const uint32_t midi_channel_colors[16];
-
+	
 	bool mouse_near_ends () const;
 	virtual bool big_enough_to_trim () const;
 
@@ -136,7 +143,7 @@ protected:
 	ArdourCanvas::Item*               _item;
 	ArdourCanvas::Text*               _text;
 	State                             _state;
-	const boost::shared_ptr<NoteType> _note;
+	const std::shared_ptr<NoteType>   _note;
 	bool                              _with_events;
 	bool                              _own_note;
 	Flags                             _flags;

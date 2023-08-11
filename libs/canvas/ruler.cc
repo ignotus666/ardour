@@ -147,8 +147,8 @@ Ruler::render (Rect const & area, Cairo::RefPtr<Cairo::Context> cr) const
 
 	if (_outline_width == 1.0) {
 		/* Cairo single pixel line correction */
-		cr->move_to (self.x0, self.y1-0.5);
-		cr->line_to (self.x1, self.y1-0.5);
+		cr->move_to (self.x0, self.y1+0.5);
+		cr->line_to (self.x1, self.y1+0.5);
 	} else {
 		cr->move_to (self.x0, self.y1);
 		cr->line_to (self.x1, self.y1);
@@ -161,13 +161,41 @@ Ruler::render (Rect const & area, Cairo::RefPtr<Cairo::Context> cr) const
 		Glib::RefPtr<Pango::Layout> layout = Pango::Layout::create (cr);
 
 		Pango::FontDescription* last_font_description = 0;
+		Coord prev = -1;
 
 		for (vector<Mark>::const_iterator m = marks.begin(); m != marks.end(); ++m) {
 			Duple pos;
-			Pango::FontDescription* fd = _font_description;
+			Pango::FontDescription* fd = (m->style == Mark::Major) ? (_second_font_description ? _second_font_description : _font_description) : _font_description;
 
 			pos.x = floor ((m->position - _lower) / _metric->units_per_pixel);
 			pos.y = self.y1; /* bottom edge */
+
+			if (fd != last_font_description) {
+				layout->set_font_description (*fd);
+				last_font_description = fd;
+			}
+
+			/* and the text */
+
+			if (!m->label.empty()) {
+				Pango::Rectangle logical;
+
+				layout->set_text (m->label);
+				logical = layout->get_pixel_logical_extents ();
+
+				if ((prev >= 0.) && ((pos.x - prev) < (6. + logical.get_width()))) {
+					continue;
+				}
+
+				if (_divide_height >= 0) {
+					cr->move_to (pos.x + 2.0, self.y0 + _divide_height + logical.get_y() + 2.0); /* 2 pixel padding below divider */
+				} else {
+					cr->move_to (pos.x + 2.0, self.y0 + logical.get_y() + .5 * (height - logical.get_height()));
+				}
+
+				layout->show_in_cairo_context (cr);
+				prev = pos.x;
+			}
 
 			if (_outline_width == 1.0) {
 				/* Cairo single pixel line correction */
@@ -183,9 +211,6 @@ Ruler::render (Rect const & area, Cairo::RefPtr<Cairo::Context> cr) const
 				} else {
 					cr->rel_line_to (0, -height);
 				}
-				if (_second_font_description) {
-					fd = _second_font_description;
-				}
 				break;
 			case Mark::Minor:
 				cr->rel_line_to (0, -height/3.0);
@@ -194,31 +219,11 @@ Ruler::render (Rect const & area, Cairo::RefPtr<Cairo::Context> cr) const
 				cr->rel_line_to (0, -height/5.0);
 				break;
 			}
+
 			cr->stroke ();
-
-			if (fd != last_font_description) {
-				layout->set_font_description (*fd);
-				last_font_description = fd;
-			}
-
-			/* and the text */
-
-			if (!m->label.empty()) {
-				Pango::Rectangle logical;
-
-				layout->set_text (m->label);
-				logical = layout->get_pixel_logical_extents ();
-
-				if (_divide_height >= 0) {
-					cr->move_to (pos.x + 2.0, self.y0 + _divide_height + logical.get_y() + 2.0); /* 2 pixel padding below divider */
-				} else {
-					cr->move_to (pos.x + 2.0, self.y0 + logical.get_y() + .5 * (height - logical.get_height()));
-				}
-				layout->show_in_cairo_context (cr);
-			}
 		}
 	}
-	
+
 	if (_divide_height >= 0.0) {
 
 		cr->set_line_width (1.0);

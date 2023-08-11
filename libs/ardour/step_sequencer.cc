@@ -224,7 +224,7 @@ Step::adjust_octave (int amt)
 }
 
 bool
-Step::run (MidiBuffer& buf, bool running, samplepos_t start_sample, samplepos_t end_sample, MidiStateTracker&  tracker)
+Step::run (MidiBuffer& buf, bool running, samplepos_t start_sample, samplepos_t end_sample, MidiNoteTracker&  tracker)
 {
 	for (size_t n = 0; n < _parameters_per_step; ++n) {
 		check_parameter (n, buf, running, start_sample, end_sample);
@@ -264,7 +264,7 @@ Step::dump_parameter (MusicTimeEvents& events, size_t n, Temporal::Beats const &
 }
 
 void
-Step::check_note (size_t n, MidiBuffer& buf, bool running, samplepos_t start_sample, samplepos_t end_sample, MidiStateTracker& tracker)
+Step::check_note (size_t n, MidiBuffer& buf, bool running, samplepos_t start_sample, samplepos_t end_sample, MidiNoteTracker& tracker)
 {
 	Note& note (_notes[n]);
 
@@ -437,7 +437,7 @@ Step::reschedule (Temporal::Beats const & start, Temporal::Beats const & offset)
 }
 
 XMLNode&
-Step::get_state ()
+Step::get_state () const
 {
 	return *new XMLNode (X_("Step"));
 }
@@ -518,7 +518,7 @@ StepSequence::set_channel (int c)
 }
 
 bool
-StepSequence::run (MidiBuffer& buf, bool running, samplepos_t start_sample, samplepos_t end_sample, MidiStateTracker& tracker)
+StepSequence::run (MidiBuffer& buf, bool running, samplepos_t start_sample, samplepos_t end_sample, MidiNoteTracker& tracker)
 {
 	const size_t s = _sequencer.start_step();
 	const size_t e = _sequencer.end_step();
@@ -555,7 +555,7 @@ StepSequence::step (size_t n) const
 
 
 XMLNode&
-StepSequence::get_state()
+StepSequence::get_state() const
 {
 	return *new XMLNode (X_("StepSequence"));
 }
@@ -747,7 +747,7 @@ StepSequencer::set_end_step (size_t n)
 }
 
 XMLNode&
-StepSequencer::get_state()
+StepSequencer::get_state() const
 {
 	return *new XMLNode (X_("StepSequencer"));
 }
@@ -846,31 +846,31 @@ StepSequencer::clear_note_offs ()
 	}
 }
 
-boost::shared_ptr<Source>
+std::shared_ptr<Source>
 StepSequencer::write_to_source (Session& session, string path) const
 {
-	boost::shared_ptr<SMFSource> src;
+	std::shared_ptr<SMFSource> src;
 
 	/* caller must check for pre-existing file */
 
 	assert (!path.empty());
 	assert (!Glib::file_test (path, Glib::FILE_TEST_EXISTS));
 
-	src = boost::dynamic_pointer_cast<SMFSource>(SourceFactory::createWritable (DataType::MIDI, session, path, false, session.sample_rate()));
+	src = std::dynamic_pointer_cast<SMFSource>(SourceFactory::createWritable (DataType::MIDI, session, path, false, session.sample_rate()));
 
 	try {
 		if (src->create (path)) {
-			return boost::shared_ptr<Source>();
+			return std::shared_ptr<Source>();
 		}
 	} catch (...) {
-		return boost::shared_ptr<Source>();
+		return std::shared_ptr<Source>();
 	}
 
 	if (!fill_midi_source (src)) {
 		/* src will go out of scope, and its destructor will remove the
 		   file, if any
 		*/
-		return boost::shared_ptr<Source>();
+		return std::shared_ptr<Source>();
 	}
 
 	return src;
@@ -883,11 +883,11 @@ struct ETC {
 };
 
 bool
-StepSequencer::fill_midi_source (boost::shared_ptr<SMFSource> src) const
+StepSequencer::fill_midi_source (std::shared_ptr<SMFSource> src) const
 {
 	Temporal::Beats smf_beats;
 
-	Source::Lock lck (src->mutex());
+	Source::WriterLock lck (src->mutex());
 
 	/* first pass: run through the sequence one time to get all events, and
 	 * then sort them. We have no idea what order they are in when we pull

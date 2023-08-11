@@ -38,22 +38,25 @@
 #include "ardour/types.h"
 #include "plugin_ui.h"
 
-#include "ardour/plugin_insert.h"
+#include "ardour/plug_insert_base.h"
 
 #include "lv2_external_ui.h"
 
-#include "lv2/lv2plug.in/ns/extensions/ui/ui.h"
+#ifdef HAVE_LV2_1_18_6
+#include <lv2/ui/ui.h>
+#else
+#include <lv2/lv2plug.in/ns/extensions/ui/ui.h>
+#endif
 
 namespace ARDOUR {
-	class PluginInsert;
 	class LV2Plugin;
 }
 
 class LV2PluginUI : public PlugUIBase, public Gtk::VBox
 {
 public:
-	LV2PluginUI (boost::shared_ptr<ARDOUR::PluginInsert>,
-			boost::shared_ptr<ARDOUR::LV2Plugin>);
+	LV2PluginUI (std::shared_ptr<ARDOUR::PlugInsertBase>,
+			std::shared_ptr<ARDOUR::LV2Plugin>);
 	~LV2PluginUI ();
 
 	gint get_preferred_height ();
@@ -70,30 +73,31 @@ private:
 
 	void control_changed (uint32_t);
 
-	typedef boost::shared_ptr<ARDOUR::AutomationControl> ControllableRef;
+	typedef std::shared_ptr<ARDOUR::AutomationControl> ControllableRef;
 
-	boost::shared_ptr<ARDOUR::PluginInsert> _pi;
-	boost::shared_ptr<ARDOUR::LV2Plugin> _lv2;
-	std::vector<int>                     _output_ports;
-	sigc::connection                     _screen_update_connection;
-	sigc::connection                     _message_update_connection;
-	Gtk::Widget*                         _gui_widget;
-	/** a box containing the focus, bypass, delete, save / add preset buttons etc. */
-	Gtk::HBox                            _ardour_buttons_box;
-	float*                               _values_last_sent_to_ui;
-	std::vector<ControllableRef>         _controllables;
-	struct lv2_external_ui_host          _external_ui_host;
-	LV2_Feature                          _external_ui_feature;
-	LV2_Feature                          _external_kxui_feature;
+	std::shared_ptr<ARDOUR::PlugInsertBase> _pib;
+	std::shared_ptr<ARDOUR::LV2Plugin>      _lv2;
+	std::vector<int>                          _output_ports;
+	sigc::connection                          _screen_update_connection;
+	sigc::connection                          _message_update_connection;
+	Gtk::Widget*                              _gui_widget;
+	/** a box containing the focus, bypa      s, delete, save / add preset buttons etc. */
+	Gtk::HBox                                 _ardour_buttons_box;
+	float*                                    _values_last_sent_to_ui;
+	std::vector<ControllableRef>              _controllables;
+	struct lv2_external_ui_host               _external_ui_host;
+	LV2_Feature                               _external_ui_feature;
+	LV2_Feature                               _external_kxui_feature;
 #ifdef HAVE_LV2_1_17_2
-	LV2UI_Request_Value                  _lv2ui_request_value;
-	LV2_Feature                          _lv2ui_request_feature;
+	LV2UI_Request_Value                       _lv2ui_request_value;
+	LV2_Feature                               _lv2ui_request_feature;
 #endif
-	struct lv2_external_ui*              _external_ui_ptr;
-	LV2_Feature                          _parent_feature;
-	void*                                _inst;
+	struct lv2_external_ui*                   _external_ui_ptr;
+	LV2_Feature                               _parent_feature;
+	void*                                     _inst;
+
 	typedef std::set<uint32_t> Updates;
-	Updates                              _updates;
+	Updates _updates;
 
 	static void on_external_ui_closed(void* controller);
 

@@ -33,6 +33,7 @@
 
 namespace ARDOUR {
 
+class Amp;
 class BufferSet;
 class IO;
 class MuteMaster;
@@ -64,11 +65,11 @@ public:
 
 	/* Delivery to an existing output */
 
-	Delivery (Session& s, boost::shared_ptr<IO> io, boost::shared_ptr<Pannable>, boost::shared_ptr<MuteMaster> mm, const std::string& name, Role);
+	Delivery (Session& s, std::shared_ptr<IO> io, std::shared_ptr<Pannable>, std::shared_ptr<MuteMaster> mm, const std::string& name, Role);
 
 	/* Delivery to a new output owned by this object */
 
-	Delivery (Session& s, boost::shared_ptr<Pannable>, boost::shared_ptr<MuteMaster> mm, const std::string& name, Role);
+	Delivery (Session& s, std::shared_ptr<Pannable>, std::shared_ptr<MuteMaster> mm, const std::string& name, Role);
 	~Delivery ();
 
 	bool set_name (const std::string& name);
@@ -77,6 +78,9 @@ public:
 	Role role() const { return _role; }
 	bool can_support_io_configuration (const ChanCount& in, ChanCount& out);
 	bool configure_io (ChanCount in, ChanCount out);
+
+	void activate ();
+	void deactivate ();
 
 	void run (BufferSet& bufs, samplepos_t start_sample, samplepos_t end_sample, double speed, pframes_t nframes, bool);
 
@@ -98,11 +102,13 @@ public:
 	static int  disable_panners (void);
 	static void reset_panners ();
 
-	boost::shared_ptr<PannerShell> panner_shell() const { return _panshell; }
-	boost::shared_ptr<Panner> panner() const;
+	std::shared_ptr<PannerShell> panner_shell() const { return _panshell; }
+	std::shared_ptr<Panner> panner() const;
 
-	void add_gain (boost::shared_ptr<GainControl> gc) {
-		_gain_control = gc;
+	void set_gain_control (std::shared_ptr<GainControl> gc);
+
+	void set_polarity_control (std::shared_ptr<AutomationControl> ac) {
+		_polarity_control = ac;
 	}
 
 	void unpan ();
@@ -113,21 +119,35 @@ public:
 	uint32_t pans_required() const { return _configured_input.n_audio(); }
 	virtual uint32_t pan_outs() const;
 
+	std::shared_ptr<GainControl> gain_control () const {
+		return _gain_control;
+	}
+
+	std::shared_ptr<AutomationControl> polarity_control () const {
+		return _polarity_control;
+	}
+
+	std::shared_ptr<Amp> amp() const {
+		return _amp;
+	}
+
 protected:
-	XMLNode& state ();
+	XMLNode& state () const;
 
 	Role        _role;
 	BufferSet*  _output_buffers;
 	gain_t      _current_gain;
-	boost::shared_ptr<PannerShell> _panshell;
+	std::shared_ptr<PannerShell> _panshell;
+	std::shared_ptr<Amp>         _amp;
 
 	gain_t target_gain ();
 
 private:
 	bool _no_outs_cuz_we_no_monitor;
 
-	boost::shared_ptr<MuteMaster>  _mute_master;
-	boost::shared_ptr<GainControl> _gain_control;
+	std::shared_ptr<MuteMaster>        _mute_master;
+	std::shared_ptr<GainControl>       _gain_control;
+	std::shared_ptr<AutomationControl> _polarity_control;
 
 	static bool panners_legal;
 	static PBD::Signal0<void> PannersLegal;

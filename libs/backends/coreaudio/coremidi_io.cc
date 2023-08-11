@@ -30,18 +30,18 @@ static int _debug_mode = 0;
 #endif
 
 
-/** 
+/**
  * MIDI Data flow
- * 
+ *
  * (A) INPUT (incoming from outside the application)
- * 
+ *
  *    - midiInputCallback (in its own thread, async WRT process callback):
  *       takes OS X MIDIPacket, copies into lock-free ringbuffer
  *
  *    - processCallback (in its own thread):
  *
  *   (1) loop on all input ports:
- *       1A) call recv_event() to read from ringbuffer into stack buffer, also assign-timestamp, 
+ *       1A) call recv_event() to read from ringbuffer into stack buffer, also assign-timestamp,
  *       1B) call parse_events() using stack buffer, when appropriate
  *          pushes CoreMidiEvent into std::vector<CoreMidiEvent>
  *
@@ -103,7 +103,7 @@ static void midiInputCallback(const MIDIPacketList *list, void *procRef, void *s
 #endif
 		if (rb->write_space() > sizeof(uint32_t) + len) {
 			rb->write ((uint8_t*)&len, sizeof(uint32_t));
-			rb->write ((uint8_t*)p, len);
+			rb->write ((uint8_t const*)p, len);
 		}
 #ifndef NDEBUG
 		else {
@@ -144,7 +144,9 @@ CoreMidiIo::CoreMidiIo()
 	, _rb (0)
 	, _n_midi_in (0)
 	, _n_midi_out (0)
-	, _time_at_cycle_start (0)
+	, _send_start (0)
+	, _recv_start (0)
+	, _recv_end (0)
 	, _active (false)
 	, _enabled (true)
 	, _run (false)
@@ -196,9 +198,17 @@ CoreMidiIo::cleanup()
 }
 
 void
-CoreMidiIo::start_cycle()
+CoreMidiIo::start_cycle (MIDITimeStamp time_at_cycle_start, double cycle_time_us)
 {
-	_time_at_cycle_start = AudioGetCurrentHostTime();
+	_send_start = time_at_cycle_start;
+	_recv_end   = time_at_cycle_start;
+
+	MIDITimeStamp cycle_time = AudioConvertNanosToHostTime (cycle_time_us);
+	if (cycle_time <= time_at_cycle_start) {
+		_recv_start = time_at_cycle_start - cycle_time;
+	} else {
+		_recv_start = 0;
+	}
 }
 
 void
@@ -242,9 +252,9 @@ CoreMidiIo::notify_proc(const MIDINotification *message)
 }
 
 size_t
-CoreMidiIo::recv_event (uint32_t port, double cycle_time_us, uint64_t &time, uint8_t *d, size_t &s)
+CoreMidiIo::recv_event (uint32_t port, uint64_t &time, uint8_t *d, size_t &s)
 {
-	if (!_active || _time_at_cycle_start == 0) {
+	if (!_active || _recv_start == 0) {
 		return 0;
 	}
 	assert(port < _n_midi_in);
@@ -252,24 +262,29 @@ CoreMidiIo::recv_event (uint32_t port, double cycle_time_us, uint64_t &time, uin
 	const size_t minsize = 1 + sizeof(uint32_t) + sizeof(MIDITimeStamp) + sizeof(UInt16);
 
 	while (_rb[port]->read_space() > minsize) {
-		MIDIPacket packet;
+		int32_t packet[1024];
 		size_t rv;
 		uint32_t s = 0;
 		rv = _rb[port]->read((uint8_t*)&s, sizeof(uint32_t));
 		assert(rv == sizeof(uint32_t));
-		rv = _rb[port]->read((uint8_t*)&packet, s);
+		if (s > 1024) {
+			_rb[port]->increment_read_idx (s);
+			continue;
+		}
+		rv = _rb[port]->read((uint8_t*)packet, s);
 		assert(rv == s);
-		_input_queue[port].push_back(boost::shared_ptr<CoreMIDIPacket>(new _CoreMIDIPacket (&packet)));
+		_input_queue[port].push_back(std::shared_ptr<CoreMIDIPacket>(new _CoreMIDIPacket ((MIDIPacket*)&packet)));
 	}
 
-	UInt64 start = _time_at_cycle_start;
-	UInt64 end = AudioConvertNanosToHostTime(AudioConvertHostTimeToNanos(_time_at_cycle_start) + cycle_time_us * 1e3);
-
 	for (CoreMIDIQueue::iterator it = _input_queue[port].begin (); it != _input_queue[port].end (); ) {
-		if ((*it)->timeStamp < end) {
-			if ((*it)->timeStamp < start) {
-				uint64_t dt = AudioConvertHostTimeToNanos(start - (*it)->timeStamp);
-				if (dt > 1e7 && (*it)->timeStamp != 0) { // 10ms slack and a timestamp is given
+		if ((*it)->timeStamp < _recv_end) {
+			if ((*it)->timeStamp < _recv_start) {
+				uint64_t dt = AudioConvertHostTimeToNanos(_recv_start - (*it)->timeStamp);
+				/* note: it used to be 10ms (insert handwavy explanation about percievable latency)
+				 * turns out some midi-keyboads connected via bluetooth can be late by as much as 50ms
+				 * https://discourse.ardour.org/t/ardour-not-getting-all-messages-from-midi-keyboard/107618/13?
+				 */
+				if (dt > 8e7 && (*it)->timeStamp != 0) { // 60ms slack and a timestamp is given
 #ifndef NDEBUG
 					printf("Dropped Stale Midi Event. dt:%.2fms\n", dt * 1e-6);
 #endif
@@ -290,7 +305,7 @@ CoreMidiIo::recv_event (uint32_t port, double cycle_time_us, uint64_t &time, uin
 				}
 				time = 0;
 			} else {
-				time = AudioConvertHostTimeToNanos((*it)->timeStamp - start);
+				time = AudioConvertHostTimeToNanos((*it)->timeStamp - _recv_start);
 			}
 			s = std::min(s, (size_t) (*it)->length);
 			if (s > 0) {
@@ -298,6 +313,11 @@ CoreMidiIo::recv_event (uint32_t port, double cycle_time_us, uint64_t &time, uin
 			}
 			_input_queue[port].erase(it);
 			return s;
+		} else {
+#ifndef NDEBUG
+			uint64_t dt = AudioConvertHostTimeToNanos((*it)->timeStamp - _recv_end);
+			printf("Postponed future Midi Event. dt:%.2fms\n", dt * 1e-6);
+#endif
 		}
 		++it;
 
@@ -306,49 +326,15 @@ CoreMidiIo::recv_event (uint32_t port, double cycle_time_us, uint64_t &time, uin
 }
 
 int
-CoreMidiIo::send_events (uint32_t port, double timescale, const void *b)
+CoreMidiIo::send_event (uint32_t port, double reltime_ns, const uint8_t *d, const size_t s)
 {
-	if (!_active || _time_at_cycle_start == 0) {
+	if (!_active || _send_start == 0) {
 		return 0;
 	}
 
 	assert(port < _n_midi_out);
-	const UInt64 ts = AudioConvertHostTimeToNanos(_time_at_cycle_start);
-
-	const CoreMidiBuffer *src = static_cast<CoreMidiBuffer const *>(b);
-
-	int32_t bytes[8192]; // int for alignment
-	MIDIPacketList *mpl = (MIDIPacketList*)bytes;
-	MIDIPacket *cur = MIDIPacketListInit(mpl);
-
-	for (CoreMidiBuffer::const_iterator mit = src->begin (); mit != src->end (); ++mit) {
-		assert(mit->size() < 256);
-		cur = MIDIPacketListAdd(mpl, sizeof(bytes), cur,
-				AudioConvertNanosToHostTime(ts + mit->timestamp() / timescale),
-				mit->size(), mit->data());
-		if (!cur) {
-#ifndef DEBUG
-			printf("CoreMidi: Packet list overflow, dropped events\n");
-#endif
-			break;
-		}
-	}
-	if (mpl->numPackets > 0) {
-		MIDISend(_output_ports[port], _output_endpoints[port], mpl);
-	}
-	return 0;
-}
-
-int
-CoreMidiIo::send_event (uint32_t port, double reltime_us, const uint8_t *d, const size_t s)
-{
-	if (!_active || _time_at_cycle_start == 0) {
-		return 0;
-	}
-
-	assert(port < _n_midi_out);
-	UInt64 ts = AudioConvertHostTimeToNanos(_time_at_cycle_start);
-	ts += reltime_us * 1e3;
+	UInt64 ts = AudioConvertHostTimeToNanos(_send_start);
+	ts += reltime_ns;
 
 	// TODO use a single packet list.. queue all events first..
 	MIDIPacketList pl;

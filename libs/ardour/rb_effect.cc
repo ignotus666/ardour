@@ -27,11 +27,11 @@
 #include <rubberband/RubberBandStretcher.h>
 
 #include "pbd/error.h"
+#include "pbd/progress.h"
 
 #include "ardour/audioregion.h"
 #include "ardour/audiosource.h"
 #include "ardour/pitch.h"
-#include "ardour/progress.h"
 #include "ardour/session.h"
 #include "ardour/stretch.h"
 #include "ardour/types.h"
@@ -65,9 +65,9 @@ RBEffect::~RBEffect ()
 }
 
 int
-RBEffect::run (boost::shared_ptr<Region> r, Progress* progress)
+RBEffect::run (std::shared_ptr<Region> r, Progress* progress)
 {
-	boost::shared_ptr<AudioRegion> region = boost::dynamic_pointer_cast<AudioRegion> (r);
+	std::shared_ptr<AudioRegion> region = std::dynamic_pointer_cast<AudioRegion> (r);
 
 	if (!region) {
 		error << "RBEffect::run() passed a non-audio region! WTF?" << endmsg;
@@ -148,7 +148,7 @@ RBEffect::run (boost::shared_ptr<Region> r, Progress* progress)
 	 * I hope this is clear.
 	 */
 
-	double stretch = region->stretch() * tsr.time_fraction;
+	double stretch = region->stretch() * tsr.time_fraction.to_double();
 	double shift   = region->shift() * tsr.pitch_fraction;
 
 	samplecnt_t read_start = region->ancestral_start_sample () +
@@ -176,6 +176,8 @@ RBEffect::run (boost::shared_ptr<Region> r, Progress* progress)
 
 	stretcher.setDebugLevel (1);
 	stretcher.setExpectedInputDuration (read_duration);
+	stretcher.setMaxProcessSize (bufsize);
+	assert (stretcher.getLatency () == 0);
 
 	/* the name doesn't need to be super-precise, but allow for 2 fractional
 	 * digits just to disambiguate close but not identical FX
@@ -244,7 +246,7 @@ RBEffect::run (boost::shared_ptr<Region> r, Progress* progress)
 			stretcher.study (buffers, this_read, pos == read_duration);
 		}
 
-		/* done studing, start process */
+		/* done studying, start process */
 		pos = 0;
 
 		while (pos < read_duration && !tsr.cancel) {
@@ -287,7 +289,7 @@ RBEffect::run (boost::shared_ptr<Region> r, Progress* progress)
 				this_read = stretcher.retrieve (buffers, this_read);
 
 				for (uint32_t i = 0; i < nsrcs.size (); ++i) {
-					boost::shared_ptr<AudioSource> asrc = boost::dynamic_pointer_cast<AudioSource> (nsrcs[i]);
+					std::shared_ptr<AudioSource> asrc = std::dynamic_pointer_cast<AudioSource> (nsrcs[i]);
 					if (!asrc) {
 						continue;
 					}
@@ -315,7 +317,7 @@ RBEffect::run (boost::shared_ptr<Region> r, Progress* progress)
 			this_read = stretcher.retrieve (buffers, this_read);
 
 			for (uint32_t i = 0; i < nsrcs.size (); ++i) {
-				boost::shared_ptr<AudioSource> asrc = boost::dynamic_pointer_cast<AudioSource> (nsrcs[i]);
+				std::shared_ptr<AudioSource> asrc = std::dynamic_pointer_cast<AudioSource> (nsrcs[i]);
 				if (!asrc) {
 					continue;
 				}
@@ -351,7 +353,7 @@ RBEffect::run (boost::shared_ptr<Region> r, Progress* progress)
 
 	/* now reset ancestral data for each new region */
 
-	for (vector<boost::shared_ptr<Region> >::iterator x = results.begin (); x != results.end (); ++x) {
+	for (vector<std::shared_ptr<Region> >::iterator x = results.begin (); x != results.end (); ++x) {
 		(*x)->set_ancestral_data (timepos_t (read_start),
 		                          timecnt_t (read_duration, timepos_t (read_start)),
 		                          stretch,
@@ -360,14 +362,15 @@ RBEffect::run (boost::shared_ptr<Region> r, Progress* progress)
 		/* multiply the old (possibly previously stretched) region length by the extra
 		 * stretch this time around to get its new length. this is a non-music based edit atm.
 		 */
-		(*x)->set_length (timecnt_t (tsr.time_fraction * (*x)->length_samples (), (*x)->position()));
+		(*x)->set_length_unchecked ((*x)->length ().scale (tsr.time_fraction));
+		(*x)->set_whole_file (true);
 	}
 
 	/* stretch region gain envelope */
 	/* XXX: assuming we've only processed one input region into one result here */
 
 	if (ret == 0 && !tsr.time_fraction.is_unity()) {
-		boost::shared_ptr<AudioRegion> result = boost::dynamic_pointer_cast<AudioRegion> (results.front ());
+		std::shared_ptr<AudioRegion> result = std::dynamic_pointer_cast<AudioRegion> (results.front ());
 		assert (result);
 		result->envelope ()->x_scale (tsr.time_fraction);
 	}

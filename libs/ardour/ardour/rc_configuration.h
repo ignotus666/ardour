@@ -45,8 +45,8 @@ class LIBARDOUR_API RCConfiguration : public PBD::Configuration
 
 	void map_parameters (boost::function<void (std::string)>&);
 	int set_state (XMLNode const &, int version);
-	XMLNode& get_state ();
-	XMLNode& get_variables ();
+	XMLNode& get_state () const;
+	XMLNode& get_variables (std::string const & nodename) const;
 	void set_variables (XMLNode const &);
 
 	int load_state ();
@@ -59,6 +59,8 @@ class LIBARDOUR_API RCConfiguration : public PBD::Configuration
 
 	XMLNode* control_protocol_state () { return _control_protocol_state; }
 	XMLNode* transport_master_state () { return _transport_master_state; }
+
+	std::map<std::string,PBD::ConfigVariableBase*> _my_variables;
 
 	/* define accessor methods */
 
@@ -88,6 +90,8 @@ class LIBARDOUR_API RCConfiguration : public PBD::Configuration
 
 	XMLNode* _control_protocol_state;
 	XMLNode* _transport_master_state;
+
+	void build_metadata ();
 };
 
 /* XXX: rename this */

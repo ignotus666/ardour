@@ -27,7 +27,7 @@ class SndfileWriter
   , public FlagDebuggable<>
 {
   public:
-	SndfileWriter (std::string const & path, int format, ChannelCount channels, samplecnt_t samplerate, boost::shared_ptr<BroadcastInfo> broadcast_info)
+	SndfileWriter (std::string const & path, int format, ChannelCount channels, samplecnt_t samplerate, std::shared_ptr<BroadcastInfo> broadcast_info)
 	  : SndfileHandle (path, Write, format, channels, samplerate)
 	  , path (path)
 	{
@@ -86,7 +86,7 @@ class SndfileWriter
 	{
 		if (SF_ERR_NO_ERROR != SndfileHandle::error ()) {
 			throw Exception (*this, boost::str (boost::format
-						("Could create output file (%1%)") % path));
+						("Could not create output file (%1%)") % path));
 		}
 		samples_written = 0;
 		add_supported_flag (ProcessContext<T>::EndOfInput);

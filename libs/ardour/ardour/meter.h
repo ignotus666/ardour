@@ -22,10 +22,10 @@
 #ifndef __ardour_meter_h__
 #define __ardour_meter_h__
 
+#include <atomic>
 #include <vector>
 
 #include "pbd/fastlog.h"
-#include "pbd/g_atomic_compat.h"
 
 #include "ardour/libardour_visibility.h"
 #include "ardour/processor.h"
@@ -89,7 +89,7 @@ public:
 	PBD::Signal1<void, MeterType> MeterTypeChanged;
 
 protected:
-	XMLNode& state ();
+	XMLNode& state () const;
 
 private:
 	friend class IO;
@@ -99,9 +99,10 @@ private:
 	 *  as it can be altered outside a \ref configure_io by \ref reflect_inputs .
 	 */
 	ChanCount current_meters;
+	ChanCount _max_n_meters;
 
-	GATOMIC_QUAL gint _reset_dpm;
-	GATOMIC_QUAL gint _reset_max;
+	std::atomic<int> _reset_dpm;
+	std::atomic<int> _reset_max;
 
 	uint32_t           _bufcnt;
 	std::vector<float> _peak_buffer;     // internal, integrate

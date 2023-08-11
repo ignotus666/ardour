@@ -31,6 +31,7 @@
 #include <glibmm/fileutils.h>
 
 #include "ardour/directory_names.h"
+#include "ardour/filename_extensions.h"
 #include "ardour/filesystem_paths.h"
 
 #include "pbd/i18n.h"
@@ -290,14 +291,13 @@ ardour_data_search_path ()
 		search_path += user_config_directory();
 #ifdef PLATFORM_WINDOWS
 		search_path += windows_search_path ();
-#else
+#endif
 		std::string s = Glib::getenv("ARDOUR_DATA_PATH");
 		if (s.empty()) {
 			std::cerr << _("ARDOUR_DATA_PATH not set in environment\n");
 		} else {
 			search_path += Searchpath (s);
 		}
-#endif
 	}
 
 	return search_path;
@@ -312,6 +312,5 @@ been_here_before_path (int version)
 
 	return Glib::build_filename (user_config_directory (version), string (".a") + to_string (version));
 }
-
 
 } // namespace ARDOUR

@@ -48,7 +48,7 @@ using std::string;
 ExportTimespanSelector::ExportTimespanSelector (ARDOUR::Session * session, ProfileManagerPtr manager, bool multi)
 	: manager (manager)
 	, _realtime_available (false)
-	, time_format_label (_("Show Times as:"), Gtk::ALIGN_LEFT)
+	, time_format_label (_("Show Times as:"), Gtk::ALIGN_START)
 	, realtime_checkbutton (_("Realtime Export"))
 {
 	set_session (session);
@@ -388,6 +388,9 @@ ExportTimespanSelector::set_selection_state_of_all_timespans (bool s)
 	for (Gtk::ListStore::Children::iterator it = range_list->children().begin(); it != range_list->children().end(); ++it) {
 		it->set_value (range_cols.selected, s);
 	}
+
+	update_timespans ();
+	CriticalSelectionChanged ();
 }
 
 /*** ExportTimespanSelectorSingle ***/

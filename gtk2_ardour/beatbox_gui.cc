@@ -67,7 +67,7 @@ using std::endl;
 
 const double _step_dimen = 32;
 
-BBGUI::BBGUI (boost::shared_ptr<BeatBox> bb)
+BBGUI::BBGUI (std::shared_ptr<BeatBox> bb)
 	: ArdourDialog (_("BeatBox"))
 	, bbox (bb)
 	, horizontal_adjustment (0.0, 0.0, 800.0)
@@ -142,7 +142,7 @@ BBGUI::SwitchRow::switch_event (GdkEvent* ev, int col)
 	Switch* s = switches[col];
 
 	if (ev->type == GDK_BUTTON_PRESS) {
-		/* XXX changes hould be driven by model */
+		/* XXX changes should be driven by model */
 		if (s->button->value()) {
 			owner.bbox->remove_note (note, at);
 			s->button->set_value (0);
@@ -178,7 +178,7 @@ void
 BBGUI::export_as_region ()
 {
 	std::string path = bbox->session().new_midi_source_path (bbox->owner()->name());
-	boost::shared_ptr<Source> src = bbox->sequencer().write_to_source (bbox->session(), path);
+	std::shared_ptr<Source> src = bbox->sequencer().write_to_source (bbox->session(), path);
 
 	if (!src) {
 		return;
@@ -195,7 +195,7 @@ BBGUI::export_as_region ()
 	plist.add (ARDOUR::Properties::whole_file, true);
 	plist.add (ARDOUR::Properties::external, false);
 
-	boost::shared_ptr<Region> region = RegionFactory::create (src, plist, true);
+	std::shared_ptr<Region> region = RegionFactory::create (src, plist, true);
 }
 
 void
@@ -211,7 +211,7 @@ BBGUI::sequencer_changed (PropertyChange const &)
 
 	vertical_adjustment.set_upper (required_scroll);
 
-	/* height is 1 step_dimen larger to accomodate the "step indicator"
+	/* height is 1 step_dimen larger to accommodate the "step indicator"
 	 * line at the top
 	 */
 
@@ -601,9 +601,9 @@ void
 SequencerStepIndicator::set_text ()
 {
 	if (number == sv.sequencer().end_step() - 1) {
-		text->set ("\u21a9");
+		text->set (u8"\u21a9");
 	} else if (number == sv.sequencer().start_step()) {
-		text->set ("\u21aa");
+		text->set (u8"\u21aa");
 	} else {
 		text->set (string_compose ("%1", number+1));
 	}

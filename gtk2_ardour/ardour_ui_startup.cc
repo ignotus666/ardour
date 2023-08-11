@@ -57,6 +57,7 @@
 #include "ardour/filename_extensions.h"
 #include "ardour/filesystem_paths.h"
 #include "ardour/profile.h"
+#include "ardour/recent_sessions.h"
 
 #include "gtkmm2ext/application.h"
 
@@ -183,15 +184,20 @@ ARDOUR_UI::sr_mismatch_dialog (samplecnt_t desired, samplecnt_t actual)
 	HBox* hbox = new HBox();
 	Image* image = new Image (Stock::DIALOG_WARNING, ICON_SIZE_DIALOG);
 	ArdourDialog dialog (_("Sample Rate Mismatch"), true);
-	Label  message (string_compose (_("\
-This session was created with a sample rate of %1 Hz, but\n\
-%2 is currently running at %3 Hz.  If you load this session,\n\
-audio may be played at the wrong sample rate.\n"), desired, PROGRAM_NAME, actual));
+	Label message (string_compose (_("\
+This session was created with a sample rate of %1 Hz, but \
+%2 is currently running at %3 Hz. If you load this session, \
+audio will be resampled, which reduces quality.\n"), desired, PROGRAM_NAME, actual));
+	message.set_line_wrap ();
 
-	image->set_alignment(ALIGN_CENTER, ALIGN_TOP);
+	image->set_alignment(ALIGN_CENTER, ALIGN_START);
 	hbox->pack_start (*image, PACK_EXPAND_WIDGET, 12);
 	hbox->pack_end (message, PACK_EXPAND_PADDING, 12);
 	dialog.get_vbox()->pack_start(*hbox, PACK_EXPAND_PADDING, 6);
+
+	if (ARDOUR::AudioEngine::instance ()->setup_required ()) {
+		dialog.add_button (_("Reconfigure Engine"), RESPONSE_YES);
+	}
 	dialog.add_button (_("Do not load session"), RESPONSE_REJECT);
 	dialog.add_button (_("Load session anyway"), RESPONSE_ACCEPT);
 	dialog.set_default_response (RESPONSE_ACCEPT);
@@ -201,6 +207,11 @@ audio may be played at the wrong sample rate.\n"), desired, PROGRAM_NAME, actual
 	hbox->show();
 
 	switch (dialog.run()) {
+	case RESPONSE_YES:
+		ARDOUR::AudioEngine::instance ()->stop ();
+		(dynamic_cast<EngineControl*> (audio_midi_setup.get (true)))->run ();
+		(dynamic_cast<EngineControl*> (audio_midi_setup.get (true)))->hide ();
+		return AudioEngine::instance()->running () ? -1 : 1;
 	case RESPONSE_ACCEPT:
 		return 0;
 	default:
@@ -214,10 +225,10 @@ void
 ARDOUR_UI::sr_mismatch_message (samplecnt_t desired, samplecnt_t actual)
 {
 	ArdourMessageDialog msg (string_compose (_("\
-This session was created with a sample rate of %1 Hz, but\n\
+This session was created with a sample rate of %1 Hz, but \
 %2 is currently running at %3 Hz.\n\
-Audio will be recorded and played at the wrong sample rate.\n\
-Re-Configure the Audio Engine in\n\
+Audio is resampled for both playback and recording to match the sampling \
+rate, which reduces quality. Reconfigure the Audio Engine in \
 Menu > Window > Audio/Midi Setup"),
 				desired, PROGRAM_NAME, actual),
 			true,
@@ -343,6 +354,23 @@ ARDOUR_UI::trigger_page_settings () const
 		node = new XMLNode (X_("TriggerPage"));
 	}
 
+	return node;
+}
+
+XMLNode*
+ARDOUR_UI::clock_mode_settings () const
+{
+	XMLNode* node = 0;
+
+	if (_session) {
+		node = _session->instant_xml(X_("ClockModes"));
+	}
+	if (!node) {
+		node = Config->instant_xml(X_("ClockModes"));
+	}
+	if (!node) {
+		node = new XMLNode (X_("ClockModes"));
+	}
 	return node;
 }
 
@@ -497,7 +525,24 @@ ARDOUR_UI::sfsm_response (StartupFSM::Result r)
 	DEBUG_TRACE (DEBUG::GuiStartup, string_compose (X_("startup FSM response %1\n"), r));
 
 	switch (r) {
-	case StartupFSM::ExitProgram:
+	case StartupFSM::ExitProgram: {
+		/* failure mode */
+		std::stringstream str;;
+		dump_errors (str, 10);
+		std::string msg (string_compose (_("<span font_size=\"large\" font_weight=\"bold\">Something went seriously wrong. %1 cannot continue.</span>\n\n"
+		                                   "Here are a few hints at what might be wrong:\n\n%2"),
+		                                 PROGRAM_NAME,
+		                                 str.str()));
+		ArdourMessageDialog d (msg, true);
+		d.set_title (string_compose (_("%1: Unrecoverable Error"), PROGRAM_NAME));
+		d.run();
+
+		queue_finish ();
+	}
+		break;
+
+	case StartupFSM::QuitProgram:
+		/* user explicitly requested quit */
 		queue_finish ();
 		break;
 
@@ -579,6 +624,53 @@ ARDOUR_UI::starting ()
 	}
 
 	return 0;
+}
+
+int
+ARDOUR_UI::copy_demo_sessions ()
+{
+	int copied = 0;
+	if (ARDOUR::Profile->get_mixbus () && Config->get_copy_demo_sessions ()) {
+		std::string dspd (Config->get_default_session_parent_dir());
+		Searchpath ds (ARDOUR::ardour_data_search_path());
+		ds.add_subdirectory_to_paths ("sessions");
+		vector<string> demos;
+		find_files_matching_pattern (demos, ds, string_compose ("*%1", ARDOUR::session_archive_suffix));
+
+		ARDOUR::RecentSessions rs;
+		ARDOUR::read_recent_sessions (rs);
+
+		for (vector<string>::iterator i = demos.begin(); i != demos.end (); ++i) {
+			/* "demo-session" must be inside "demo-session.<session_archive_suffix>" */
+			std::string name = basename_nosuffix (basename_nosuffix (*i));
+			std::string path = Glib::build_filename (dspd, name);
+			/* skip if session-dir already exists */
+			if (Glib::file_test(path.c_str(), Glib::FILE_TEST_IS_DIR)) {
+				/* ..but add it to recent-list */
+				store_recent_sessions (name, path);
+				continue;
+			}
+			/* skip sessions that are already in 'recent'.
+			 * eg. a new user changed <session-default-dir> shortly after installation
+			 */
+			for (ARDOUR::RecentSessions::iterator r = rs.begin(); r != rs.end(); ++r) {
+				if ((*r).first == name) {
+					continue;
+				}
+			}
+			try {
+				PBD::FileArchive ar (*i);
+				if (0 == ar.inflate (dspd)) {
+					store_recent_sessions (name, path);
+					info << string_compose (_("Copied demo session `%1'."), name) << endmsg;
+					++copied;
+				}
+			} catch (...) {
+					info << string_compose (_("Failed to extract demo session `%1'."), name) << endmsg;
+			}
+		}
+	}
+	return copied;
 }
 
 int

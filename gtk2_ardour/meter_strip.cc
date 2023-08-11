@@ -124,7 +124,7 @@ MeterStrip::MeterStrip (int metricmode, MeterType mt)
 	UIConfiguration::instance().DPIReset.connect (sigc::mem_fun (*this, &MeterStrip::on_theme_changed));
 }
 
-MeterStrip::MeterStrip (Session* sess, boost::shared_ptr<ARDOUR::Route> rt)
+MeterStrip::MeterStrip (Session* sess, std::shared_ptr<ARDOUR::Route> rt)
 	: SessionHandlePtr (sess)
 	, RouteUI ((Session*) 0)
 	, _route (rt)
@@ -169,7 +169,7 @@ MeterStrip::MeterStrip (Session* sess, boost::shared_ptr<ARDOUR::Route> rt)
 	peak_display.set_name ("meterbridge peakindicator");
 	peak_display.set_elements((ArdourButton::Element) (ArdourButton::Edge|ArdourButton::Body));
 	set_tooltip (peak_display, _("Reset Peak"));
-	peak_display.unset_flags (Gtk::CAN_FOCUS);
+	peak_display.set_can_focus (false);
 	peak_display.set_size_request(PX_SCALE(12, 12), PX_SCALE(8, 8));
 	peak_display.set_corner_radius(2); // ardour-button scales this
 
@@ -290,7 +290,7 @@ MeterStrip::MeterStrip (Session* sess, boost::shared_ptr<ARDOUR::Route> rt)
 	nfo_vbox.show();
 	namenumberbx.show();
 
-	if (boost::dynamic_pointer_cast<Track>(_route)) {
+	if (std::dynamic_pointer_cast<Track>(_route)) {
 		monitor_input_button->show();
 		monitor_disk_button->show();
 	} else {
@@ -329,12 +329,12 @@ MeterStrip::MeterStrip (Session* sess, boost::shared_ptr<ARDOUR::Route> rt)
 	if (_route->is_master()) {
 		_strip_type = 4;
 	}
-	else if (boost::dynamic_pointer_cast<AudioTrack>(_route) == 0
-			&& boost::dynamic_pointer_cast<MidiTrack>(_route) == 0) {
+	else if (std::dynamic_pointer_cast<AudioTrack>(_route) == 0
+			&& std::dynamic_pointer_cast<MidiTrack>(_route) == 0) {
 		/* non-master bus */
 		_strip_type = 3;
 	}
-	else if (boost::dynamic_pointer_cast<MidiTrack>(_route)) {
+	else if (std::dynamic_pointer_cast<MidiTrack>(_route)) {
 		_strip_type = 2;
 	}
 	else {
@@ -475,28 +475,25 @@ MeterStrip::meter_configuration_changed (ChanCount c)
 		}
 	}
 
-	if (boost::dynamic_pointer_cast<AudioTrack>(_route) == 0
-			&& boost::dynamic_pointer_cast<MidiTrack>(_route) == 0
-			) {
-		meter_ticks1_area.set_name ("MyAudioBusMetricsLeft");
-		meter_ticks2_area.set_name ("MyAudioBusMetricsRight");
-		_has_midi = false;
-	}
-	else if (type == (1 << DataType::AUDIO)) {
-		meter_ticks1_area.set_name ("MyAudioTrackMetricsLeft");
-		meter_ticks2_area.set_name ("MyAudioTrackMetricsRight");
-		_has_midi = false;
-	}
-	else if (type == (1 << DataType::MIDI)) {
+	bool is_audio_track = _route && std::dynamic_pointer_cast<AudioTrack>(_route) != 0;
+	bool is_midi_track = _route && std::dynamic_pointer_cast<MidiTrack>(_route) != 0;
+
+	if (!is_audio_track && (is_midi_track || /* MIDI Bus */ (type == (1 << DataType::MIDI)))) {
 		meter_ticks1_area.set_name ("MidiTrackMetricsLeft");
 		meter_ticks2_area.set_name ("MidiTrackMetricsRight");
-		_has_midi = true;
-	} else {
-		meter_ticks1_area.set_name ("AudioMidiTrackMetricsLeft");
-		meter_ticks2_area.set_name ("AudioMidiTrackMetricsRight");
-		_has_midi = true;
 	}
+	else if (_route && (!is_audio_track && !is_midi_track)) {
+		meter_ticks1_area.set_name ("AudioBusMetricsLeft");
+		meter_ticks2_area.set_name ("AudioBusMetricsRight");
+	}
+	else {
+		meter_ticks1_area.set_name ("AudioTrackMetricsLeft");
+		meter_ticks2_area.set_name ("AudioTrackMetricsRight");
+	}
+
 	set_tick_bar(_tick_bar);
+
+	_has_midi = 0 != (type & (1 << DataType::MIDI));
 
 	on_theme_changed();
 	if (old_has_midi != _has_midi) {
@@ -1013,13 +1010,13 @@ MeterStrip::color () const
 }
 
 void
-MeterStrip::gain_start_touch ()
+MeterStrip::gain_start_touch (int)
 {
 	_route->gain_control ()->start_touch (timepos_t (_session->transport_sample ()));
 }
 
 void
-MeterStrip::gain_end_touch ()
+MeterStrip::gain_end_touch (int)
 {
 	_route->gain_control ()->stop_touch (timepos_t (_session->transport_sample ()));
 }

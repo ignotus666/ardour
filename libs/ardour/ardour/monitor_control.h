@@ -19,9 +19,9 @@
 #ifndef __ardour_monitor_control_h__
 #define __ardour_monitor_control_h__
 
+#include <memory>
 #include <string>
 
-#include <boost/shared_ptr.hpp>
 #include <boost/dynamic_bitset.hpp>
 
 #include "ardour/slavable_automation_control.h"
@@ -36,14 +36,14 @@ class Session;
 class LIBARDOUR_API MonitorControl : public SlavableAutomationControl
 {
   public:
-	MonitorControl (Session& session, std::string const & name, Monitorable& m, Temporal::TimeDomain);
+	MonitorControl (Session& session, std::string const & name, Monitorable& m, Temporal::TimeDomainProvider const &);
 	~MonitorControl() {}
 
 	MonitorChoice monitoring_choice() const { return static_cast<MonitorChoice> ((int)get_value()); }
 	MonitorState monitoring_state () const { return _monitorable.monitoring_state(); }
 
 	int set_state (XMLNode const&, int);
-	XMLNode& get_state ();
+	XMLNode& get_state () const;
 
   protected:
 	void actually_set_value (double, PBD::Controllable::GroupControlDisposition group_override);

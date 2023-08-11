@@ -58,14 +58,14 @@ using namespace std;
 
 PBD::Signal1<void, TriggerStrip*> TriggerStrip::CatchDeletion;
 
-TriggerStrip::TriggerStrip (Session* s, boost::shared_ptr<ARDOUR::Route> rt)
+TriggerStrip::TriggerStrip (Session* s, std::shared_ptr<ARDOUR::Route> rt)
 	: SessionHandlePtr (s)
 	, RouteUI (s)
 	, _clear_meters (true)
 	, _pb_selection ()
 	, _tmaster_widget (-1, 16)
 	, _processor_box (s, boost::bind (&TriggerStrip::plugin_selector, this), _pb_selection, 0)
-	, _trigger_display (-1., default_triggers_per_box * 16.)
+	, _trigger_display (-1., TriggerBox::default_triggers_per_box * 16.)
 	, _panners (s)
 	, _level_meter (s)
 {
@@ -189,7 +189,7 @@ TriggerStrip::init ()
 }
 
 void
-TriggerStrip::set_route (boost::shared_ptr<Route> rt)
+TriggerStrip::set_route (std::shared_ptr<Route> rt)
 {
 	RouteUI::set_route (rt);
 
@@ -198,11 +198,10 @@ TriggerStrip::set_route (boost::shared_ptr<Route> rt)
 	_processor_box.set_route (rt);
 
 	/* Fader/Gain */
-	boost::shared_ptr<AutomationControl> ac = _route->gain_control ();
+	std::shared_ptr<AutomationControl> ac = _route->gain_control ();
 	_gain_control                           = AutomationController::create (ac->parameter (), ParameterDescriptor (ac->parameter ()), ac, false);
 	_gain_control->set_name (X_("ProcessorControlSlider"));
 	_gain_control->set_size_request (PX_SCALE (19), -1);
-	_gain_control->disable_vertical_scroll ();
 	volume_table.attach (*_gain_control, 0, 1, 1, 2);
 
 	_level_meter.set_meter (_route->shared_peak_meter ().get ());
@@ -292,7 +291,7 @@ TriggerStrip::build_route_ops_menu ()
 		items.push_back (MenuElem (_("Pin Connections..."), sigc::mem_fun (*this, &RouteUI::manage_pins)));
 	}
 
-	if (active && (boost::dynamic_pointer_cast<MidiTrack>(_route) || _route->the_instrument ())) {
+	if (active && (std::dynamic_pointer_cast<MidiTrack>(_route) || _route->the_instrument ())) {
 		items.push_back (MenuElem (_("Patch Selector..."),
 					sigc::mem_fun(*this, &RouteUI::select_midi_patch)));
 	}
@@ -367,7 +366,7 @@ TriggerStrip::connect_to_pan ()
 		return;
 	}
 
-	boost::shared_ptr<Pannable> p = _route->pannable ();
+	std::shared_ptr<Pannable> p = _route->pannable ();
 
 	p->automation_state_changed.connect (_panstate_connection, invalidator (*this), boost::bind (&PannerUI::pan_automation_state_changed, &_panners), gui_context ());
 
@@ -404,9 +403,26 @@ TriggerStrip::route_property_changed (const PropertyChange& what_changed)
 }
 
 void
+TriggerStrip::set_selected (bool yn)
+{
+	AxisView::set_selected (yn);
+
+	if (selected()) {
+		global_frame.set_shadow_type (Gtk::SHADOW_ETCHED_OUT);
+		global_frame.set_name ("MixerStripSelectedFrame");
+	} else {
+		global_frame.set_shadow_type (Gtk::SHADOW_IN);
+		global_frame.set_name ("MixerStripFrame");
+	}
+
+	global_frame.queue_draw ();
+}
+
+void
 TriggerStrip::route_color_changed ()
 {
-	_name_button.modify_bg (STATE_NORMAL, color ());
+	Gtkmm2ext::Color c = gdk_color_to_rgba (route_color());
+	_name_button.set_fixed_colors (c, c);
 }
 
 void
@@ -422,6 +438,8 @@ TriggerStrip::update_sensitivity ()
 	bool en = _route->active ();
 	monitor_input_button->set_sensitive (en);
 	monitor_disk_button->set_sensitive (en);
+
+	map_frozen ();
 
 #if 0
 	if (!en) {
@@ -441,12 +459,12 @@ TriggerStrip::plugin_selector ()
 }
 
 void
-TriggerStrip::hide_processor_editor (boost::weak_ptr<Processor> p)
+TriggerStrip::hide_processor_editor (std::weak_ptr<Processor> p)
 {
 	/* TODO consolidate w/ TriggerStrip::hide_processor_editor
 	 * -> RouteUI ?
 	 */
-	boost::shared_ptr<Processor> processor (p.lock ());
+	std::shared_ptr<Processor> processor (p.lock ());
 	if (!processor) {
 		return;
 	}
@@ -463,7 +481,7 @@ TriggerStrip::map_frozen ()
 {
 	ENSURE_GUI_THREAD (*this, &TriggerStrip::map_frozen)
 
-	boost::shared_ptr<AudioTrack> at = audio_track ();
+	std::shared_ptr<AudioTrack> at = audio_track ();
 
 	bool en = _route->active () || ARDOUR::Profile->get_mixbus ();
 
@@ -486,7 +504,7 @@ TriggerStrip::map_frozen ()
 void
 TriggerStrip::fast_update ()
 {
-	if (is_mapped ()) {
+	if (get_mapped ()) {
 		if (_clear_meters) {
 			_level_meter.clear_meters ();
 			_clear_meters = false;

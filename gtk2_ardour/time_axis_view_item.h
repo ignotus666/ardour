@@ -81,6 +81,7 @@ public:
 	void set_color (uint32_t);
 	void set_name_text_color ();
 
+	virtual void     set_frame_color();
 	virtual uint32_t get_fill_color () const;
 
 	ArdourCanvas::Item* get_canvas_frame();
@@ -95,10 +96,11 @@ public:
 	virtual void drag_end();
 	bool dragging() const { return _dragging; }
 
-	virtual void raise () { return; }
-	virtual void raise_to_top () { return; }
-	virtual void lower () { return; }
-	virtual void lower_to_bottom () { return; }
+	virtual void visual_layer_on_top() {}
+	virtual void raise () {}
+	virtual void raise_to_top () {}
+	virtual void lower () {}
+	virtual void lower_to_bottom () {}
 
 	/** @return true if the name area should respond to events */
 	bool name_active() const { return name_connected; }
@@ -128,24 +130,6 @@ public:
 
 	sigc::signal<void,std::string,void*> ItemRemoved;
 
-	/** Emitted when the name of this item is changed */
-	sigc::signal<void,std::string,std::string,void*> NameChanged;
-
-	/** Emiited when the position of this item changes */
-	sigc::signal<void,Temporal::timepos_t,void*> PositionChanged;
-
-	/** Emitted when the position lock of this item is changed */
-	sigc::signal<void,bool,void*> PositionLockChanged;
-
-	/** Emitted when the duration of this item changes */
-	sigc::signal<void,Temporal::timecnt_t,void*> DurationChanged;
-
-	/** Emitted when the maximum item duration is changed */
-	sigc::signal<void,Temporal::timecnt_t,void*> MaxDurationChanged;
-
-	/** Emitted when the mionimum item duration is changed */
-	sigc::signal<void,Temporal::timecnt_t,void*> MinDurationChanged;
-
 	enum Visibility {
 		ShowFrame = 0x1,
 		ShowNameHighlight = 0x2,
@@ -170,7 +154,6 @@ protected:
 	virtual bool canvas_group_event (GdkEvent*);
 
 	virtual void set_colors();
-	virtual void set_frame_color();
 	virtual void set_frame_gradient ();
 
 	void set_trim_handle_colors();

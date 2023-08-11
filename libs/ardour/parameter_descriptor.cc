@@ -56,6 +56,8 @@ ParameterDescriptor::ParameterDescriptor(const Evoral::Parameter& parameter)
 
 	switch((AutomationType)parameter.type()) {
 	case BusSendLevel:
+		/* fallthrough */
+	case InsertReturnLevel:
 		inline_ctrl = true;
 		/* fallthrough */
 	case GainAutomation:
@@ -123,7 +125,7 @@ ParameterDescriptor::ParameterDescriptor(const Evoral::Parameter& parameter)
 		break;
 	case PhaseAutomation:
 		toggled = true;
-		scale_points = boost::shared_ptr<ScalePoints>(new ScalePoints());
+		scale_points = std::shared_ptr<ScalePoints>(new ScalePoints());
 		scale_points->insert (std::make_pair (_("Normal"), 0));
 		scale_points->insert (std::make_pair (_("Invert"), 1));
 		break;
@@ -132,7 +134,7 @@ ParameterDescriptor::ParameterDescriptor(const Evoral::Parameter& parameter)
 		integer_step = true;
 		lower = MonitorAuto;
 		upper = MonitorCue;
-		scale_points = boost::shared_ptr<ScalePoints>(new ScalePoints());
+		scale_points = std::shared_ptr<ScalePoints>(new ScalePoints());
 		scale_points->insert (std::make_pair (_("Auto"), MonitorAuto));
 		scale_points->insert (std::make_pair (_("Input"), MonitorInput));
 		scale_points->insert (std::make_pair (_("Disk"), MonitorDisk));
@@ -207,7 +209,7 @@ ParameterDescriptor::update_steps()
 	if (unit == ParameterDescriptor::MIDI_NOTE) {
 		step      = smallstep = 1;  // semitone
 		largestep = 12;             // octave
-	} else if (type == GainAutomation || type == TrimAutomation || type == BusSendLevel || type == MainOutVolume) {
+	} else if (type == GainAutomation || type == TrimAutomation || type == BusSendLevel || type == MainOutVolume || type == InsertReturnLevel) {
 		/* dB_coeff_step gives a step normalized for [0, max_gain].  This is
 		   like "slider position", so we convert from "slider position" to gain
 		   to have the correct unit here. */
@@ -326,6 +328,8 @@ ParameterDescriptor::to_interface (float val, bool rotary) const
 			/* fallthrough */
 		case BusSendLevel:
 			/* fallthrough */
+		case InsertReturnLevel:
+			/* fallthrough */
 		case EnvelopeAutomation:
 			val = gain_to_slider_position_with_max (val, upper);
 			break;
@@ -384,6 +388,7 @@ ParameterDescriptor::from_interface (float val, bool rotary) const
 		case GainAutomation:
 		case EnvelopeAutomation:
 		case BusSendLevel:
+		case InsertReturnLevel:
 			val = slider_position_to_gain_with_max (val, upper);
 			break;
 		case TrimAutomation:
@@ -443,6 +448,7 @@ ParameterDescriptor::is_linear () const
 		case GainAutomation:
 		case EnvelopeAutomation:
 		case BusSendLevel:
+		case InsertReturnLevel:
 			return false;
 		default:
 			break;

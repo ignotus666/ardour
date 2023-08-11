@@ -101,7 +101,7 @@ private:
  * memento, and redo is restoring the after memento.
  */
 template <class obj_T>
-class LIBPBD_TEMPLATE_API MementoCommand : public Command
+class LIBPBD_TEMPLATE_API MementoCommand : public PBD::Command
 {
 public:
 	MementoCommand (obj_T& a_object, XMLNode* a_before, XMLNode* a_after)
@@ -141,7 +141,7 @@ public:
 		}
 	}
 
-	virtual XMLNode &get_state() {
+	virtual XMLNode &get_state() const {
 		std::string name;
 		if (before && after) {
 			name = "MementoCommand";

@@ -129,7 +129,7 @@ PluginSelector::PluginSelector (PluginManager& mgr)
 	added_list.set_headers_visible (true);
 	added_list.set_reorderable (false);
 
-	for (int i = 2; i <= 7; ++i) {
+	for (int i = 1; i < 7; ++i) {
 		Gtk::TreeView::Column* column = plugin_display.get_column(i);
 		if (column) {
 			column->set_sort_column(i);
@@ -169,10 +169,10 @@ PluginSelector::PluginSelector (PluginManager& mgr)
 	_search_ignore_checkbox->set_name ("pluginlist filter button");
 
 	Gtk::Label* search_help_label1 = manage (new Label(
-		_("All search terms must be matched."), Gtk::ALIGN_LEFT));
+		_("All search terms must be matched."), Gtk::ALIGN_START));
 
 	Gtk::Label* search_help_label2 = manage (new Label(
-		_("Ex: \"ess dyn\" will find \"dynamic de-esser\" but not \"de-esser\"."), Gtk::ALIGN_LEFT));
+		_("Ex: \"ess dyn\" will find \"dynamic de-esser\" but not \"de-esser\"."), Gtk::ALIGN_START));
 
 	search_table->attach (search_entry,            0, 3, 0, 1, FILL|EXPAND, FILL);
 	search_table->attach (search_clear_button,     3, 4, 0, 1, FILL, FILL);
@@ -186,7 +186,7 @@ PluginSelector::PluginSelector (PluginManager& mgr)
 	search_table->set_col_spacings (4);
 	search_table->set_row_spacings (4);
 
-	Frame* search_frame = manage (new Frame);
+	Gtk::Frame* search_frame = manage (new Gtk::Frame);
 	search_frame->set_name ("BaseFrame");
 	search_frame->set_label (_("Search"));
 	search_frame->add (*search_table);
@@ -241,7 +241,7 @@ PluginSelector::PluginSelector (PluginManager& mgr)
 	filter_vbox->set_border_width (4);
 	filter_vbox->set_spacing (4);
 
-	Frame* filter_frame = manage (new Frame);
+	Gtk::Frame* filter_frame = manage (new Gtk::Frame);
 	filter_frame->set_name ("BaseFrame");
 	filter_frame->set_label (_("Filter"));
 	filter_frame->add (*filter_vbox);
@@ -270,13 +270,13 @@ PluginSelector::PluginSelector (PluginManager& mgr)
 	tag_reset_button->signal_clicked().connect (sigc::mem_fun (*this, &PluginSelector::tag_reset_button_clicked));
 
 	Gtk::Label* tagging_help_label1 = manage (new Label(
-		_("Enter space-separated, one-word Tags for the selected plugin."), Gtk::ALIGN_LEFT));
+		_("Enter space-separated, one-word Tags for the selected plugin."), Gtk::ALIGN_START));
 
 	Gtk::Label* tagging_help_label2 = manage (new Label(
-		_("You can include dashes, colons or underscores in a Tag."), Gtk::ALIGN_LEFT));
+		_("You can include dashes, colons or underscores in a Tag."), Gtk::ALIGN_START));
 
 	Gtk::Label* tagging_help_label3 = manage (new Label(
-		_("Ex: \"dynamic de-esser vocal\" applies 3 Tags."), Gtk::ALIGN_LEFT));
+		_("Ex: \"dynamic de-esser vocal\" applies 3 Tags."), Gtk::ALIGN_START));
 
 	int p = 0;
 	tagging_table->attach (*tag_entry,           0, 1, p, p+1, FILL|EXPAND, FILL);
@@ -285,7 +285,7 @@ PluginSelector::PluginSelector (PluginManager& mgr)
 	tagging_table->attach (*tagging_help_label2, 0, 2, p, p+1, FILL, FILL); p++;
 	tagging_table->attach (*tagging_help_label3, 0, 2, p, p+1, FILL, FILL); p++;
 
-	Frame* tag_frame = manage (new Frame);
+	Gtk::Frame* tag_frame = manage (new Gtk::Frame);
 	tag_frame->set_name ("BaseFrame");
 	tag_frame->set_label (_("Tags for Selected Plugin"));
 	tag_frame->add (*tagging_table);
@@ -916,7 +916,7 @@ PluginSelector::plugin_menu()
 void
 PluginSelector::build_plugin_menu ()
 {
-	if (is_visible ()) {
+	if (get_visible ()) {
 		_need_menu_rebuild = true;
 		return;
 	}

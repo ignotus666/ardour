@@ -55,7 +55,7 @@ function factory () return function ()
 		{ type = "heading", title = "Target Track and Plugin", align = "left"},
 		{ type = "dropdown", key = "param", title = "Target Parameter", values = targets }
 	}
-	local rv = LuaDialog.Dialog ("Select Taget", dialog_options):run ()
+	local rv = LuaDialog.Dialog ("Select Target", dialog_options):run ()
 
 	targets = nil -- drop references (the table holds shared-pointer references to all plugins)
 	collectgarbage () -- and release the references immediately
@@ -91,16 +91,12 @@ function factory () return function ()
 		if ec:isnil () then goto next end
 		if ec:list ():events ():size () == 0 then goto next end
 
-		-- MIDI events are timestamped in "bar-beat" units, we need to convert those
-		-- using the tempo-map, relative to the region-start
-		local bfc = ARDOUR.BeatsSamplesConverter (Session:tempo_map (), r:start ())
-
 		-- iterate over CC-events
 		for av in ec:list ():events ():iter () do
 			-- re-scale event to target range
 			local val = pd.lower + (pd.upper - pd.lower) * av.value / 127
 			-- and add it to the target-parameter automation-list
-			al:add (r:position () - r:start () + bfc:to (av.when), val, false, true)
+			al:add (r:position () - r:start () + av.when, val, false, true)
 			add_undo = true
 		end
 		::next::

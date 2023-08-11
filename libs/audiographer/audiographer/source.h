@@ -1,10 +1,10 @@
 #ifndef AUDIOGRAPHER_SOURCE_H
 #define AUDIOGRAPHER_SOURCE_H
 
+#include <memory>
+
 #include "types.h"
 #include "sink.h"
-
-#include <boost/shared_ptr.hpp>
 
 #include "audiographer/visibility.h"
 
@@ -15,12 +15,12 @@ namespace AudioGrapher
   * This is a pure virtual interface for all data sources in AudioGrapher
   */
 template<typename T>
-class /*LIBAUDIOGRAPHER_API*/ Source
+class LIBAUDIOGRAPHER_API Source
 {
   public:
 	virtual ~Source () { }
 
-	typedef boost::shared_ptr<Sink<T> > SinkPtr;
+	typedef std::shared_ptr<Sink<T> > SinkPtr;
 
 	/// Adds an output to this source. All data generated is forwarded to \a output
 	virtual void add_output (SinkPtr output) = 0;

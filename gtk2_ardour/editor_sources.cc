@@ -78,23 +78,23 @@ EditorSources::init ()
 	int bbt_width, date_width, height;
 
 	Glib::RefPtr<Pango::Layout> layout = _display.create_pango_layout (X_("000|000|000"));
-	Gtkmm2ext::get_pixel_size (layout, bbt_width, height);
+	layout->get_pixel_size (bbt_width, height);
 	Glib::RefPtr<Pango::Layout> layout2 = _display.create_pango_layout (X_("2018-10-14 12:12:30"));
-	Gtkmm2ext::get_pixel_size (layout2, date_width, height);
+	layout2->get_pixel_size (date_width, height);
 
 	add_name_column ();
 
-	setup_col (append_col (_columns.channels, "Chans    "), 1, ALIGN_LEFT, _("# Ch"), _("# Channels in the region"));
-	setup_col (append_col (_columns.captd_for, date_width), 17, ALIGN_LEFT, _("Captured For"), _("Original Track this was recorded on"));
-	setup_col (append_col (_columns.captd_xruns, "1234567890"), 21, ALIGN_RIGHT, _("# Xruns"), _("Number of dropouts that occured during recording"));
+	setup_col (append_col (_columns.channels, "Chans    "), 1, ALIGN_START, _("# Ch"), _("# Channels in the region"));
+	setup_col (append_col (_columns.captd_for, date_width), 17, ALIGN_START, _("Captured For"), _("Original Track this was recorded on"));
+	setup_col (append_col (_columns.captd_xruns, "1234567890"), 21, ALIGN_END, _("# Xruns"), _("Number of dropouts that occurred during recording"));
 
 	add_tag_column ();
 
-	setup_col (append_col (_columns.take_id, date_width), 18, ALIGN_LEFT, _("Take ID"), _("Take ID"));
-	setup_col (append_col (_columns.natural_pos, bbt_width), 20, ALIGN_RIGHT, _("Orig Pos"), _("Original Position of the file on timeline, when it was recorded"));
+	setup_col (append_col (_columns.take_id, date_width), 18, ALIGN_START, _("Take ID"), _("Take ID"));
+	setup_col (append_col (_columns.natural_pos, bbt_width), 20, ALIGN_END, _("Orig Pos"), _("Original Position of the file on timeline, when it was recorded"));
 
 	TreeViewColumn* tvc = append_col (_columns.path, bbt_width);
-	setup_col (tvc, 13, ALIGN_LEFT, _("Path"), _("Path (folder) of the file location"));
+	setup_col (tvc, 13, ALIGN_START, _("Path"), _("Path (folder) of the file location"));
 	tvc->set_expand (true);
 
 	/* make Name and Path columns manually resizable */
@@ -114,16 +114,16 @@ EditorSources::selection_changed ()
 		for (TreeView::Selection::ListHandle_Path::iterator i = rows.begin (); i != rows.end (); ++i) {
 			if ((iter = _model->get_iter (*i))) {
 				/* highlight any regions in the editor that use this region's source */
-				boost::shared_ptr<ARDOUR::Region> region = (*iter)[_columns.region];
+				std::shared_ptr<ARDOUR::Region> region = (*iter)[_columns.region];
 				if (!region)
 					continue;
 
-				boost::shared_ptr<ARDOUR::Source> source = region->source ();
+				std::shared_ptr<ARDOUR::Source> source = region->source ();
 				if (source) {
-					set<boost::shared_ptr<Region>> regions;
+					set<std::shared_ptr<Region>> regions;
 					RegionFactory::get_regions_using_source (source, regions);
 
-					for (set<boost::shared_ptr<Region>>::iterator region = regions.begin (); region != regions.end (); region++) {
+					for (set<std::shared_ptr<Region>>::iterator region = regions.begin (); region != regions.end (); region++) {
 						_change_connection.block (true);
 						_editor->set_selected_regionview_from_region_list (*region, Selection::Add);
 						_change_connection.block (false);
@@ -161,7 +161,7 @@ EditorSources::recover_selected_sources ()
 		TreeView::Selection::ListHandle_Path rows = _display.get_selection ()->get_selected_rows ();
 		for (TreeView::Selection::ListHandle_Path::iterator i = rows.begin (); i != rows.end (); ++i) {
 			if ((iter = _model->get_iter (*i))) {
-				boost::shared_ptr<ARDOUR::Region> region = (*iter)[_columns.region];
+				std::shared_ptr<ARDOUR::Region> region = (*iter)[_columns.region];
 				if (region) {
 					to_be_recovered.push_back (region);
 				}
@@ -192,7 +192,15 @@ EditorSources::remove_selected_sources ()
 	int opt = prompter.run ();
 
 	if (opt >= 1) {
-		std::list<boost::weak_ptr<ARDOUR::Source>> to_be_removed;
+		struct WeakPtrCompare {
+			bool operator() (weak_ptr<ARDOUR::Source> const& lhs, weak_ptr<ARDOUR::Source> const& rhs) const {
+				auto lptr = lhs.lock(), rptr = rhs.lock();
+				if (!rptr) return false;
+				if (!lptr) return true;
+				return lptr->id() < rptr->id();
+			}
+		};
+		std::set<std::weak_ptr<ARDOUR::Source>, WeakPtrCompare> to_be_removed;
 
 		if (_display.get_selection ()->count_selected_rows () > 0) {
 			TreeIter                             iter;
@@ -202,23 +210,29 @@ EditorSources::remove_selected_sources ()
 
 			for (TreeView::Selection::ListHandle_Path::iterator i = rows.begin (); i != rows.end (); ++i) {
 				if ((iter = _model->get_iter (*i))) {
-					boost::shared_ptr<ARDOUR::Region> region = (*iter)[_columns.region];
+					std::shared_ptr<ARDOUR::Region> region = (*iter)[_columns.region];
 
-					if (!region)
+					if (!region) {
 						continue;
+					}
 
-					boost::shared_ptr<ARDOUR::Source> source = region->source ();
-					if (source) {
-						set<boost::shared_ptr<Region>> regions;
+					for (auto const& source : region->sources ()) {
+						set<std::shared_ptr<Region>> regions;
 						RegionFactory::get_regions_using_source (source, regions);
 
-						for (set<boost::shared_ptr<Region>>::iterator region = regions.begin (); region != regions.end (); region++) {
+						for (auto const& region : regions) {
 							_change_connection.block (true);
-							_editor->set_selected_regionview_from_region_list (*region, Selection::Add);
+							/* Note: this ignores regions without RegionView.
+							 * When removing sources (opt == 2),
+							 * Playlist::region_going_away takes care of that
+							 * (Source::drop_references -> Region::source_deleted,
+							 *  -> Region::drop_references). see f58f5bef55a5aa1
+							 */
+							_editor->set_selected_regionview_from_region_list (region, Selection::Add);
 							_change_connection.block (false);
 						}
 
-						to_be_removed.push_back (source);
+						to_be_removed.insert (source);
 					}
 				}
 			}
@@ -226,8 +240,8 @@ EditorSources::remove_selected_sources ()
 			_editor->remove_regions (_editor->get_regions_from_selection_and_entered (), false /*can_ripple*/, false /*as_part_of_other_command*/); // this operation is undo-able
 
 			if (opt == 2) {
-				for (std::list<boost::weak_ptr<ARDOUR::Source>>::iterator i = to_be_removed.begin (); i != to_be_removed.end (); ++i) {
-					_session->remove_source (*i); // this operation is (currently) not undo-able
+				for (auto const& s : to_be_removed) {
+					_session->remove_source (s); // this operation is (currently) not undo-able
 				}
 			}
 		}
@@ -288,13 +302,13 @@ EditorSources::drag_data_received (const RefPtr<Gdk::DragContext>& context,
 	}
 }
 
-boost::shared_ptr<ARDOUR::Region>
+std::shared_ptr<ARDOUR::Region>
 EditorSources::get_single_selection ()
 {
 	Glib::RefPtr<TreeSelection> selected = _display.get_selection ();
 
 	if (selected->count_selected_rows () != 1) {
-		return boost::shared_ptr<ARDOUR::Region> ();
+		return std::shared_ptr<ARDOUR::Region> ();
 	}
 
 	TreeView::Selection::ListHandle_Path rows = selected->get_selected_rows ();
@@ -304,7 +318,7 @@ EditorSources::get_single_selection ()
 	TreeIter iter = _model->get_iter (*rows.begin ());
 
 	if (!iter) {
-		return boost::shared_ptr<ARDOUR::Region> ();
+		return std::shared_ptr<ARDOUR::Region> ();
 	}
 
 	return (*iter)[_columns.region];

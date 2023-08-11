@@ -48,9 +48,9 @@ using namespace Temporal;
 
 AutomationRegionView::AutomationRegionView (ArdourCanvas::Container*                  parent,
                                             AutomationTimeAxisView&                   time_axis,
-                                            boost::shared_ptr<ARDOUR::Region>         region,
+                                            std::shared_ptr<ARDOUR::Region>         region,
                                             const Evoral::Parameter&                  param,
-                                            boost::shared_ptr<ARDOUR::AutomationList> list,
+                                            std::shared_ptr<ARDOUR::AutomationList> list,
                                             double                                    spu,
                                             uint32_t                                  basic_color)
 	: RegionView(parent, time_axis, region, spu, basic_color, true)
@@ -79,7 +79,7 @@ AutomationRegionView::~AutomationRegionView ()
 void
 AutomationRegionView::init (bool /*wfd*/)
 {
-	_enable_display = false;
+	DisplaySuspender (*this);
 
 	RegionView::init (false);
 
@@ -87,19 +87,16 @@ AutomationRegionView::init (bool /*wfd*/)
 
 	set_height (trackview.current_height());
 
-	fill_color_name = "midi frame base";
 	set_colors ();
-
-	_enable_display = true;
 }
 
 void
-AutomationRegionView::create_line (boost::shared_ptr<ARDOUR::AutomationList> list)
+AutomationRegionView::create_line (std::shared_ptr<ARDOUR::AutomationList> list)
 {
-	_line = boost::shared_ptr<AutomationLine> (new MidiAutomationLine(
+	_line = std::shared_ptr<AutomationLine> (new MidiAutomationLine(
 				ARDOUR::EventTypeMap::instance().to_symbol(list->parameter()),
 				trackview, *get_canvas_group(), list,
-				boost::dynamic_pointer_cast<ARDOUR::MidiRegion> (_region),
+				std::dynamic_pointer_cast<ARDOUR::MidiRegion> (_region),
 				_parameter));
 	_line->set_colors();
 	_line->set_height ((uint32_t)rint(trackview.current_height() - 2.5 - NAME_HIGHLIGHT_SIZE));
@@ -112,12 +109,11 @@ uint32_t
 AutomationRegionView::get_fill_color() const
 {
 	const std::string mod_name = (_dragging ? "dragging region" :
-	                              trackview.editor().internal_editing() ? "editable region" :
-	                              "midi frame base");
+	                              trackview.editor().internal_editing() ? "editable region" : fill_color_name);
 	if (_selected) {
 		return UIConfiguration::instance().color_mod ("selected region base", mod_name);
 	} else if (high_enough_for_name || !UIConfiguration::instance().get_color_regions_using_track_color()) {
-		return UIConfiguration::instance().color_mod ("midi frame base", mod_name);
+		return UIConfiguration::instance().color_mod (fill_color_name, mod_name);
 	}
 	return UIConfiguration::instance().color_mod (fill_color, mod_name);
 }
@@ -138,10 +134,9 @@ AutomationRegionView::canvas_group_event (GdkEvent* ev)
 
 	PublicEditor& e = trackview.editor ();
 
-	if (trackview.editor().internal_editing() &&
-	    ev->type == GDK_BUTTON_RELEASE &&
+	if (ev->type == GDK_BUTTON_RELEASE &&
 	    ev->button.button == 1 &&
-	    e.current_mouse_mode() == Editing::MouseDraw &&
+	    (e.current_mouse_mode() == Editing::MouseDraw || e.current_mouse_mode() == Editing::MouseObject) &&
 	    !e.drags()->active()) {
 
 		double x = ev->button.x;
@@ -162,23 +157,21 @@ AutomationRegionView::canvas_group_event (GdkEvent* ev)
 		 * adding the point.
 		 */
 
-		const timepos_t pos = timepos_t (e.pixel_to_sample (x) - _region->position_sample() + _region->start_sample());
-
-		add_automation_event (ev, pos, y, with_guard_points);
+		add_automation_event (ev, timepos_t (e.pixel_to_sample (x)), y, with_guard_points);
 		return true;
 	}
 
 	return RegionView::canvas_group_event (ev);
 }
 
-/** @param when Position in samples, where 0 is the start of the region.
+/** @param when Position is global time position
  *  @param y y position, relative to our TimeAxisView.
  */
 void
 AutomationRegionView::add_automation_event (GdkEvent *, timepos_t const & w, double y, bool with_guard_points)
 {
-	boost::shared_ptr<Evoral::Control> c = _region->control(_parameter, true);
-	boost::shared_ptr<ARDOUR::AutomationControl> ac = boost::dynamic_pointer_cast<ARDOUR::AutomationControl>(c);
+	std::shared_ptr<Evoral::Control> c = _region->control(_parameter, true);
+	std::shared_ptr<ARDOUR::AutomationControl> ac = std::dynamic_pointer_cast<ARDOUR::AutomationControl>(c);
 	timepos_t when (w); /* the non-const copy */
 
 	if (!_line) {
@@ -194,23 +187,21 @@ AutomationRegionView::add_automation_event (GdkEvent *, timepos_t const & w, dou
 
 	/* snap time */
 
-	when = snap_region_time_to_region_time (when.earlier (_region->start()), false) + _region->start ();
+	when = snap_region_time_to_region_time (_region->source_position().distance (when), false);
 
 	/* map using line */
 
 	_line->view_to_model_coord_y (y);
 
-	if (UIConfiguration::instance().get_new_automation_points_on_lane()) {
-		if (c->list()->size () == 0) {
-			/* we need the MidiTrack::MidiControl, not the region's (midi model source) control */
-			boost::shared_ptr<ARDOUR::MidiTrack> mt = boost::dynamic_pointer_cast<ARDOUR::MidiTrack> (view->parent_stripable ());
-			assert (mt);
-			boost::shared_ptr<Evoral::Control> mc = mt->control(_parameter);
-			assert (mc);
-			y = mc->user_double ();
-		} else {
-			y = c->list()->eval (when);
-		}
+	if (c->list()->size () == 0) {
+		/* we need the MidiTrack::MidiControl, not the region's (midi model source) control */
+		std::shared_ptr<ARDOUR::MidiTrack> mt = std::dynamic_pointer_cast<ARDOUR::MidiTrack> (view->parent_stripable ());
+		assert (mt);
+		std::shared_ptr<Evoral::Control> mc = mt->control(_parameter);
+		assert (mc);
+		y = mc->get_double ();
+	} else if (UIConfiguration::instance().get_new_automation_points_on_lane()) {
+		y = c->list()->eval (when);
 	}
 
 	XMLNode& before = _line->the_list()->get_state();
@@ -218,7 +209,7 @@ AutomationRegionView::add_automation_event (GdkEvent *, timepos_t const & w, dou
 	if (_line->the_list()->editor_add (when, y, with_guard_points)) {
 
 		if (ac->automation_state () == ARDOUR::Off) {
-			ac->set_automation_state (ARDOUR::Play);
+			view->set_automation_state (ARDOUR::Play);
 		}
 		if (UIConfiguration::instance().get_automation_edit_cancels_auto_hide () && ac == view->session()->recently_touched_controllable ()) {
 			RouteTimeAxisView::signal_ctrl_touched (false);
@@ -239,12 +230,12 @@ bool
 AutomationRegionView::paste (timepos_t const &                               pos,
                              unsigned                                        paste_count,
                              float                                           times,
-                             boost::shared_ptr<const ARDOUR::AutomationList> slist)
+                             std::shared_ptr<const ARDOUR::AutomationList> slist)
 {
 	using namespace ARDOUR;
 
 	AutomationTimeAxisView* const             view    = automation_view();
-	boost::shared_ptr<ARDOUR::AutomationList> my_list = _line->the_list();
+	std::shared_ptr<ARDOUR::AutomationList> my_list = _line->the_list();
 
 	if (view->session()->transport_rolling() && my_list->automation_write()) {
 		/* do not paste if this control is in write mode and we're rolling */
@@ -257,13 +248,19 @@ AutomationRegionView::paste (timepos_t const &                               pos
 	/* add multi-paste offset if applicable */
 	p += view->editor ().get_paste_offset (pos, paste_count > 0 ? 1 : 0, len);
 
-	/* convert sample-position to model's unit and position */
-	timepos_t model_pos = timepos_t (source_relative_distance (timecnt_t (p, timepos_t()), slist->time_domain()));
+	timepos_t model_pos = pos;
+
+	/* potentially snap */
+
+	view->editor().snap_to (model_pos, Temporal::RoundNearest);
+
+	/* convert timeline position to model's (source-relative) position */
+
+	model_pos = timepos_t (_region->source_position().distance (model_pos));
 
 	XMLNode& before = my_list->get_state();
 	my_list->paste (*slist, model_pos);
-	view->session()->add_command(
-		new MementoCommand<ARDOUR::AutomationList>(_line->memento_command_binder(), &before, &my_list->get_state()));
+	view->session()->add_command(new MementoCommand<ARDOUR::AutomationList>(_line->memento_command_binder(), &before, &my_list->get_state()));
 
 	return true;
 }
@@ -295,10 +292,9 @@ AutomationRegionView::reset_width_dependent_items (double pixel_width)
 	RegionView::reset_width_dependent_items(pixel_width);
 
 	if (_line) {
-		_line->reset();
+		_line->reset ();
 	}
 }
-
 
 void
 AutomationRegionView::region_resized (const PBD::PropertyChange& what_changed)
@@ -318,6 +314,16 @@ AutomationRegionView::region_resized (const PBD::PropertyChange& what_changed)
 	}
 }
 
+void
+AutomationRegionView::tempo_map_changed ()
+{
+	if (_line) {
+		_line->tempo_map_changed ();
+	}
+
+	set_position (_region->position(), 0, 0);
+	set_duration (_region->length(), 0);
+}
 
 void
 AutomationRegionView::entered ()
@@ -333,5 +339,16 @@ AutomationRegionView::exited ()
 {
 	if (_line) {
 		_line->track_exited();
+	}
+}
+void
+AutomationRegionView::set_selected (bool yn)
+{
+	/* don't call RegionView::set_selected() because for automation
+	 * regionviews, we don't use visual "clues" to indicate selection.
+	 */
+
+	if (yn && _parameter.type() == ARDOUR::MidiCCAutomation) {
+		group->raise_to_top ();
 	}
 }

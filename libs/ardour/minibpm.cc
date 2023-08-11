@@ -520,6 +520,8 @@ public:
 
 	if (acfLength < maxlag) {
 	    // Not enough data
+	    delete [] acf;
+	    delete [] temp;
 	    return 0.0;
 	}
 
@@ -551,7 +553,10 @@ public:
 	}
 
         if (candidateMap.empty()) {
-            return 0.0;
+	    delete[] cf;
+	    delete[] acf;
+	    delete[] temp;
+	    return 0.0;
         }
 
         std::multimap<double, int>::const_iterator ci(candidateMap.end());

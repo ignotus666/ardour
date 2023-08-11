@@ -19,8 +19,9 @@
 #ifndef __osc_oscglobalobserver_h__
 #define __osc_oscglobalobserver_h__
 
+#include <memory>
 #include <string>
-#include <boost/shared_ptr.hpp>
+
 #include <sigc++/sigc++.h>
 #include <lo/lo.h>
 
@@ -87,10 +88,10 @@ class OSCGlobalObserver
 		}
 	};
 
-
-	void send_change_message (std::string path, boost::shared_ptr<PBD::Controllable> controllable);
-	void send_gain_message (std::string path, boost::shared_ptr<PBD::Controllable> controllable);
-	void send_trim_message (std::string path, boost::shared_ptr<PBD::Controllable> controllable);
+	void update_mixer_scene_state();
+	void send_change_message (std::string path, std::shared_ptr<PBD::Controllable> controllable);
+	void send_gain_message (std::string path, std::shared_ptr<PBD::Controllable> controllable);
+	void send_trim_message (std::string path, std::shared_ptr<PBD::Controllable> controllable);
 	void send_transport_state_changed (void);
 	void send_record_state_changed (void);
 	void solo_active (bool active);

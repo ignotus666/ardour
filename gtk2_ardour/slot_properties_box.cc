@@ -35,6 +35,8 @@
 #include <gtkmm/menuitem.h>
 #include <gtkmm/stock.h>
 
+#include "widgets/tooltips.h"
+
 #include "ardour/location.h"
 #include "ardour/profile.h"
 #include "ardour/session.h"
@@ -103,22 +105,24 @@ SlotPropertyTable::SlotPropertyTable ()
 	: _color_button (ArdourButton::Element (ArdourButton::just_led_default_elements | ArdourButton::ColorBox))
 	, _color_label (_("Color:"))
 	, _velocity_adjustment(1.,0.,1.0,0.01,0.1)
-	, _velocity_slider (&_velocity_adjustment, boost::shared_ptr<PBD::Controllable>(), 24/*length*/, 12/*girth*/ )
+	, _velocity_slider (&_velocity_adjustment, std::shared_ptr<PBD::Controllable>(), 24/*length*/, 12/*girth*/ )
 	, _gain_adjustment( 0.0, -20.0, +20.0, 1.0, 3.0, 0)
 	, _gain_spinner (_gain_adjustment)
-	, _gain_label (_("Gain (dB):"))
+	, _allow_button (ArdourButton::Element (ArdourButton::led_default_elements))
 	, _follow_probability_adjustment(0,0,100,2,5)
-	, _follow_probability_slider (&_follow_probability_adjustment, boost::shared_ptr<PBD::Controllable>(), 24/*length*/, 12/*girth*/ )
+	, _follow_probability_slider (&_follow_probability_adjustment, std::shared_ptr<PBD::Controllable>(), 24/*length*/, 12/*girth*/ )
 	, _follow_count_adjustment (1, 1, 128, 1, 4)
 	, _follow_count_spinner (_follow_count_adjustment)
 	, _use_follow_length_button (ArdourButton::default_elements)
 	, _follow_length_adjustment (1, 1, 128, 1, 4)
 	, _follow_length_spinner (_follow_length_adjustment)
 	, _legato_button (ArdourButton::led_default_elements)
+	, _isolate_button (ArdourButton::led_default_elements)
 	, _ignore_changes(false)
 
 {
 	using namespace Gtk::Menu_Helpers;
+	using namespace ArdourWidgets;
 
 	_follow_count_spinner.set_can_focus(false);
 	_follow_count_spinner.signal_changed ().connect (sigc::mem_fun (*this, &SlotPropertyTable::follow_count_event));
@@ -140,24 +144,34 @@ SlotPropertyTable::SlotPropertyTable ()
 	_follow_left.AddMenuElem (MenuElem (follow_action_to_string(FollowAction (FollowAction::None)), sigc::bind (sigc::mem_fun (*this, &SlotPropertyTable::set_follow_action), FollowAction (FollowAction::None), 0)));
 	_follow_left.AddMenuElem (MenuElem (follow_action_to_string(FollowAction (FollowAction::Stop)), sigc::bind (sigc::mem_fun (*this, &SlotPropertyTable::set_follow_action), FollowAction (FollowAction::Stop), 0)));
 	_follow_left.AddMenuElem (MenuElem (follow_action_to_string(FollowAction (FollowAction::Again)), sigc::bind (sigc::mem_fun (*this, &SlotPropertyTable::set_follow_action), FollowAction (FollowAction::Again), 0)));
-	_follow_left.AddMenuElem (MenuElem (follow_action_to_string(FollowAction (FollowAction::PrevTrigger)), sigc::bind (sigc::mem_fun (*this, &SlotPropertyTable::set_follow_action), FollowAction (FollowAction::PrevTrigger), 0)));
-	_follow_left.AddMenuElem (MenuElem (follow_action_to_string(FollowAction (FollowAction::NextTrigger)), sigc::bind (sigc::mem_fun (*this, &SlotPropertyTable::set_follow_action), FollowAction (FollowAction::NextTrigger), 0)));
 	_follow_left.AddMenuElem (MenuElem (follow_action_to_string(FollowAction (FollowAction::ReverseTrigger)), sigc::bind (sigc::mem_fun (*this, &SlotPropertyTable::set_follow_action), FollowAction (FollowAction::ReverseTrigger), 0)));
 	_follow_left.AddMenuElem (MenuElem (follow_action_to_string(FollowAction (FollowAction::ForwardTrigger)), sigc::bind (sigc::mem_fun (*this, &SlotPropertyTable::set_follow_action), FollowAction (FollowAction::ForwardTrigger), 0)));
-	_follow_left.AddMenuElem (MenuElem (follow_action_to_string(FollowAction (FollowAction::AnyTrigger)), sigc::bind (sigc::mem_fun (*this, &SlotPropertyTable::set_follow_action), FollowAction (FollowAction::AnyTrigger), 0)));
-	_follow_left.AddMenuElem (MenuElem (follow_action_to_string(FollowAction (FollowAction::OtherTrigger)), sigc::bind (sigc::mem_fun (*this, &SlotPropertyTable::set_follow_action), FollowAction (FollowAction::OtherTrigger), 0)));
+		Menu*     jump_menu = manage (new Menu);
+		MenuList& jitems      = jump_menu->items ();
+		jitems.push_back (MenuElem (_("Multi..."), sigc::bind (sigc::mem_fun (*this, &TriggerUI::edit_jump), false)));
+		for (int i = 0; i < TriggerBox::default_triggers_per_box; i++) {
+			FollowAction jump_fa = (FollowAction::JumpTrigger);
+			jump_fa.targets.set(i);
+			jitems.push_back (MenuElem (cue_marker_name (i), sigc::bind (sigc::mem_fun (*this, &SlotPropertyTable::set_follow_action), jump_fa, 0)));
+		}
+	_follow_left.AddMenuElem (MenuElem (_("Jump"), *jump_menu));
 	_follow_left.set_sizing_text (longest_follow);
 
 	_follow_right.set_name("FollowAction");
 	_follow_right.AddMenuElem (MenuElem (follow_action_to_string(FollowAction (FollowAction::None)), sigc::bind (sigc::mem_fun (*this, &SlotPropertyTable::set_follow_action), FollowAction (FollowAction::None), 1)));
 	_follow_right.AddMenuElem (MenuElem (follow_action_to_string(FollowAction (FollowAction::Stop)), sigc::bind (sigc::mem_fun (*this, &SlotPropertyTable::set_follow_action), FollowAction (FollowAction::Stop), 1)));
 	_follow_right.AddMenuElem (MenuElem (follow_action_to_string(FollowAction (FollowAction::Again)), sigc::bind (sigc::mem_fun (*this, &SlotPropertyTable::set_follow_action), FollowAction (FollowAction::Again), 1)));
-	_follow_right.AddMenuElem (MenuElem (follow_action_to_string(FollowAction (FollowAction::PrevTrigger)), sigc::bind (sigc::mem_fun (*this, &SlotPropertyTable::set_follow_action), FollowAction (FollowAction::PrevTrigger), 1)));
-	_follow_right.AddMenuElem (MenuElem (follow_action_to_string(FollowAction (FollowAction::NextTrigger)), sigc::bind (sigc::mem_fun (*this, &SlotPropertyTable::set_follow_action), FollowAction (FollowAction::NextTrigger), 1)));
 	_follow_right.AddMenuElem (MenuElem (follow_action_to_string(FollowAction (FollowAction::ReverseTrigger)), sigc::bind (sigc::mem_fun (*this, &SlotPropertyTable::set_follow_action), FollowAction (FollowAction::ReverseTrigger), 1)));
 	_follow_right.AddMenuElem (MenuElem (follow_action_to_string(FollowAction (FollowAction::ForwardTrigger)), sigc::bind (sigc::mem_fun (*this, &SlotPropertyTable::set_follow_action), FollowAction (FollowAction::ForwardTrigger), 1)));
-	_follow_right.AddMenuElem (MenuElem (follow_action_to_string(FollowAction (FollowAction::AnyTrigger)), sigc::bind (sigc::mem_fun (*this, &SlotPropertyTable::set_follow_action), FollowAction (FollowAction::AnyTrigger), 1)));
-	_follow_right.AddMenuElem (MenuElem (follow_action_to_string(FollowAction (FollowAction::OtherTrigger)), sigc::bind (sigc::mem_fun (*this, &SlotPropertyTable::set_follow_action), FollowAction (FollowAction::OtherTrigger), 1)));
+		Menu*     jump_menu_1 = manage (new Menu);
+		MenuList& jitems_1      = jump_menu_1->items ();
+		jitems_1.push_back (MenuElem (_("Multi..."), sigc::bind (sigc::mem_fun (*this, &TriggerUI::edit_jump), true)));
+		for (int i = 0; i < TriggerBox::default_triggers_per_box; i++) {
+			FollowAction jump_fa = (FollowAction::JumpTrigger);
+			jump_fa.targets.set(i);
+			jitems_1.push_back (MenuElem (cue_marker_name (i), sigc::bind (sigc::mem_fun (*this, &SlotPropertyTable::set_follow_action), jump_fa, 1)));
+		}
+	_follow_right.AddMenuElem (MenuElem (_("Jump"), *jump_menu_1));
 	_follow_right.set_sizing_text (longest_follow);
 
 	_launch_style_button.set_name("FollowAction");
@@ -169,8 +183,12 @@ SlotPropertyTable::SlotPropertyTable ()
 	_launch_style_button.AddMenuElem (MenuElem (launch_style_to_string (Trigger::Repeat), sigc::bind (sigc::mem_fun (*this, &SlotPropertyTable::set_launch_style), Trigger::Repeat)));
 
 	_launch_style_button.set_name("FollowAction");
+
 	_legato_button.set_text (_("Legato"));
 	_legato_button.signal_event().connect (sigc::mem_fun (*this, (&SlotPropertyTable::legato_button_event)));
+
+	_isolate_button.set_text (_("Isolate"));
+	_isolate_button.signal_event().connect (sigc::mem_fun (*this, (&SlotPropertyTable::isolate_button_event)));
 
 #define quantize_item(b) _quantize_button.AddMenuElem (MenuElem (quantize_length_to_string (b), sigc::bind (sigc::mem_fun (*this, &SlotPropertyTable::set_quantize), b)));
 
@@ -212,9 +230,6 @@ SlotPropertyTable::SlotPropertyTable ()
 	_name_frame.set_border_width (0);
 	_name_frame.set_padding (0);
 
-//	_gain_label.set_alignment (1.0, 0.5);
-//	_color_label.set_alignment (1.0, 0.5);
-
 	_gain_spinner.set_can_focus(false);
 	_gain_spinner.configure(_gain_adjustment, 0.0, 1);
 	_gain_spinner.signal_changed ().connect (sigc::mem_fun (*this, &SlotPropertyTable::gain_change_event));
@@ -233,6 +248,14 @@ SlotPropertyTable::SlotPropertyTable ()
 	_follow_size_group->add_widget(_velocity_slider);
 	_follow_size_group->add_widget(_follow_count_spinner);
 
+	_patch_button.set_text (_("MIDI Patches"));
+	_patch_button.set_name("FollowAction");
+	_patch_button.signal_clicked.connect (sigc::mem_fun (*this, (&SlotPropertyTable::patch_button_event)));
+
+	_allow_button.set_text (_("Send Patches"));
+	_allow_button.set_name("FollowAction");
+	_allow_button.signal_event().connect (sigc::mem_fun (*this, (&SlotPropertyTable::allow_button_event)));
+
 	set_spacings (8);  //match to TriggerPage::  table->set_spacings
 	set_border_width (0);  //change TriggerPage::  table->set_border_width   instead
 	set_homogeneous (false);
@@ -244,12 +267,14 @@ SlotPropertyTable::SlotPropertyTable ()
 	_trigger_table.set_border_width (8);
 	_trigger_table.set_homogeneous (false);
 
-	_trigger_table.attach(_name_frame,    0, 5, row, row+1, Gtk::FILL|Gtk::EXPAND, Gtk::SHRINK ); row++;
+	_trigger_table.attach(_name_frame,    0, 6, row, row+1, Gtk::FILL|Gtk::EXPAND, Gtk::SHRINK ); row++;
 	_trigger_table.attach(_load_button,   0, 1, row, row+1, Gtk::SHRINK,           Gtk::SHRINK );
 	_trigger_table.attach(_color_label,   1, 2, row, row + 1, Gtk::FILL, Gtk::SHRINK);
 	_trigger_table.attach(_color_button,  2, 3, row, row+1, Gtk::SHRINK,           Gtk::SHRINK );
-	_trigger_table.attach(_gain_label,    3, 4, row, row + 1, Gtk::FILL, Gtk::SHRINK);
-	_trigger_table.attach(_gain_spinner,  4, 5, row, row + 1, Gtk::FILL, Gtk::SHRINK);
+	_trigger_table.attach(_gain_label,    3, 5, row, row + 1, Gtk::FILL, Gtk::SHRINK);
+	_trigger_table.attach(_gain_spinner,  5, 6, row, row + 1, Gtk::FILL, Gtk::SHRINK); row++;
+	_trigger_table.attach(_allow_button,  0, 3, row, row + 1, Gtk::FILL, Gtk::SHRINK);
+	_trigger_table.attach(_patch_button,  3, 6, row, row + 1, Gtk::FILL, Gtk::SHRINK);
 
 
 	/* ---- Launch settings ----- */
@@ -270,9 +295,13 @@ SlotPropertyTable::SlotPropertyTable ()
 	_launch_table.attach(_launch_quant_label, 0, 1, row, row+1, Gtk::FILL, Gtk::SHRINK );
 	_launch_table.attach(_quantize_button,    1, 3, row, row+1, Gtk::FILL, Gtk::SHRINK ); row++;
 
-	_legato_label.set_text(_("Launch Quantize:"));  _legato_label.set_alignment(1.0, 0.5);
+	_legato_label.set_text(_("Legato:"));  _legato_label.set_alignment(1.0, 0.5);
 	_launch_table.attach(_legato_label,   0, 1, row, row+1, Gtk::FILL, Gtk::SHRINK );
 	_launch_table.attach(_legato_button,  1, 3, row, row+1, Gtk::FILL, Gtk::SHRINK ); row++;
+
+	_isolate_label.set_text(_("Cue Isolate:"));  _isolate_label.set_alignment(1.0, 0.5);
+	_launch_table.attach(_isolate_label,   0, 1, row, row+1, Gtk::FILL, Gtk::SHRINK );
+	_launch_table.attach(_isolate_button,  1, 3, row, row+1, Gtk::FILL, Gtk::SHRINK ); row++;
 
 
 	/* ---- Follow settings ----- */
@@ -319,26 +348,46 @@ SlotPropertyTable::SlotPropertyTable ()
 	_follow_table.attach( *fol_table,    0, 2, row, row+1, Gtk::FILL, Gtk::SHRINK ); row++;
 
 	ArdourWidgets::Frame* trigBox = manage (new ArdourWidgets::Frame);
-	trigBox->set_label("Clip Properties");
+	trigBox->set_label(_("Clip Properties"));
 	trigBox->set_name("EditorDark");
 	trigBox->set_edge_color (0x000000ff); // black
 	trigBox->add (_trigger_table);
 
 	ArdourWidgets::Frame* eFollowBox = manage (new ArdourWidgets::Frame);
-	eFollowBox->set_label("Follow Options");
+	eFollowBox->set_label(_("Follow Options"));
 	eFollowBox->set_name("EditorDark");
 	eFollowBox->set_edge_color (0x000000ff); // black
 	eFollowBox->add (_follow_table);
 
 	ArdourWidgets::Frame* eLaunchBox = manage (new ArdourWidgets::Frame);
-	eLaunchBox->set_label("Launch Options");
+	eLaunchBox->set_label(_("Launch Options"));
 	eLaunchBox->set_name("EditorDark");
 	eLaunchBox->set_edge_color (0x000000ff); // black
 	eLaunchBox->add (_launch_table);
 
-	attach(*trigBox,        0,1, 0,1, Gtk::FILL, Gtk::SHRINK );
-	attach(*eLaunchBox,     1,2, 0,1, Gtk::FILL, Gtk::SHRINK );
-	attach(*eFollowBox,     2,3, 0,1, Gtk::FILL, Gtk::SHRINK );
+	attach(*trigBox,        0,1, 0,1, Gtk::FILL, Gtk::SHRINK | Gtk::FILL);
+	attach(*eLaunchBox,     1,2, 0,1, Gtk::FILL, Gtk::SHRINK | Gtk::FILL);
+	attach(*eFollowBox,     2,3, 0,1, Gtk::FILL, Gtk::SHRINK | Gtk::FILL);
+
+	set_tooltip(_name_frame, _("Double-click to rename this clip"));
+	set_tooltip(_gain_spinner, _("Adjust audio gain (or MIDI velocity) for this slot"));
+	set_tooltip(_load_button, _("Load a new file into this slot"));
+	set_tooltip(_color_button, _("Pick a color for this clip"));
+	set_tooltip(_patch_button, _("View and edit the programs (patches) that this MIDI clip will send to a synth"));
+	set_tooltip(_allow_button, _("Allow this slot to send MIDI patches to a synth"));
+
+	set_tooltip(_follow_count_spinner, _("Number of times to repeat this clip's Follow Length before triggering the Follow-Action"));
+	set_tooltip(_use_follow_length_button, _("Click to use the Follow Length instead of the Clip Length"));
+	set_tooltip(_follow_length_spinner, _("When enabled, the Follow Length is used instead of Clip Length"));
+	set_tooltip(_velocity_slider, _("MIDI Velocity Sensitivity for clip's volume"));
+	set_tooltip(_follow_probability_slider, _("Probability for the Left vs Right Follow-Action to be activated"));
+	set_tooltip(_follow_left, _("Select an action that will occur when this clip ends"));
+	set_tooltip(_follow_right, _("Select an action that will occur when this clip ends"));
+
+	set_tooltip(_launch_style_button, _("Set the behavior of this clip's launch button"));
+	set_tooltip(_quantize_button, _("Clip will wait until the timeline passes this boundary before it triggers"));
+	set_tooltip(_legato_button, _("If selected, this clip can 'take over' playback in the playback position of the prior clip"));
+	set_tooltip(_isolate_button, _("If selected, this slot will not respond to Cue events (either starting or stopping)"));
 }
 
 SlotPropertyTable::~SlotPropertyTable ()
@@ -357,6 +406,38 @@ SlotPropertyTable::set_quantize (BBT_Offset bbo)
 
 	trigger()->set_quantization (bbo);
 }
+
+void
+SlotPropertyTable::patch_button_event ()
+{
+	std::shared_ptr<Trigger> trigr = trigger();
+	if (std::dynamic_pointer_cast<MIDITrigger> (trigr)) {
+		SessionObject* obj = trigr->box ().owner ();
+		std::shared_ptr<Stripable> stripable = obj->session().stripable_by_id (obj->id ());
+		_patch_change_window.reset (std::dynamic_pointer_cast<Route> (stripable), std::dynamic_pointer_cast<MIDITrigger> (trigr));
+		_patch_change_window.present ();
+	}
+}
+
+bool
+SlotPropertyTable::allow_button_event (GdkEvent* ev)
+{
+	if (_ignore_changes) {
+		return false;
+	}
+
+	switch (ev->type) {
+	case GDK_BUTTON_PRESS:
+		trigger()->set_allow_patch_changes (!trigger()->allow_patch_changes());
+		return true;
+
+	default:
+		break;
+	}
+
+	return false;
+}
+
 
 void
 SlotPropertyTable::follow_length_event ()
@@ -393,7 +474,7 @@ SlotPropertyTable::velocity_adjusted ()
 		return;
 	}
 
-	trigger()->set_midi_velocity_effect (_velocity_adjustment.get_value());
+	trigger()->set_velocity_effect (_velocity_adjustment.get_value());
 }
 
 void
@@ -457,6 +538,25 @@ SlotPropertyTable::legato_button_event (GdkEvent* ev)
 	return false;
 }
 
+bool
+SlotPropertyTable::isolate_button_event (GdkEvent* ev)
+{
+	if (_ignore_changes) {
+		return false;
+	}
+
+	switch (ev->type) {
+	case GDK_BUTTON_PRESS:
+		trigger()->set_cue_isolated (!trigger()->cue_isolated());
+		return true;
+
+	default:
+		break;
+	}
+
+	return false;
+}
+
 void
 SlotPropertyTable::set_launch_style (Trigger::LaunchStyle ls)
 {
@@ -474,7 +574,27 @@ SlotPropertyTable::set_follow_action (FollowAction const & fa, uint64_t idx)
 		return;
 	}
 
-	trigger()->set_follow_action (fa, idx);
+	if (idx == 0) {
+		trigger()->set_follow_action0 (fa);
+	} else {
+		trigger()->set_follow_action1 (fa);
+	}
+}
+
+void
+SlotPropertyTable::on_trigger_set ()
+{
+	std::shared_ptr<Trigger> trigr = trigger();
+	if (std::dynamic_pointer_cast<MIDITrigger> (trigr)) {
+		SessionObject* obj = triggerbox ().owner ();
+		std::shared_ptr<Stripable> stripable = obj->session().stripable_by_id (obj->id ());
+		_patch_change_window.reset (std::dynamic_pointer_cast<Route> (stripable), std::dynamic_pointer_cast<MIDITrigger> (trigr));
+		_patch_button.show();
+		_allow_button.show();
+	} else {
+		_patch_button.hide();
+		_allow_button.hide();
+	}
 }
 
 void
@@ -499,11 +619,9 @@ SlotPropertyTable::on_trigger_changed (PropertyChange const& pc)
 	}
 
 	if (triggerbox().data_type () == DataType::AUDIO) {
-		_gain_spinner.show();
-		_gain_label.show();
+		_gain_label.set_text(_("Gain (dB):"));
 	} else {
-		_gain_spinner.hide();
-		_gain_label.hide();
+		_gain_label.set_text(_("Velocity Adj:"));
 	}
 
 	if (pc.contains (Properties::quantization)) {
@@ -530,15 +648,24 @@ SlotPropertyTable::on_trigger_changed (PropertyChange const& pc)
 		_legato_button.set_active_state (trigger()->legato() ? Gtkmm2ext::ExplicitActive : Gtkmm2ext::Off);
 	}
 
+	if (pc.contains (Properties::cue_isolated)) {
+		_isolate_button.set_active_state (trigger()->cue_isolated() ? Gtkmm2ext::ExplicitActive : Gtkmm2ext::Off);
+	}
+
+	if (pc.contains (Properties::allow_patch_changes)) {
+		_patch_button.set_sensitive(trigger()->allow_patch_changes());
+		_allow_button.set_active_state (trigger()->allow_patch_changes() ? Gtkmm2ext::ExplicitActive : Gtkmm2ext::Off);
+	}
+
 	if (pc.contains (Properties::launch_style)) {
 		_launch_style_button.set_active (launch_style_to_string (trigger()->launch_style()));
 	}
 
 	if (pc.contains (Properties::follow_action0)) {
-		_follow_left.set_text (follow_action_to_string (trigger()->follow_action (0)));
+		_follow_left.set_text (follow_action_to_string (trigger()->follow_action0 (), true));
 
 		/* set widget sensitivity based on 'left' follow action */
-		bool follow_widgets_sensitive = trigger()->follow_action (0).type != FollowAction::None;
+		bool follow_widgets_sensitive = trigger()->follow_action0 ().type != FollowAction::None;
 		if (follow_widgets_sensitive) {
 			_follow_right.set_sensitive(true);
 			_follow_count_spinner.set_sensitive(true);
@@ -565,11 +692,11 @@ SlotPropertyTable::on_trigger_changed (PropertyChange const& pc)
 	}
 
 	if (pc.contains (Properties::follow_action1)) {
-		_follow_right.set_text (follow_action_to_string (trigger()->follow_action (1)));
+		_follow_right.set_text (follow_action_to_string (trigger()->follow_action1 (), true));
 	}
 
 	if (pc.contains (Properties::velocity_effect)) {
-		_velocity_adjustment.set_value (trigger()->midi_velocity_effect());
+		_velocity_adjustment.set_value (trigger()->velocity_effect());
 	}
 
 	if (pc.contains (Properties::follow_action_probability)) {
@@ -596,7 +723,7 @@ SlotPropertyWindow::SlotPropertyWindow (TriggerReference tref)
 {
 	TriggerPtr trigger (tref.trigger());
 
-	set_title (string_compose (_("Trigger: %1"), trigger->name()));
+	set_title (string_compose (_("Trigger Slot: %1"), trigger->name()));
 
 	SlotPropertiesBox* slot_prop_box = manage (new SlotPropertiesBox ());
 	slot_prop_box->set_slot (tref);

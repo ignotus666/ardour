@@ -42,6 +42,7 @@ libpbd_sources = [
     'cpus.cc',
     'debug.cc',
     'demangle.cc',
+    'downloader.cc',
     'enumwriter.cc',
     'event_loop.cc',
     'enums.cc',
@@ -51,7 +52,9 @@ libpbd_sources = [
     'file_archive.cc',
     'file_utils.cc',
     'fpu.cc',
+    'glib_event_source.cc',
     'id.cc',
+    'inflater.cc',
     'locale_guard.cc',
     'localtime_r.cc',
     'malign.cc',
@@ -63,6 +66,7 @@ libpbd_sources = [
     'pbd.cc',
     'pcg_rand.cc',
     'pool.cc',
+    'progress.cc',
     'property_list.cc',
     'pthread_utils.cc',
     'reallocpool.cc',
@@ -86,6 +90,7 @@ libpbd_sources = [
     'tlsf.cc',
     'transmitter.cc',
     'undo.cc',
+    'utf8_utils.cc',
     'uuid.cc',
     'whitespace.cc',
     'xml++.cc',
@@ -102,8 +107,6 @@ def options(opt):
                    help='Build internal libs as shared libraries')
 
 def configure(conf):
-    conf.load('compiler_cxx')
-    autowaf.configure(conf)
     autowaf.check_pkg(conf, 'libxml-2.0', uselib_store='XML')
     autowaf.check_pkg(conf, 'sigc++-2.0', uselib_store='SIGCPP', atleast_version='2.0')
     autowaf.check_pkg(conf, 'libcurl', uselib_store='CURL', atleast_version='7.0.0', mandatory=True)
@@ -128,8 +131,6 @@ def configure(conf):
             define_name='HAVE_LOCALTIME_R', execute = False, mandatory=False)
 
     # Boost headers
-    autowaf.check_header(conf, 'cxx', 'boost/shared_ptr.hpp')
-    autowaf.check_header(conf, 'cxx', 'boost/weak_ptr.hpp')
     if Options.options.dist_target == 'mingw':
         conf.check(compiler='cxx',
                    lib='ole32',

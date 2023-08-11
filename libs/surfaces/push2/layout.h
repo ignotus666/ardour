@@ -56,9 +56,20 @@ class Push2Layout : public sigc::trackable, public ArdourCanvas::Container
 	virtual void button_select_release () {}
 	virtual void button_solo () {}
 	virtual void button_mute () {}
+	virtual void button_rhs (int) {} /* scene/notelength buttons aka Right Hand Side */
+	virtual void button_octave_up() {}
+	virtual void button_octave_down() {}
+	virtual void button_page_left() {}
+	virtual void button_page_right() {}
+	virtual void button_stop_press () {}
+	virtual void button_stop_release () {}
+	virtual void button_stop_long_press () {}
 
 	virtual void strip_vpot (int, int) = 0;
 	virtual void strip_vpot_touch (int, bool) = 0;
+
+	virtual void pad_press (int x, int y) {}
+	virtual void pad_release (int x, int y) {}
 
 	virtual void update_meters () {}
 	virtual void update_clocks () {}
@@ -66,9 +77,9 @@ class Push2Layout : public sigc::trackable, public ArdourCanvas::Container
 	std::string name() const { return _name; }
 
   protected:
-	Push2& p2;
-	ARDOUR::Session& session;
-	std::string _name;
+	Push2&           _p2;
+	ARDOUR::Session& _session;
+	std::string      _name;
 };
 
 } /* namespace */

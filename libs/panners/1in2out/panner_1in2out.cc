@@ -75,7 +75,7 @@ panner_descriptor ()
 	return &_descriptor;
 }
 
-Panner1in2out::Panner1in2out (boost::shared_ptr<Pannable> p)
+Panner1in2out::Panner1in2out (std::shared_ptr<Pannable> p)
 	: Panner (p)
 {
 	if (!_pannable->has_state ()) {
@@ -324,13 +324,13 @@ Panner1in2out::distribute_one_automated (AudioBuffer& srcbuf, BufferSet& obufs,
 }
 
 Panner*
-Panner1in2out::factory (boost::shared_ptr<Pannable> p, boost::shared_ptr<Speakers> /* ignored */)
+Panner1in2out::factory (std::shared_ptr<Pannable> p, std::shared_ptr<Speakers> /* ignored */)
 {
 	return new Panner1in2out (p);
 }
 
 XMLNode&
-Panner1in2out::get_state ()
+Panner1in2out::get_state () const
 {
 	XMLNode& root (Panner::get_state ());
 	root.set_property (X_ ("uri"), _descriptor.panner_uri);
@@ -340,7 +340,7 @@ Panner1in2out::get_state ()
 }
 
 string
-Panner1in2out::value_as_string (boost::shared_ptr<const AutomationControl> ac) const
+Panner1in2out::value_as_string (std::shared_ptr<const AutomationControl> ac) const
 {
 	double val = ac->get_value ();
 
@@ -350,7 +350,7 @@ Panner1in2out::value_as_string (boost::shared_ptr<const AutomationControl> ac) c
 			 * This is expressed as a pair of percentage values that ranges from (100,0)
 			 * (hard left) through (50,50) (hard center) to (0,100) (hard right).
 			 *
-			 * This is pretty wierd, but its the way audio engineers expect it. Just remember that
+			 * This is pretty weird, but its the way audio engineers expect it. Just remember that
 			 * the center of the USA isn't Kansas, its (50LA, 50NY) and it will all make sense.
 			 *
 			 * This is designed to be as narrow as possible. Dedicated

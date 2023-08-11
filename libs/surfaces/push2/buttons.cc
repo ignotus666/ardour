@@ -30,18 +30,20 @@
 using namespace ArdourSurface;
 using namespace ARDOUR;
 using namespace PBD;
-using std::cerr;
 
 void
 Push2::build_maps ()
 {
 	/* Pads */
 
-	boost::shared_ptr<Pad> pad;
+	std::shared_ptr<Pad> pad;
+
+	_xy_pad_map.assign (64, std::shared_ptr<Pad>());
 
 #define MAKE_PAD(x,y,nn) \
 	pad.reset (new Pad ((x), (y), (nn))); \
-	nn_pad_map.insert (std::make_pair (pad->extra(), pad));
+	_nn_pad_map.insert (std::make_pair (pad->extra(), pad)); \
+	_xy_pad_map[y * 8 + x] = pad;
 
 	MAKE_PAD (0, 0, 92);
 	MAKE_PAD (0, 1, 93);
@@ -110,20 +112,22 @@ Push2::build_maps ()
 
 	/* Now color buttons */
 
-	boost::shared_ptr<Button> button;
+	std::shared_ptr<Button> button;
 
 #define MAKE_COLOR_BUTTON(i,cc) \
 	button.reset (new ColorButton ((i), (cc))); \
-	cc_button_map.insert (std::make_pair (button->controller_number(), button)); \
-	id_button_map.insert (std::make_pair (button->id, button));
+	_cc_button_map.insert (std::make_pair (button->controller_number(), button)); \
+	_id_button_map.insert (std::make_pair (button->id, button));
+
 #define MAKE_COLOR_BUTTON_PRESS(i,cc,p)\
 	button.reset (new ColorButton ((i), (cc), (p))); \
-	cc_button_map.insert (std::make_pair (button->controller_number(), button)); \
-	id_button_map.insert (std::make_pair (button->id, button))
+	_cc_button_map.insert (std::make_pair (button->controller_number(), button)); \
+	_id_button_map.insert (std::make_pair (button->id, button))
+
 #define MAKE_COLOR_BUTTON_PRESS_RELEASE_LONG(i,cc,p,r,l)                      \
 	button.reset (new ColorButton ((i), (cc), (p), (r), (l))); \
-	cc_button_map.insert (std::make_pair (button->controller_number(), button)); \
-	id_button_map.insert (std::make_pair (button->id, button))
+	_cc_button_map.insert (std::make_pair (button->controller_number(), button)); \
+	_id_button_map.insert (std::make_pair (button->id, button))
 
 	MAKE_COLOR_BUTTON_PRESS (Upper1, 102, &Push2::button_upper_1);
 	MAKE_COLOR_BUTTON_PRESS (Upper2, 103, &Push2::button_upper_2);
@@ -144,7 +148,7 @@ Push2::build_maps ()
 	MAKE_COLOR_BUTTON_PRESS (Master, 28, &Push2::button_master);
 	MAKE_COLOR_BUTTON_PRESS (Mute, 60, &Push2::button_mute);
 	MAKE_COLOR_BUTTON_PRESS_RELEASE_LONG (Solo, 61, &Push2::relax, &Push2::button_solo, &Push2::button_solo_long_press);
-	MAKE_COLOR_BUTTON_PRESS (Stop, 29, &Push2::button_stop);
+	MAKE_COLOR_BUTTON_PRESS_RELEASE_LONG (Stop, 29, &Push2::button_stop_press, &Push2::button_stop_release, &Push2::button_stop_long_press);
 	MAKE_COLOR_BUTTON_PRESS (Fwd32ndT, 43, &Push2::button_fwd32t);
 	MAKE_COLOR_BUTTON_PRESS (Fwd32nd,42 , &Push2::button_fwd32);
 	MAKE_COLOR_BUTTON_PRESS (Fwd16thT, 41, &Push2::button_fwd16t);
@@ -159,20 +163,23 @@ Push2::build_maps ()
 
 #define MAKE_WHITE_BUTTON(i,cc)\
 	button.reset (new WhiteButton ((i), (cc))); \
-	cc_button_map.insert (std::make_pair (button->controller_number(), button)); \
-	id_button_map.insert (std::make_pair (button->id, button))
+	_cc_button_map.insert (std::make_pair (button->controller_number(), button)); \
+	_id_button_map.insert (std::make_pair (button->id, button))
+
 #define MAKE_WHITE_BUTTON_PRESS(i,cc,p)\
 	button.reset (new WhiteButton ((i), (cc), (p))); \
-	cc_button_map.insert (std::make_pair (button->controller_number(), button)); \
-	id_button_map.insert (std::make_pair (button->id, button))
+	_cc_button_map.insert (std::make_pair (button->controller_number(), button)); \
+	_id_button_map.insert (std::make_pair (button->id, button))
+
 #define MAKE_WHITE_BUTTON_PRESS_RELEASE(i,cc,p,r)                                \
 	button.reset (new WhiteButton ((i), (cc), (p), (r))); \
-	cc_button_map.insert (std::make_pair (button->controller_number(), button)); \
-	id_button_map.insert (std::make_pair (button->id, button))
+	_cc_button_map.insert (std::make_pair (button->controller_number(), button)); \
+	_id_button_map.insert (std::make_pair (button->id, button))
+
 #define MAKE_WHITE_BUTTON_PRESS_RELEASE_LONG(i,cc,p,r,l)                      \
 	button.reset (new WhiteButton ((i), (cc), (p), (r), (l))); \
-	cc_button_map.insert (std::make_pair (button->controller_number(), button)); \
-	id_button_map.insert (std::make_pair (button->id, button))
+	_cc_button_map.insert (std::make_pair (button->controller_number(), button)); \
+	_id_button_map.insert (std::make_pair (button->id, button))
 
 	MAKE_WHITE_BUTTON (TapTempo, 3);
 	MAKE_WHITE_BUTTON_PRESS (Metronome, 9, &Push2::button_metronome);
@@ -201,7 +208,7 @@ Push2::build_maps ()
 	MAKE_WHITE_BUTTON_PRESS (Scale, 58, &Push2::button_scale_press);
 	MAKE_WHITE_BUTTON_PRESS (Layout, 31, &Push2::button_layout_press);
 	MAKE_WHITE_BUTTON (Note, 50);
-	MAKE_WHITE_BUTTON (Session, 51);
+	MAKE_WHITE_BUTTON_PRESS (Session, 51, &Push2::button_session);
 	MAKE_WHITE_BUTTON (Layout, 31);
 	MAKE_WHITE_BUTTON_PRESS (OctaveUp, 55, &Push2::button_octave_up);
 	MAKE_WHITE_BUTTON_PRESS (PageRight, 63, &Push2::button_page_right);
@@ -365,12 +372,12 @@ Push2::button_play ()
 	}
 
 	if (_modifier_state & ModSelect) {
-		if (in_range_select) {
-			in_range_select = true;
+		if (_in_range_select) {
+			_in_range_select = true;
 			access_action ("Common/start-range-from-playhead");
 		} else {
 			access_action ("Common/finish-range-from-playhead");
-			in_range_select = false;
+			_in_range_select = false;
 		}
 		return;
 	}
@@ -403,13 +410,15 @@ Push2::button_down ()
 void
 Push2::button_page_right ()
 {
-	ScrollTimeline (0.75);
+	_current_layout->button_page_right();
+	// ScrollTimeline (0.75);
 }
 
 void
 Push2::button_page_left ()
 {
-	ScrollTimeline (-0.75);
+	_current_layout->button_page_left();
+	// ScrollTimeline (-0.75);
 }
 
 void
@@ -463,15 +472,15 @@ Push2::button_new ()
 {
 	access_action ("Common/start-range-from-playhead");
 
-	id_button_map[New]->set_color (LED::White);
-	id_button_map[New]->set_state (LED::NoTransition);
-	write (id_button_map[New]->state_msg());
+	_id_button_map[New]->set_color (LED::White);
+	_id_button_map[New]->set_state (LED::NoTransition);
+	write (_id_button_map[New]->state_msg());
 
 	/* blink the button for the other half of this operation */
 
-	id_button_map[FixedLength]->set_color (LED::White);
-	id_button_map[FixedLength]->set_state (LED::Blinking4th);
-	write (id_button_map[FixedLength]->state_msg());
+	_id_button_map[FixedLength]->set_color (LED::White);
+	_id_button_map[FixedLength]->set_state (LED::Blinking4th);
+	write (_id_button_map[FixedLength]->state_msg());
 }
 
 
@@ -482,12 +491,12 @@ Push2::button_fixed_length ()
 
 	/* turn off both buttons for this operation */
 
-	id_button_map[New]->set_color (LED::Black);
-	id_button_map[New]->set_state (LED::NoTransition);
-	write (id_button_map[New]->state_msg());
-	id_button_map[FixedLength]->set_color (LED::Black);
-	id_button_map[FixedLength]->set_state (LED::NoTransition);
-	write (id_button_map[FixedLength]->state_msg());
+	_id_button_map[New]->set_color (LED::Black);
+	_id_button_map[New]->set_state (LED::NoTransition);
+	write (_id_button_map[New]->state_msg());
+	_id_button_map[FixedLength]->set_color (LED::Black);
+	_id_button_map[FixedLength]->set_state (LED::NoTransition);
+	write (_id_button_map[FixedLength]->state_msg());
 }
 
 void
@@ -499,6 +508,14 @@ Push2::button_browse ()
 void
 Push2::button_clip ()
 {
+}
+
+void
+Push2::button_session ()
+{
+	if (_current_layout != _cue_layout) {
+		set_current_layout (_cue_layout);
+	}
 }
 
 void
@@ -526,57 +543,89 @@ Push2::button_undo ()
 void
 Push2::button_fwd32t ()
 {
-	const int n = (_modifier_state & ModShift) ? 8 : 0;
-	goto_nth_marker (0+n);
+	if (_current_layout == _cue_layout) {
+		_cue_layout->button_rhs (0);
+	} else {
+		const int n = (_modifier_state & ModShift) ? 8 : 0;
+		goto_nth_marker (0+n);
+	}
 }
 
 void
 Push2::button_fwd32 ()
 {
-	const int n = (_modifier_state & ModShift) ? 8 : 0;
-	goto_nth_marker (1+n);
+	if (_current_layout == _cue_layout) {
+		_cue_layout->button_rhs (1);
+	} else {
+		const int n = (_modifier_state & ModShift) ? 8 : 0;
+		goto_nth_marker (1+n);
+	}
 }
 
 void
 Push2::button_fwd16t ()
 {
-	const int n = (_modifier_state & ModShift) ? 8 : 0;
-	goto_nth_marker (2+n);
+	if (_current_layout == _cue_layout) {
+		_cue_layout->button_rhs (2);
+	} else {
+		const int n = (_modifier_state & ModShift) ? 8 : 0;
+		goto_nth_marker (2+n);
+	}
 }
 
 void
 Push2::button_fwd16 ()
 {
-	const int n = (_modifier_state & ModShift) ? 8 : 0;
-	goto_nth_marker (3+n);
+	if (_current_layout == _cue_layout) {
+		_cue_layout->button_rhs (3);
+	} else {
+		const int n = (_modifier_state & ModShift) ? 8 : 0;
+		goto_nth_marker (3+n);
+	}
 }
 
 void
 Push2::button_fwd8t ()
 {
-	const int n = (_modifier_state & ModShift) ? 8 : 0;
-	goto_nth_marker (4+n);
+	if (_current_layout == _cue_layout) {
+		_cue_layout->button_rhs (4);
+	} else {
+		const int n = (_modifier_state & ModShift) ? 8 : 0;
+		goto_nth_marker (4+n);
+	}
 }
 
 void
 Push2::button_fwd8 ()
 {
-	const int n = (_modifier_state & ModShift) ? 8 : 0;
-	goto_nth_marker (5+n);
+	if (_current_layout == _cue_layout) {
+		_cue_layout->button_rhs (5);
+	} else {
+		const int n = (_modifier_state & ModShift) ? 8 : 0;
+		goto_nth_marker (5+n);
+	}
 }
 
 void
 Push2::button_fwd4t ()
 {
-	const int n = (_modifier_state & ModShift) ? 8 : 0;
-	goto_nth_marker (6+n);
+	if (_current_layout == _cue_layout) {
+		_cue_layout->button_rhs (6);
+	} else {
+		const int n = (_modifier_state & ModShift) ? 8 : 0;
+		goto_nth_marker (6+n);
+	}
 }
 
 void
 Push2::button_fwd4 ()
 {
-	const int n = (_modifier_state & ModShift) ? 8 : 0;
-	goto_nth_marker (7+n);
+	if (_current_layout == _cue_layout) {
+		_cue_layout->button_rhs (7);
+	} else {
+		const int n = (_modifier_state & ModShift) ? 8 : 0;
+		goto_nth_marker (7+n);
+	}
 }
 
 void
@@ -586,10 +635,29 @@ Push2::button_add_track ()
 }
 
 void
-Push2::button_stop ()
+Push2::button_stop_press ()
 {
+	_stop_down = true;
+	_current_layout->button_stop_press ();
+	/* XXX this needs a better binding */
 	/* close current window */
-	access_action ("Main/close-current-dialog");
+	// access_action ("Main/close-current-dialog");
+}
+
+void
+Push2::button_stop_release ()
+{
+	_stop_down = false;
+	_current_layout->button_stop_release ();
+}
+
+void
+Push2::button_stop_long_press ()
+{
+	_current_layout->button_stop_long_press ();
+	/* XXX this needs a better binding */
+	/* close current window */
+	// access_action ("Main/close-current-dialog");
 }
 
 void
@@ -613,9 +681,8 @@ Push2::button_shift_long_press ()
 void
 Push2::button_select_press ()
 {
-	cerr << "start select\n";
 	_modifier_state = ModifierState (_modifier_state | ModSelect);
-	boost::shared_ptr<Button> b = id_button_map[Select];
+	std::shared_ptr<Button> b = _id_button_map[Select];
 	b->set_color (Push2::LED::White);
 	b->set_state (Push2::LED::Blinking16th);
 	write (b->state_msg());
@@ -627,9 +694,8 @@ void
 Push2::button_select_release ()
 {
 	if (_modifier_state & ModSelect) {
-		cerr << "end select\n";
 		_modifier_state = ModifierState (_modifier_state & ~(ModSelect));
-		boost::shared_ptr<Button> b = id_button_map[Select];
+		std::shared_ptr<Button> b = _id_button_map[Select];
 		b->timeout_connection.disconnect ();
 		b->set_color (Push2::LED::White);
 		b->set_state (Push2::LED::OneShot24th);
@@ -648,9 +714,9 @@ Push2::button_select_long_press ()
 bool
 Push2::button_long_press_timeout (ButtonID id)
 {
-	if (buttons_down.find (id) != buttons_down.end()) {
+	if (_buttons_down.find (id) != _buttons_down.end()) {
 		DEBUG_TRACE (DEBUG::Push2, string_compose ("long press timeout for %1, invoking method\n", id));
-		boost::shared_ptr<Button> button = id_button_map[id];
+		std::shared_ptr<Button> button = _id_button_map[id];
 		(this->*button->long_press_method) ();
 	} else {
 		DEBUG_TRACE (DEBUG::Push2, string_compose ("long press timeout for %1, expired/cancelled\n", id));
@@ -660,13 +726,13 @@ Push2::button_long_press_timeout (ButtonID id)
 	/* whichever button this was, we've used it ... don't invoke the
 	   release action.
 	*/
-	consumed.insert (id);
+	_consumed.insert (id);
 
 	return false; /* don't get called again */
 }
 
 void
-Push2::start_press_timeout (boost::shared_ptr<Button> button, ButtonID id)
+Push2::start_press_timeout (std::shared_ptr<Button> button, ButtonID id)
 {
 	assert (button);
 	Glib::RefPtr<Glib::TimeoutSource> timeout = Glib::TimeoutSource::create (500); // milliseconds
@@ -677,35 +743,43 @@ Push2::start_press_timeout (boost::shared_ptr<Button> button, ButtonID id)
 void
 Push2::button_octave_down ()
 {
-	if (_modifier_state & ModShift) {
-		octave_shift = 0;
-		return;
-	}
+	if (_current_layout == _scale_layout) {
+		if (_modifier_state & ModShift) {
+			_octave_shift = 0;
+			return;
+		}
 
-	int os = (std::max (-4, octave_shift - 1));
-	if (os != octave_shift) {
-		octave_shift = os;
+		int os = (std::max (-4, _octave_shift - 1));
+		if (os != _octave_shift) {
+			_octave_shift = os;
+		}
+	} else if (_current_layout) {
+		_current_layout->button_octave_up ();
 	}
 }
 
 void
 Push2::button_octave_up ()
 {
-	if (_modifier_state & ModShift) {
-		octave_shift = 0;
-		return;
-	}
+	if (_current_layout == _scale_layout) {
+		if (_modifier_state & ModShift) {
+			_octave_shift = 0;
+			return;
+		}
 
-	int os = (std::min (4, octave_shift + 1));
-	if (os != octave_shift) {
-		octave_shift = os;
+		int os = (std::min (4, _octave_shift + 1));
+		if (os != _octave_shift) {
+			_octave_shift = os;
+		}
+	} else if (_current_layout) {
+		_current_layout->button_octave_up ();
 	}
 }
 
 void
 Push2::button_layout_press ()
 {
-	if (percussion) {
+	if (_percussion) {
 		set_percussive_mode (false);
 	} else {
 		set_percussive_mode (true);
@@ -715,11 +789,11 @@ Push2::button_layout_press ()
 void
 Push2::button_scale_press ()
 {
-	if (_current_layout != scale_layout) {
-		set_current_layout (scale_layout);
+	if (_current_layout != _scale_layout) {
+		set_current_layout (_scale_layout);
 	} else {
 		if (ControlProtocol::first_selected_stripable()) {
-			set_current_layout (mix_layout);
+			set_current_layout (_mix_layout);
 		}
 	}
 }
@@ -727,27 +801,31 @@ Push2::button_scale_press ()
 void
 Push2::button_mix_press ()
 {
-	if (_current_layout == track_mix_layout) {
-		set_current_layout (mix_layout);
+	/* toggle between global mix and track mix layouts */
+	if (_current_layout == _track_mix_layout) {
+		set_current_layout (_mix_layout);
 	} else {
 		if (ControlProtocol::first_selected_stripable()) {
-			set_current_layout (track_mix_layout);
+			set_current_layout (_track_mix_layout);
+		} else {
+			set_current_layout (_mix_layout);
 		}
 	}
+	restore_pad_scale ();
 }
 
 void
 Push2::button_master ()
 {
-	boost::shared_ptr<Stripable> main_out = session->master_out ();
+	std::shared_ptr<Stripable> main_out = session->master_out ();
 
 	if (!main_out) {
 		return;
 	}
 
-	if (_current_layout != track_mix_layout) {
+	if (_current_layout != _track_mix_layout) {
 		ControlProtocol::set_stripable_selection (main_out);
-		set_current_layout (track_mix_layout);
+		set_current_layout (_track_mix_layout);
 	} else {
 		TrackMixLayout* tml = dynamic_cast<TrackMixLayout*> (_current_layout);
 		if (tml->current_stripable() == main_out) {

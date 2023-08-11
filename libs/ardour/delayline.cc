@@ -36,7 +36,7 @@ using namespace PBD;
 using namespace ARDOUR;
 
 DelayLine::DelayLine (Session& s, const std::string& name)
-	: Processor (s, string_compose ("latcomp-%1-%2", name, this), Config->get_default_automation_time_domain())
+	: Processor (s, string_compose ("latcomp-%1-%2", name, this), Temporal::TimeDomainProvider (Config->get_default_automation_time_domain()))
 	, _bsiz (0)
 	, _delay (0)
 	, _pending_delay (0)
@@ -77,23 +77,23 @@ DelayLine::run (BufferSet& bufs, samplepos_t /* start_sample */, samplepos_t /* 
 
 	_pending_flush = false;
 
-	// TODO handle pending_flush.
-
 	/* Audio buffers */
 	if (_buf.size () == bufs.count ().n_audio () && _buf.size () > 0) {
 
 		/* handle delay-changes first */
 		if (delay_diff < 0) {
 			/* delay increases: fade out, insert silence, fade-in */
-			const samplecnt_t fade_in_len = std::min (n_samples, (pframes_t)FADE_LEN);
-			samplecnt_t fade_out_len;
+			const samplecnt_t max_fade_len = std::min<samplecnt_t> (FADE_LEN, n_samples);
+			const samplecnt_t fade_in_len  = max_fade_len;
+			samplecnt_t       fade_out_len = max_fade_len;
 
-			if (_delay < FADE_LEN) {
+			if (_delay < max_fade_len) {
 				/* if old delay was 0 or smaller than new-delay, add some data to fade.
 				 * Add at most (FADE_LEN - _delay) samples, but no more than -delay_diff
 				 */
-				samplecnt_t add = std::min ((samplecnt_t)FADE_LEN - _delay, (samplecnt_t) -delay_diff);
-				fade_out_len = std::min (_delay + add, (samplecnt_t)FADE_LEN);
+				samplecnt_t add = std::min (max_fade_len - _delay, (samplecnt_t)-delay_diff);
+				fade_out_len    = std::min (_delay + add, max_fade_len);
+				assert (fade_out_len >= 0 && add > 0);
 
 				if (add > 0) {
 					AudioDlyBuf::iterator bi = _buf.begin ();
@@ -104,8 +104,6 @@ DelayLine::run (BufferSet& bufs, samplepos_t /* start_sample */, samplepos_t /* 
 					_woff = (_woff + add) & _bsiz_mask;
 					delay_diff += add;
 				}
-			} else {
-				fade_out_len = FADE_LEN;
 			}
 
 			/* fade-out, end of previously written data */
@@ -116,10 +114,14 @@ DelayLine::run (BufferSet& bufs, samplepos_t /* start_sample */, samplepos_t /* 
 					rb[off] *= s / (float) fade_out_len;
 				}
 				/* clear data in rb */
-				// TODO optimize this using memset
-				for (uint32_t s = 0; s < -delay_diff; ++s) {
-					sampleoffset_t off = (_woff + _bsiz + s) & _bsiz_mask;
-					rb[off] = 0.f;
+				if (delay_diff >= 0) {
+					/* do nothing */
+				} else if (_woff - delay_diff <= _bsiz) {
+					memset (&rb[_woff], 0, sizeof (Sample) * -delay_diff);
+				} else {
+					size_t remain = -delay_diff - (_bsiz - _woff);
+					memset (&rb[_woff], 0, sizeof (Sample) * (_bsiz - _woff));
+					memset (rb, 0, sizeof (Sample) * remain);
 				}
 			}
 
@@ -134,17 +136,15 @@ DelayLine::run (BufferSet& bufs, samplepos_t /* start_sample */, samplepos_t /* 
 			}
 		} else if (delay_diff > 0) {
 			/* delay decreases: cross-fade, if possible */
-			const samplecnt_t fade_out_len = std::min (_delay, (samplecnt_t)FADE_LEN);
-			const samplecnt_t fade_in_len = std::min (n_samples, (pframes_t)FADE_LEN);
-			const samplecnt_t xfade_len = std::min (fade_out_len, fade_in_len);
+			const samplecnt_t fade_out_len = std::min<samplecnt_t> (_delay, FADE_LEN);
+			const samplecnt_t fade_in_len  = std::min<samplecnt_t> (n_samples, FADE_LEN);
+			const samplecnt_t xfade_len    = std::min (fade_out_len, fade_in_len);
 
 			AudioDlyBuf::iterator bi = _buf.begin ();
 			for (BufferSet::audio_iterator i = bufs.audio_begin (); i != bufs.audio_end (); ++i, ++bi) {
 				Sample* rb = (*bi).get ();
 				Sample* src = i->data ();
 
-				// TODO consider handling fade_out & fade_in separately
-				// if fade_out_len < fade_in_len.
 				for (uint32_t s = 0; s < xfade_len; ++s) {
 					sampleoffset_t off = (_roff + s) & _bsiz_mask;
 					const gain_t g = s / (float) xfade_len;
@@ -167,7 +167,7 @@ DelayLine::run (BufferSet& bufs, samplepos_t /* start_sample */, samplepos_t /* 
 
 		if (pending_flush) {
 			/* fade out data after read-pointer, clear buffer until write-pointer */
-			const samplecnt_t fade_out_len = std::min (_delay, (samplecnt_t)FADE_LEN);
+			const samplecnt_t fade_out_len = std::min<samplecnt_t> (_delay, FADE_LEN);
 
 			for (AudioDlyBuf::iterator i = _buf.begin(); i != _buf.end (); ++i) {
 				Sample* rb = (*i).get ();
@@ -182,7 +182,6 @@ DelayLine::run (BufferSet& bufs, samplepos_t /* start_sample */, samplepos_t /* 
 				}
 				assert (_woff == ((_roff + s) & _bsiz_mask));
 			}
-			// TODO consider adding a fade-in to bufs
 		}
 
 		/* delay audio buffers */
@@ -221,21 +220,21 @@ DelayLine::run (BufferSet& bufs, samplepos_t /* start_sample */, samplepos_t /* 
 		_roff = 0;
 	}
 
-	if (_midi_buf.get ()) {
-		for (BufferSet::midi_iterator i = bufs.midi_begin (); i != bufs.midi_end (); ++i) {
-			if (i != bufs.midi_begin ()) { break; } // XXX only one buffer for now
-
-			MidiBuffer* dly = _midi_buf.get ();
+	if (_midi_buf.size () >= bufs.count ().n_midi () /* && (_delay !=0 || delay_diff != 0) */) {
+		MidiDlyBuf::iterator bi = _midi_buf.begin ();
+		for (BufferSet::midi_iterator i = bufs.midi_begin (); i != bufs.midi_end (); ++i, ++bi) {
+			std::shared_ptr<ARDOUR::MidiBuffer> dly = *bi;
 			MidiBuffer& mb (*i);
 			if (pending_flush) {
 				dly->silence (n_samples);
 			}
 
-			// If the delay time changes, iterate over all events in the dly-buffer
-			// and adjust the time in-place. <= 0 becomes 0.
-			//
-			// iterate over all events in dly-buffer and subtract one cycle
-			// (n_samples) from the timestamp, bringing them closer to de-queue.
+			/* If the delay time changes, iterate over all events in the dly-buffer
+			 * and adjust the time in-place. <= 0 becomes 0.
+			 *
+			 * iterate over all events in dly-buffer and subtract one cycle
+			 * (n_samples) from the timestamp, bringing them closer to de-queue.
+			 */
 			for (MidiBuffer::iterator m = dly->begin (); m != dly->end (); ++m) {
 				MidiBuffer::TimeType *t = m.timeptr ();
 				if (*t > n_samples + delay_diff) {
@@ -246,15 +245,16 @@ DelayLine::run (BufferSet& bufs, samplepos_t /* start_sample */, samplepos_t /* 
 			}
 
 			if (_delay != 0) {
-				// delay events in current-buffer, in place.
+				/* delay events in current-buffer, in place. */
 				for (MidiBuffer::iterator m = mb.begin (); m != mb.end (); ++m) {
 					MidiBuffer::TimeType *t = m.timeptr ();
 					*t += _delay;
 				}
 			}
 
-			// move events from dly-buffer into current-buffer until n_samples
-			// and remove them from the dly-buffer
+			/* move events from dly-buffer into current-buffer until n_samples
+			 * and remove them from the dly-buffer
+			 */
 			for (MidiBuffer::iterator m = dly->begin (); m != dly->end ();) {
 				const Evoral::Event<MidiBuffer::TimeType> ev (*m, false);
 				if (ev.time () >= n_samples) {
@@ -269,14 +269,19 @@ DelayLine::run (BufferSet& bufs, samplepos_t /* start_sample */, samplepos_t /* 
 			 * (ie '_global_port_buffer_offset + _port_buffer_offset' - midi_port.cc)
 			 */
 			if (_delay != 0) {
-				// move events after n_samples from current-buffer into dly-buffer
-				// and trim current-buffer after n_samples
+				/* move events after n_samples from current-buffer into dly-buffer
+				 * and trim current-buffer after n_samples
+				 */
 				for (MidiBuffer::iterator m = mb.begin (); m != mb.end ();) {
 					const Evoral::Event<MidiBuffer::TimeType> ev (*m, false);
 					if (ev.time () < n_samples) {
 						++m;
 						continue;
 					}
+					/* insert_event() is expensive, if delay_diff is zero, the
+					 * event must be later than the last event in the delay-buffer
+					 * and push_back() would be preferable.
+					 */
 					dly->insert_event (ev);
 					m = mb.erase (m);
 				}
@@ -414,10 +419,13 @@ DelayLine::configure_io (ChanCount in, ChanCount out)
 			string_compose ("configure IO: %1 Ain: %2 Aout: %3 Min: %4 Mout: %5\n",
 				name (), in.n_audio (), out.n_audio (), in.n_midi (), out.n_midi ()));
 
-	// TODO support multiple midi buffers
-	if (in.n_midi () > 0 && !_midi_buf) {
-		_midi_buf.reset (new MidiBuffer (16384));
+	while (in.n_midi () > _midi_buf.size ()) {
+		_midi_buf.push_back (std::shared_ptr<MidiBuffer> (new MidiBuffer (16384)));
 	}
+	while (in.n_midi () < _midi_buf.size ()) {
+		_midi_buf.pop_back ();
+	}
+
 #ifndef NDEBUG
 	lm.release ();
 #endif
@@ -432,7 +440,7 @@ DelayLine::flush ()
 }
 
 XMLNode&
-DelayLine::state ()
+DelayLine::state () const
 {
 	XMLNode& node (Processor::state ());
 	node.set_property ("type", "delay");

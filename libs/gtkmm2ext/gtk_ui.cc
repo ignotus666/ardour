@@ -96,20 +96,15 @@ UI::UI (string application_name, string thread_name, int *argc, char ***argv)
 	}
 
 	/* the GUI event loop runs in the main thread of the app,
-	   which is assumed to have called this.
-	*/
-
-	run_loop_thread = Threads::Thread::self();
+	 * which is assumed to have called this.
+	 */
+	_run_loop_thread = PBD::Thread::self ();
 
 	/* store "this" as the UI-for-thread of this thread, same argument
 	   as for previous line.
 	*/
 
 	set_event_loop_for_thread (this);
-
-	/* we will be receiving requests */
-
-	EventLoop::register_request_buffer_factory ("gui", request_buffer_factory);
 
 	/* attach our request source to the default main context */
 
@@ -144,9 +139,9 @@ UI::~UI ()
 }
 
 bool
-UI::caller_is_ui_thread ()
+UI::caller_is_ui_thread () const
 {
-	return Threads::Thread::self() == run_loop_thread;
+	return caller_is_self ();
 }
 
 int
@@ -390,7 +385,7 @@ UI::set_tip (Widget *w, const gchar *tip, const gchar *hlp)
 	}
 
 	if (action) {
-		/* get_bindings_from_widget_heirarchy */
+		/* get_bindings_from_widget_hierarchy */
 		Widget* ww = w;
 		Bindings* bindings = NULL;
 		do {

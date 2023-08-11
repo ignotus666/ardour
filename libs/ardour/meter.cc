@@ -42,7 +42,7 @@ using namespace std;
 using namespace ARDOUR;
 
 PeakMeter::PeakMeter (Session& s, const std::string& name)
-	: Processor (s, string_compose ("meter-%1", name), Temporal::AudioTime)
+	: Processor (s, string_compose ("meter-%1", name), Temporal::TimeDomainProvider (Temporal::AudioTime))
 {
 	Kmeterdsp::init  (s.nominal_sample_rate ());
 	Iec1ppmdsp::init (s.nominal_sample_rate ());
@@ -53,8 +53,8 @@ PeakMeter::PeakMeter (Session& s, const std::string& name)
 	_meter_type     = MeterPeak;
 	_bufcnt         = 0;
 
-	g_atomic_int_set (&_reset_dpm, 1);
-	g_atomic_int_set (&_reset_max, 1);
+	_reset_dpm.store (1);
+	_reset_max.store (1);
 }
 
 PeakMeter::~PeakMeter ()
@@ -96,9 +96,11 @@ PeakMeter::run (BufferSet& bufs, samplepos_t /*start_sample*/, samplepos_t /*end
 		return;
 	}
 
-	const bool reset_max = g_atomic_int_compare_and_exchange (&_reset_max, 1, 0);
+	int canderef (1);
+	const bool reset_max = _reset_max.compare_exchange_strong (canderef, 0);
 	/* max-peak is set from DPM's peak-buffer, so DPM also needs to be reset in sync */
-	const bool reset_dpm = g_atomic_int_compare_and_exchange (&_reset_dpm, 1, 0) || reset_max;
+	canderef = 1;
+	const bool reset_dpm = _reset_dpm.compare_exchange_strong (canderef, 0) || reset_max;
 
 	const uint32_t n_audio = min (current_meters.n_audio (), bufs.count ().n_audio ());
 	const uint32_t n_midi  = min (current_meters.n_midi (), bufs.count ().n_midi ());
@@ -202,7 +204,7 @@ void
 PeakMeter::reset ()
 {
 	if (_active || _pending_active) {
-		g_atomic_int_set (&_reset_dpm, 1);
+		_reset_dpm.store (1);
 	} else {
 		for (size_t i = 0; i < _peak_power.size (); ++i) {
 			_peak_power[i]  = -std::numeric_limits<float>::infinity ();
@@ -227,7 +229,7 @@ void
 PeakMeter::reset_max ()
 {
 	if (_active || _pending_active) {
-		g_atomic_int_set (&_reset_max, 1);
+		_reset_max.store (1);
 		return;
 	}
 	for (size_t i = 0; i < _max_peak_signal.size (); ++i) {
@@ -269,6 +271,23 @@ PeakMeter::configure_io (ChanCount in, ChanCount out)
 void
 PeakMeter::reflect_inputs (const ChanCount& in)
 {
+	if (!_configured || in > _max_n_meters) {
+		/* meter has to be configured at least once, and
+		 * Route has to call ::set_max_channels after successful
+		 * configure_processors.
+		 */
+		return;
+	}
+
+	/* In theory this cannot happen. After an initial successful
+	 * configuration, Route::configure_processors_unlocked will revert
+	 * to a prior config in case of an error.
+	 */
+	assert (in <= _max_n_meters);
+	if (in > _max_n_meters) {
+		return;
+	}
+
 	reset ();
 	current_meters = in;
 	reset_max ();
@@ -283,6 +302,8 @@ PeakMeter::emit_configuration_changed ()
 void
 PeakMeter::set_max_channels (const ChanCount& chn)
 {
+	_max_n_meters = chn;
+
 	uint32_t const limit   = chn.n_total ();
 	const size_t   n_audio = chn.n_audio ();
 
@@ -342,7 +363,7 @@ PeakMeter::set_max_channels (const ChanCount& chn)
 float
 PeakMeter::meter_level (uint32_t n, MeterType type)
 {
-	if (g_atomic_int_get (&_reset_max)) {
+	if (_reset_max.load ()) {
 		if (n < current_meters.n_midi () && type != MeterMaxPeak) {
 			return 0;
 		} else {
@@ -461,7 +482,7 @@ PeakMeter::set_meter_type (MeterType t)
 }
 
 XMLNode&
-PeakMeter::state ()
+PeakMeter::state () const
 {
 	XMLNode& node (Processor::state ());
 	node.set_property ("type", "meter");

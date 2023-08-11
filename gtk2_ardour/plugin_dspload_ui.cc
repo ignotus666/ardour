@@ -18,7 +18,7 @@
 
 #include "gtkmm2ext/utils.h"
 
-#include "ardour/session.h"
+#include "ardour/audioengine.h"
 
 #include "plugin_dspload_ui.h"
 #include "timers.h"
@@ -28,12 +28,12 @@
 using namespace Gtkmm2ext;
 using namespace Gtk;
 
-PluginLoadStatsGui::PluginLoadStatsGui (boost::shared_ptr<ARDOUR::PluginInsert> insert)
-	: _insert (insert)
-	, _lbl_min ("", ALIGN_RIGHT, ALIGN_CENTER)
-	, _lbl_max ("", ALIGN_RIGHT, ALIGN_CENTER)
-	, _lbl_avg ("", ALIGN_RIGHT, ALIGN_CENTER)
-	, _lbl_dev ("", ALIGN_RIGHT, ALIGN_CENTER)
+PluginLoadStatsGui::PluginLoadStatsGui (std::shared_ptr<ARDOUR::PlugInsertBase> pib)
+	: _pib (pib)
+	, _lbl_min ("", ALIGN_END, ALIGN_CENTER)
+	, _lbl_max ("", ALIGN_END, ALIGN_CENTER)
+	, _lbl_avg ("", ALIGN_END, ALIGN_CENTER)
+	, _lbl_dev ("", ALIGN_END, ALIGN_CENTER)
 	, _reset_button (_("Reset"))
 	, _valid (false)
 {
@@ -43,13 +43,13 @@ PluginLoadStatsGui::PluginLoadStatsGui (boost::shared_ptr<ARDOUR::PluginInsert> 
 	set_size_request_to_display_given_text (_lbl_dev, string_compose (_("%1 [ms]"), 99.123), 0, 0);
 	_darea.set_size_request (360, 32); // TODO  max (320, 360 * UIConfiguration::instance().get_ui_scale ())
 
-	attach (*manage (new Gtk::Label (_("Minimum"), ALIGN_RIGHT, ALIGN_CENTER)),
+	attach (*manage (new Gtk::Label (_("Minimum"), ALIGN_END, ALIGN_CENTER)),
 			0, 1, 0, 1, Gtk::FILL, Gtk::SHRINK, 2, 0);
-	attach (*manage (new Gtk::Label (_("Maximum"), ALIGN_RIGHT, ALIGN_CENTER)),
+	attach (*manage (new Gtk::Label (_("Maximum"), ALIGN_END, ALIGN_CENTER)),
 			0, 1, 1, 2, Gtk::FILL, Gtk::SHRINK, 2, 0);
-	attach (*manage (new Gtk::Label (_("Average"), ALIGN_RIGHT, ALIGN_CENTER)),
+	attach (*manage (new Gtk::Label (_("Average"), ALIGN_END, ALIGN_CENTER)),
 			0, 1, 2, 3, Gtk::FILL, Gtk::SHRINK, 2, 0);
-	attach (*manage (new Gtk::Label (_("Std.Dev"), ALIGN_RIGHT, ALIGN_CENTER)),
+	attach (*manage (new Gtk::Label (_("Std.Dev"), ALIGN_END, ALIGN_CENTER)),
 			0, 1, 3, 4, Gtk::FILL, Gtk::SHRINK, 2, 0);
 
 	attach (_lbl_min, 1, 2, 0, 1, Gtk::FILL, Gtk::SHRINK, 2, 0);
@@ -81,7 +81,7 @@ PluginLoadStatsGui::stop_updating () {
 void
 PluginLoadStatsGui::update_cpu_label()
 {
-	if (_insert->get_stats (_min, _max, _avg, _dev)) {
+	if (_pib->get_stats (_min, _max, _avg, _dev)) {
 		_valid = true;
 		_lbl_min.set_text (string_compose (_("%1 [ms]"), rint (_min / 10.) / 100.));
 		_lbl_max.set_text (string_compose (_("%1 [ms]"), rint (_max / 10.) / 100.));
@@ -124,7 +124,7 @@ PluginLoadStatsGui::draw_bar (GdkEventExpose* ev)
 
 	const int w = x1 - x0;
 	const int h = y1 - y0;
-	const double cycle_ms = 1000. * _insert->session().get_block_size() / (double)_insert->session().nominal_sample_rate();
+	const double cycle_ms = ARDOUR::AudioEngine::instance()->usecs_per_cycle () / 1000.0;
 
 	const double base_mult = std::max (1.0, cycle_ms / 2.0);
 	const double log_base = log1p (base_mult);
@@ -197,12 +197,12 @@ PluginLoadStatsGui::draw_bar (GdkEventExpose* ev)
 
 		const int dx = w * i / 9.; // == DEFLECT (v)
 
-		cairo_move_to (cr, x0 + dx - .5, y0);
-		cairo_line_to (cr, x0 + dx - .5, y1);
+		cairo_move_to (cr, x0 + dx + .5, y0);
+		cairo_line_to (cr, x0 + dx + .5, y1);
 		cairo_set_source_rgba (cr, 1., 1., 1., 1.);
 		cairo_stroke (cr);
 
-		cairo_move_to (cr, x0 + dx - .5 * text_width, y1 + 1);
+		cairo_move_to (cr, x0 + dx + .5 * text_width, y1 + 1);
 		cairo_set_source_rgb (cr, fg.get_red_p (), fg.get_green_p (), fg.get_blue_p ());
 		pango_cairo_show_layout (cr, layout->gobj ());
 	}
@@ -225,7 +225,7 @@ PluginLoadStatsGui::draw_bar (GdkEventExpose* ev)
 		double xd0 = DEFLECT((_avg - _dev) / 1000.);
 		double xd1 = DEFLECT((_avg + _dev) / 1000.);
 
-		cairo_move_to (cr, x0 + xavg - .5, y0 - 1);
+		cairo_move_to (cr, x0 + xavg + .5, y0 - 1);
 		cairo_rel_line_to (cr, -5, -5);
 		cairo_rel_line_to (cr, 10, 0);
 		cairo_close_path (cr);

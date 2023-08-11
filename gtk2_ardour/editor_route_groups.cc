@@ -19,24 +19,17 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
-#ifdef WAF_BUILD
-#include "gtk2ardour-config.h"
-#endif
-
 #include <cstdlib>
-#include <cmath>
-
-#include "fix_carbon.h"
 
 #include <gtkmm/stock.h>
 
+#include "gtkmm2ext/colors.h"
 #include "gtkmm2ext/gtk_ui.h"
 #include "gtkmm2ext/cell_renderer_color_selector.h"
 
 #include "widgets/tooltips.h"
 
 #include "ardour/route_group.h"
-#include "ardour/route.h"
 #include "ardour/session.h"
 
 #include "ardour_ui.h"
@@ -46,17 +39,13 @@
 #include "editor_routes.h"
 #include "gui_thread.h"
 #include "keyboard.h"
-#include "marker.h"
 #include "route_group_dialog.h"
-#include "route_time_axis.h"
 #include "time_axis_view.h"
-#include "utils.h"
 
 #include "pbd/i18n.h"
 
 using namespace std;
 using namespace ARDOUR;
-using namespace ARDOUR_UI_UTILS;
 using namespace ArdourWidgets;
 using namespace PBD;
 using namespace Gtk;
@@ -132,8 +121,8 @@ EditorRouteGroups::EditorRouteGroups (Editor* e)
 
 	_display.set_headers_visible (true);
 
-	color_dialog.get_colorsel()->set_has_opacity_control (false);
-	color_dialog.get_colorsel()->set_has_palette (true);
+	color_dialog.get_color_selection()->set_has_opacity_control (false);
+	color_dialog.get_color_selection()->set_has_palette (true);
 	color_dialog.get_ok_button()->signal_clicked().connect (sigc::bind (sigc::mem_fun (color_dialog, &Gtk::Dialog::response), RESPONSE_ACCEPT));
 	color_dialog.get_cancel_button()->signal_clicked().connect (sigc::bind (sigc::mem_fun (color_dialog, &Gtk::Dialog::response), RESPONSE_CANCEL));
 
@@ -268,13 +257,13 @@ EditorRouteGroups::button_press_event (GdkEventButton* ev)
 	switch (GPOINTER_TO_UINT (column->get_data (X_("colnum")))) {
 	case 0:
 		c =  (*iter)[_columns.gdkcolor];
-		color_dialog.get_colorsel()->set_previous_color (c);
-		color_dialog.get_colorsel()->set_current_color (c);
+		color_dialog.get_color_selection()->set_previous_color (c);
+		color_dialog.get_color_selection()->set_current_color (c);
 
 		switch (color_dialog.run()) {
 			case RESPONSE_ACCEPT:
-				c = color_dialog.get_colorsel()->get_current_color();
-				GroupTabs::set_group_color (group, gdk_color_to_rgba (c));
+				c = color_dialog.get_color_selection()->get_current_color();
+				GroupTabs::set_group_color (group, Gtkmm2ext::gdk_color_to_rgba (c));
 				break;
 
 			default:
@@ -404,7 +393,7 @@ EditorRouteGroups::row_change (const Gtk::TreeModel::Path&, const Gtk::TreeModel
 
 	group->apply_changes (plist);
 
-	GroupTabs::set_group_color ((*iter)[_columns.routegroup], gdk_color_to_rgba ((*iter)[_columns.gdkcolor]));
+	GroupTabs::set_group_color ((*iter)[_columns.routegroup], Gtkmm2ext::gdk_color_to_rgba ((*iter)[_columns.gdkcolor]));
 }
 
 void
@@ -427,7 +416,7 @@ EditorRouteGroups::add (RouteGroup* group)
 	row[_columns.is_visible] = !group->is_hidden();
 
 	Gdk::Color c;
-	set_color_from_rgba (c, GroupTabs::group_color (group));
+	Gtkmm2ext::set_color_from_rgba (c, GroupTabs::group_color (group));
 	row[_columns.gdkcolor] = c;
 
 	_in_row_change = true;
@@ -501,7 +490,7 @@ EditorRouteGroups::property_changed (RouteGroup* group, const PropertyChange&)
 			(*iter)[_columns.is_visible] = !group->is_hidden();
 
 			Gdk::Color c;
-			set_color_from_rgba (c, GroupTabs::group_color (group));
+			Gtkmm2ext::set_color_from_rgba (c, GroupTabs::group_color (group));
 			(*iter)[_columns.gdkcolor] = c;
 
 			break;
@@ -515,7 +504,7 @@ EditorRouteGroups::property_changed (RouteGroup* group, const PropertyChange&)
 			if (group->is_hidden ()) {
 				_editor->hide_track_in_display (*i);
 			} else {
-				_editor->_routes->show_track_in_display (**i);
+				_editor->show_track_in_display (*i);
 			}
 		}
 	}

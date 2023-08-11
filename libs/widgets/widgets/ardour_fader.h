@@ -27,6 +27,7 @@
 #include <gtkmm/adjustment.h>
 
 #include "gtkmm2ext/cairo_widget.h"
+#include "gtkmm2ext/colors.h"
 #include "widgets/visibility.h"
 
 namespace ArdourWidgets {
@@ -38,8 +39,8 @@ public:
 	virtual ~ArdourFader ();
 	static void flush_pattern_cache();
 
-	sigc::signal<void> StartGesture;
-	sigc::signal<void> StopGesture;
+	sigc::signal<void,int> StartGesture;
+	sigc::signal<void,int> StopGesture;
 	sigc::signal<void> OnExpose;
 
 	void set_default_value (float);
@@ -53,6 +54,11 @@ public:
 
 	Tweaks tweaks() const { return _tweaks; }
 	void set_tweaks (Tweaks);
+
+	void set_bg (Gtkmm2ext::Color);
+	void set_fg (Gtkmm2ext::Color);
+	void unset_bg ();
+	void unset_fg ();
 
 protected:
 	void on_size_request (GtkRequisition*);
@@ -99,12 +105,18 @@ private:
 	sigc::connection _parent_style_change;
 	Widget * _current_parent;
 	Gdk::Color get_parent_bg ();
+	Gtkmm2ext::Color explicit_bg;
+	bool have_explicit_bg;
+	Gtkmm2ext::Color explicit_fg;
+	bool have_explicit_fg;
 
 	void create_patterns();
 	void adjustment_changed ();
 	void set_adjustment_from_event (GdkEventButton *);
 	void update_unity_position ();
 	int  display_span ();
+	Gdk::Color bg_color (Gtk::StateType);
+	Gdk::Color fg_color (Gtk::StateType);
 
 	struct FaderImage {
 		cairo_pattern_t* pattern;

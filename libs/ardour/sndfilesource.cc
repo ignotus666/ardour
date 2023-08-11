@@ -36,6 +36,13 @@
 
 #include <glib.h>
 #include "pbd/gstdio_compat.h"
+#include "pbd/progress.h"
+
+#ifdef COMPILER_MSVC
+#include <sys/utime.h>
+#else
+#include <utime.h>
+#endif
 
 #include <glibmm/convert.h>
 #include <glibmm/fileutils.h>
@@ -312,6 +319,16 @@ SndFileSource::SndFileSource (Session& s, const AudioFileSource& other, const st
 			progress->set_progress (0.5f + 0.5f * (float) off / other.readable_length_samples ());
 		}
 	}
+	close ();
+
+	/* copy ctime */
+	GStatBuf statbuf;
+	if (g_stat (other.path().c_str(), &statbuf) == 0 && statbuf.st_size > 0) {
+		struct utimbuf tbuf;
+		tbuf.actime  = statbuf.st_atime;
+		tbuf.modtime = statbuf.st_mtime; // = time ((time_t*) 0);
+		g_utime (path.c_str(), &tbuf);
+	}
 }
 
 void
@@ -346,7 +363,7 @@ SndFileSource::open ()
 // We really only want to use g_open for all platforms but because of this
 // method(SndfileSource::open), the compiler(or at least GCC) is confused
 // because g_open will expand to "open" on non-POSIX systems and needs the
-// global namespace qualifer. The problem is since since C99 ::g_open will
+// global namespace qualifier. The problem is since since C99 ::g_open will
 // apparently expand to ":: open"
 #ifdef PLATFORM_WINDOWS
 	int fd = g_open (_path.c_str(), writable() ? O_CREAT | O_RDWR : O_RDONLY, writable() ? 0644 : 0444);
@@ -536,7 +553,7 @@ SndFileSource::read_unlocked (Sample *dst, samplepos_t start, samplecnt_t cnt) c
 		if (sf_seek (_sndfile, (sf_count_t) start, SEEK_SET|SFM_READ) != (sf_count_t) start) {
 			char errbuf[256];
 			sf_error_str (0, errbuf, sizeof (errbuf) - 1);
-			error << string_compose(_("SndFileSource: could not seek to sample %1 within %2 (%3)"), start, _name.val().substr (1), errbuf) << endmsg;
+			error << string_compose(_("SndFileSource: could not seek to sample %1 within %2 (%3)"), start, _name, errbuf) << endmsg;
 			return 0;
 		}
 
@@ -545,7 +562,7 @@ SndFileSource::read_unlocked (Sample *dst, samplepos_t start, samplecnt_t cnt) c
 			if (ret != file_cnt) {
 				char errbuf[256];
 				sf_error_str (0, errbuf, sizeof (errbuf) - 1);
-				error << string_compose(_("SndFileSource: @ %1 could not read %2 within %3 (%4) (len = %5, ret was %6)"), start, file_cnt, _name.val().substr (1), errbuf, _length, ret) << endl;
+				error << string_compose(_("SndFileSource: @ %1 could not read %2 within %3 (%4) (len = %5, ret was %6)"), start, file_cnt, _name, errbuf, _length, ret) << endl;
 			}
 			if (_gain != 1.f) {
 				for (samplecnt_t i = 0; i < ret; ++i) {
@@ -605,13 +622,15 @@ SndFileSource::nondestructive_write_unlocked (Sample *data, samplecnt_t cnt)
 		return 0;
 	}
 
+	assert (_length.time_domain() == Temporal::AudioTime);
 	samplepos_t sample_pos = _length.samples();
 
 	if (write_float (data, sample_pos, cnt) != cnt) {
 		return 0;
 	}
 
-	update_length (_length + timecnt_t (cnt, timepos_t (Temporal::AudioTime)));
+	assert (_length.time_domain() == Temporal::AudioTime);
+	update_length (timepos_t (_length.samples() + cnt));
 
 	if (_build_peakfiles) {
 		compute_and_write_peaks (data, sample_pos, cnt, true, true);

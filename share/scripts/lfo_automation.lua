@@ -134,26 +134,26 @@ function factory (unused_params)
       Session:begin_reversible_command("Add LFO automation to region")
       local before = al:get_state() -- save previous state (for undo)
       -- Clear events in target automation-list for the selected region.
-      al:clear(region:position() - region:start(), region:position() - region:start() + region:length())
+      al:clear(region:position() - region:start(), region:position() + region:length() - region:start())
 
       local values = lut[wave]
       local last = nil
       for i = 0, cycles - 1 do
          -- cycle length = region:length() / cycles
-         local cycle_start = region:position() - region:start() + i * region:length() / cycles
-         local offset = region:length() / cycles / (#values - 1)
+         local cycle_start = region:position() - region:start() + region:length():scale(Temporal.ratio(i, cycles))
+         local offset = region:length():scale (Temporal.ratio (1, cycles * (#values - 1)))
 
          for k, v in pairs(values) do
-            local pos = cycle_start + (k - 1) * offset
+            local pos = cycle_start + offset:scale (Temporal.ratio (k - 1, 1))
             if k == 1 and v ~= last then
                -- Move event one sample further. A larger offset might be needed to avoid unwanted effects.
-               pos = pos + 1
+               pos = pos:increment ()
             end
 
             if k > 1 or v ~= last then
                -- Create automation point re-scaled to parameter target range. Do not create a new point
                -- at cycle start if the last cycle ended on the same value. Using al:add seems to lead
-               -- to unwanted extranous events. al:editor_add does not exhibit these side effects.
+               -- to unwanted extraneous events. al:editor_add does not exhibit these side effects.
                al:editor_add(pos, lower + v * (upper - lower), false)
             end
             last = v
@@ -161,13 +161,15 @@ function factory (unused_params)
       end
 
       -- remove dense events
-      al:thin (20) -- threashold of area below curve
+      al:thin (20) -- threshold of area below curve
 
       -- TODO: display the modified automation lane in the time line in order to make the change visible!
 
       -- Save undo
       Session:add_command(al:memento_command(before, al:get_state()))
-      Session:commit_reversible_command(nil)
+      if not Session:abort_empty_reversible_command () then
+          Session:commit_reversible_command (nil)
+      end
 
       region, al, lut = nil, nil, nil
    end

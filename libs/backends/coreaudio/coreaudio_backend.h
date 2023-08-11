@@ -20,15 +20,14 @@
 #ifndef __libbackend_coreaudio_backend_h__
 #define __libbackend_coreaudio_backend_h__
 
+#include <cstdint>
+#include <map>
+#include <memory>
+#include <set>
 #include <string>
 #include <vector>
-#include <map>
-#include <set>
 
-#include <stdint.h>
 #include <pthread.h>
-
-#include <boost/shared_ptr.hpp>
 
 #include "pbd/natsort.h"
 #include "ardour/audio_backend.h"
@@ -208,9 +207,6 @@ class CoreAudioBackend : public AudioBackend, public PortEngineSharedImpl {
 	uint32_t     systemic_midi_input_latency (std::string const) const { return 0; }
 	uint32_t     systemic_midi_output_latency (std::string const) const { return 0; }
 
-	uint32_t systemic_hw_input_latency () const;
-	uint32_t systemic_hw_output_latency () const;
-
 	bool can_set_systemic_midi_latencies () const { return false; /* XXX */}
 
 	/* External control app */
@@ -235,6 +231,7 @@ class CoreAudioBackend : public AudioBackend, public PortEngineSharedImpl {
 	// really private, but needing static access:
 	int process_callback(uint32_t, uint64_t);
 	void error_callback();
+	void halted_callback();
 	void xrun_callback();
 	void buffer_size_callback();
 	void sample_rate_callback();
@@ -368,9 +365,14 @@ class CoreAudioBackend : public AudioBackend, public PortEngineSharedImpl {
 	uint32_t _systemic_audio_input_latency;
 	uint32_t _systemic_audio_output_latency;
 
+	uint32_t _hw_audio_input_latency;
+	uint32_t _hw_audio_output_latency;
+
 	/* coreaudio specific  */
 	enum DeviceFilter { All, Input, Output, Duplex };
 	uint32_t name_to_id(std::string, DeviceFilter filter = All) const;
+
+	void unset_callbacks ();
 
 	/* processing */
 	float  _dsp_load;
@@ -388,9 +390,16 @@ class CoreAudioBackend : public AudioBackend, public PortEngineSharedImpl {
 		CoreAudioBackend* engine;
 		boost::function<void ()> f;
 		size_t stacksize;
+		double period_ns;
 
-		ThreadData (CoreAudioBackend* e, boost::function<void ()> fp, size_t stacksz)
-			: engine (e) , f (fp) , stacksize (stacksz) {}
+#if MAC_OS_X_VERSION_MAX_ALLOWED >= 110000
+		bool                      _joined_workgroup;
+		os_workgroup_t            _workgroup;
+		os_workgroup_join_token_s _join_token;
+#endif
+
+		ThreadData (CoreAudioBackend* e, boost::function<void ()> fp, size_t stacksz, double period)
+			: engine (e) , f (fp) , stacksize (stacksz), period_ns (period) {}
 	};
 
 	/* port engine */

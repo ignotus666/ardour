@@ -55,9 +55,9 @@ bool                          Delivery::panners_legal = false;
 
 /* deliver to an existing IO object */
 
-Delivery::Delivery (Session& s, boost::shared_ptr<IO> io, boost::shared_ptr<Pannable> pannable,
-                    boost::shared_ptr<MuteMaster> mm, const string& name, Role r)
-	: IOProcessor(s, boost::shared_ptr<IO>(), (role_requires_output_ports (r) ? io : boost::shared_ptr<IO>()), name, Temporal::AudioTime, (r == Send || r == Aux || r == Foldback))
+Delivery::Delivery (Session& s, std::shared_ptr<IO> io, std::shared_ptr<Pannable> pannable,
+                    std::shared_ptr<MuteMaster> mm, const string& name, Role r)
+	: IOProcessor(s, std::shared_ptr<IO>(), (role_requires_output_ports (r) ? io : std::shared_ptr<IO>()), name, Temporal::TimeDomainProvider (Temporal::AudioTime), (r == Send || r == Aux || r == Foldback))
 	, _role (r)
 	, _output_buffers (new BufferSet())
 	, _current_gain (GAIN_COEFF_ZERO)
@@ -68,7 +68,7 @@ Delivery::Delivery (Session& s, boost::shared_ptr<IO> io, boost::shared_ptr<Pann
 	if (pannable) {
 		bool is_send = false;
 		if (r & (Delivery::Send|Delivery::Aux|Delivery::Foldback)) is_send = true;
-		_panshell = boost::shared_ptr<PannerShell>(new PannerShell (_name, _session, pannable, time_domain(), is_send));
+		_panshell = std::shared_ptr<PannerShell>(new PannerShell (_name, _session, pannable, *this, is_send));
 	}
 
 	_display_to_user = false;
@@ -80,7 +80,7 @@ Delivery::Delivery (Session& s, boost::shared_ptr<IO> io, boost::shared_ptr<Pann
 
 /* deliver to a new IO object */
 
-Delivery::Delivery (Session& s, boost::shared_ptr<Pannable> pannable, boost::shared_ptr<MuteMaster> mm, const string& name, Role r)
+Delivery::Delivery (Session& s, std::shared_ptr<Pannable> pannable, std::shared_ptr<MuteMaster> mm, const string& name, Role r)
 	: IOProcessor(s, false, (role_requires_output_ports (r) ? true : false), name, "", DataType::AUDIO, (r == Send || r == Aux || r == Foldback))
 	, _role (r)
 	, _output_buffers (new BufferSet())
@@ -92,7 +92,7 @@ Delivery::Delivery (Session& s, boost::shared_ptr<Pannable> pannable, boost::sha
 	if (pannable) {
 		bool is_send = false;
 		if (r & (Delivery::Send|Delivery::Aux|Delivery::Foldback)) is_send = true;
-		_panshell = boost::shared_ptr<PannerShell>(new PannerShell (_name, _session, pannable, time_domain(), is_send));
+		_panshell = std::shared_ptr<PannerShell>(new PannerShell (_name, _session, pannable, *this, is_send));
 	}
 
 	_display_to_user = false;
@@ -187,6 +187,18 @@ Delivery::can_support_io_configuration (const ChanCount& in, ChanCount& out)
 	return false;
 }
 
+void
+Delivery::set_gain_control (std::shared_ptr<GainControl> gc) {
+	if (gc) {
+		_gain_control = gc;
+		_amp.reset (new Amp (_session, _("Fader"), _gain_control, true));
+		_amp->configure_io (_configured_output, _configured_output);
+	} else {
+		_amp.reset ();
+		_gain_control = gc;
+	}
+}
+
 /** Caller must hold process lock */
 bool
 Delivery::configure_io (ChanCount in, ChanCount out)
@@ -233,11 +245,15 @@ Delivery::configure_io (ChanCount in, ChanCount out)
 
 	reset_panner ();
 
+	if (_amp) {
+		return _amp->configure_io (out, out);
+	}
+
 	return true;
 }
 
 void
-Delivery::run (BufferSet& bufs, samplepos_t start_sample, samplepos_t end_sample, double /*speed*/, pframes_t nframes, bool result_required)
+Delivery::run (BufferSet& bufs, samplepos_t start_sample, samplepos_t end_sample, double speed, pframes_t nframes, bool result_required)
 {
 	assert (_output);
 
@@ -272,11 +288,11 @@ Delivery::run (BufferSet& bufs, samplepos_t start_sample, samplepos_t end_sample
 
 		_current_gain = Amp::apply_gain (bufs, _session.nominal_sample_rate(), nframes, _current_gain, tgain);
 
-	} else if (tgain < GAIN_COEFF_SMALL) {
+	} else if (fabsf (tgain) < GAIN_COEFF_SMALL) {
 
 		/* we were quiet last time, and we're still supposed to be quiet.
-			 Silence the outputs, and make sure the buffers are quiet too,
-			 */
+		 * Silence the outputs, and make sure the buffers are quiet too,
+		 */
 
 		_output->silence (nframes);
 		if (result_required) {
@@ -295,6 +311,13 @@ Delivery::run (BufferSet& bufs, samplepos_t start_sample, samplepos_t end_sample
 
 	if (fabs (_session.transport_speed()) > 1.5 && Config->get_quieten_at_speed ()) {
 		Amp::apply_simple_gain (bufs, nframes, speed_quietning, false);
+	}
+
+	/* gain control/automation */
+	if (_amp) {
+		_amp->set_gain_automation_buffer (_session.send_gain_automation_buffer ());
+		_amp->setup_gain_automation (start_sample, end_sample, nframes);
+		_amp->run (bufs, start_sample, end_sample, speed, nframes, true);
 	}
 
 	// Panning
@@ -356,7 +379,7 @@ Delivery::run (BufferSet& bufs, samplepos_t start_sample, samplepos_t end_sample
 }
 
 XMLNode&
-Delivery::state ()
+Delivery::state () const
 {
 	XMLNode& node (IOProcessor::state ());
 
@@ -375,6 +398,14 @@ Delivery::state ()
 		if (_panshell->unlinked_pannable () && _role != Listen) {
 			node.add_child_nocopy (_panshell->unlinked_pannable()->get_state ());
 		}
+	}
+	/* Note: _gain_control state is saved by the owner,
+	 * mainly for backwards compatibility reasons, but also because
+	 * the gain-control may be owned by Route e.g. LAN _volume_control
+	 */
+
+	if (_polarity_control) {
+		node.add_child_nocopy (_polarity_control->get_state());
 	}
 
 	return node;
@@ -405,6 +436,22 @@ Delivery::set_state (const XMLNode& node, int version)
 
 	if (_panshell && _panshell->unlinked_pannable() && pannnode) {
 		_panshell->unlinked_pannable()->set_state (*pannnode, version);
+	}
+
+	if (_polarity_control) {
+		for (auto const& i : node.children()) {
+			if (i->name() != Controllable::xml_node_name) {
+				continue;
+			}
+			std::string control_name;
+			if (!i->get_property (X_("name"), control_name)) {
+				continue;
+			}
+			if (control_name == "polarity-invert") {
+				_polarity_control->set_state (*i, version);
+				break;
+			}
+		}
 	}
 
 	return 0;
@@ -569,10 +616,6 @@ Delivery::target_gain ()
 
 	gain_t desired_gain = _mute_master->mute_gain_at (mp);
 
-	if (_gain_control) {
-		desired_gain *= _gain_control->get_value();
-	}
-
 	if (_role == Listen && _session.monitor_out() && !_session.listening()) {
 
 		/* nobody is soloed, and this delivery is a listen-send to the
@@ -583,7 +626,29 @@ Delivery::target_gain ()
 		desired_gain = GAIN_COEFF_ZERO;
 	}
 
+	if (_polarity_control && _polarity_control->get_value () > 0) {
+		desired_gain *= -1;
+	}
+
 	return desired_gain;
+}
+
+void
+Delivery::activate ()
+{
+	if (_amp) {
+		_amp->activate ();
+	}
+	Processor::activate ();
+}
+
+void
+Delivery::deactivate ()
+{
+	if (_amp) {
+		_amp->deactivate ();
+	}
+	Processor::deactivate ();
 }
 
 void
@@ -615,13 +680,13 @@ Delivery::output_changed (IOChange change, void* /*src*/)
 	}
 }
 
-boost::shared_ptr<Panner>
+std::shared_ptr<Panner>
 Delivery::panner () const
 {
 	if (_panshell) {
 		return _panshell->panner();
 	} else {
-		return boost::shared_ptr<Panner>();
+		return std::shared_ptr<Panner>();
 	}
 }
 

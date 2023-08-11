@@ -16,6 +16,10 @@
     Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 */
 
+#ifndef NDEBUG
+#include <sstream>
+#endif
+
 #include "temporal/range.h"
 
 using namespace Temporal;
@@ -96,8 +100,35 @@ Range::subtract (RangeList & sub) const
 	return result;
 }
 
+timepos_t
+Range::squish (timepos_t const & t) const
+{
+	if (t < _end) {
+		return t;
+	}
+
+	timepos_t start = _start;
+	start.set_time_domain (t.time_domain());
+	return start + (start.distance (t) % length());
+}
+
 template<> OverlapType Temporal::coverage_exclusive_ends<int64_t> (int64_t sa, int64_t eaE, int64_t sb, int64_t ebE)
 {
 	/* convert end positions to inclusive */
 	return coverage_inclusive_ends (sa, eaE-1, sb, ebE-1);
 }
+
+std::ostream&
+std::operator<< (std::ostream & o, RangeList const & rl)
+{
+	rl.dump (o);
+	return o;
+}
+
+std::ostream&
+std::operator<< (std::ostream & o, Range const & r)
+{
+	r.dump (o);
+	return o;
+}
+

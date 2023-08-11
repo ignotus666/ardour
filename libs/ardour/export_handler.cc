@@ -371,14 +371,31 @@ ExportHandler::finish_timespan ()
 {
 	graph_builder->get_analysis_results (export_status->result_map);
 
+	/* work-around: split-channel will produce several files
+	 * for a single config, config_map iterator below does not yet
+	 * take that into account.
+	 */
+	for (auto const& f : graph_builder->exported_files ()) {
+		Session::Exported (current_timespan->name(), f, config_map.begin()->second.format->reimport(), current_timespan->get_start ()); /* EMIT SIGNAL */
+	}
+
 	while (config_map.begin() != timespan_bounds.second) {
 
 		// XXX single timespan+format may produce multiple files
 		// e.g export selection == session
 		// -> TagLib::FileRef is null
 
-		ExportFormatSpecPtr fmt = config_map.begin()->second.format;
-		std::string filename = config_map.begin()->second.filename->get_path(fmt);
+		FileSpec& config = config_map.begin()->second;
+		ExportFormatSpecPtr fmt = config.format;
+		config.filename->set_channel_config (config.channel_config);
+		std::string filename = config.filename->get_path (fmt);
+
+		if (fmt->type () == ExportFormatBase::T_None) {
+			graph_builder->reset ();
+			config_map.erase (config_map.begin());
+			continue;
+		}
+
 		if (fmt->with_cue()) {
 			export_cd_marker_file (current_timespan, fmt, filename, CDMarkerCUE);
 		}
@@ -390,8 +407,6 @@ ExportHandler::finish_timespan ()
 		if (fmt->with_mp4chaps()) {
 			export_cd_marker_file (current_timespan, fmt, filename, MP4Chaps);
 		}
-
-		Session::Exported (current_timespan->name(), filename); /* EMIT SIGNAL */
 
 		/* close file first, otherwise TagLib enounters an ERROR_SHARING_VIOLATION
 		 * The process cannot access the file because it is being used.
@@ -454,7 +469,7 @@ ExportHandler::finish_timespan ()
 			subs.insert (std::pair<char, std::string> ('Y', year.str ()));
 			subs.insert (std::pair<char, std::string> ('Z', metadata.country ()));
 
-			ARDOUR::SystemExec *se = new ARDOUR::SystemExec(fmt->command(), subs);
+			ARDOUR::SystemExec *se = new ARDOUR::SystemExec(fmt->command(), subs, true);
 			info << "Post-export command line : {" << se->to_s () << "}" << endmsg;
 			se->ReadStdout.connect_same_thread(command_connection, boost::bind(&ExportHandler::command_output, this, _1, _2));
 			int ret = se->start (SystemExec::MergeWithStdin);
@@ -700,7 +715,7 @@ ExportHandler::write_cue_header (CDMarkerStatus & status)
 		We try to use these file types whenever appropriate and
 		default to our own names otherwise.
 	*/
-	status.out << "FILE \"" << Glib::path_get_basename(status.filename) << "\" ";
+	status.out << "FILE " << cue_escape_cdtext (Glib::path_get_basename(status.filename)) << " ";
 	if (!status.format->format_name().compare ("WAV")  || !status.format->format_name().compare ("BWF")) {
 		status.out  << "WAVE";
 	} else if (status.format->format_id() == ExportFormatBase::F_RAW &&

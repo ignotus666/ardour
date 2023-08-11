@@ -21,9 +21,10 @@
 #ifndef __export_format_selector_h__
 #define __export_format_selector_h__
 
+#include <memory>
 #include <string>
+
 #include <sigc++/signal.h>
-#include <boost/shared_ptr.hpp>
 
 #include <gtkmm/box.h>
 #include <gtkmm/button.h>
@@ -43,7 +44,7 @@ class ExportFormatSelector : public Gtk::HBox, public ARDOUR::SessionHandlePtr
 {
 private:
 
-	typedef boost::shared_ptr<ARDOUR::ExportFormatSpecification> FormatPtr;
+	typedef std::shared_ptr<ARDOUR::ExportFormatSpecification> FormatPtr;
 	typedef std::list<FormatPtr> FormatList;
 
 public:
@@ -74,7 +75,7 @@ private:
 
 	ARDOUR::ExportProfileManager::FormatStatePtr state;
 
-	/*** GUI componenets ***/
+	/*** GUI components ***/
 
 	struct FormatCols : public Gtk::TreeModelColumnRecord
 	{

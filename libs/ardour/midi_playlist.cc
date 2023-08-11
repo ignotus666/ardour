@@ -35,6 +35,7 @@
 #include "ardour/midi_source.h"
 #include "ardour/midi_state_tracker.h"
 #include "ardour/region_factory.h"
+#include "ardour/region_sorters.h"
 #include "ardour/rt_midibuffer.h"
 #include "ardour/session.h"
 #include "ardour/tempo.h"
@@ -70,13 +71,13 @@ MidiPlaylist::MidiPlaylist (Session& session, string name, bool hidden)
 {
 }
 
-MidiPlaylist::MidiPlaylist (boost::shared_ptr<const MidiPlaylist> other, string name, bool hidden)
+MidiPlaylist::MidiPlaylist (std::shared_ptr<const MidiPlaylist> other, string name, bool hidden)
 	: Playlist (other, name, hidden)
 	, _note_mode(other->_note_mode)
 {
 }
 
-MidiPlaylist::MidiPlaylist (boost::shared_ptr<const MidiPlaylist> other,
+MidiPlaylist::MidiPlaylist (std::shared_ptr<const MidiPlaylist> other,
                             timepos_t  const &                    start,
                             timepos_t  const &                    dur,
                             string                                name,
@@ -90,35 +91,22 @@ MidiPlaylist::~MidiPlaylist ()
 {
 }
 
-template<typename Time>
+template <typename Time>
 struct EventsSortByTimeAndType {
-    bool operator() (const Evoral::Event<Time>* a, const Evoral::Event<Time>* b) {
-	    if (a->time() == b->time()) {
-		    if (parameter_is_midi ((AutomationType)a->event_type()) &&
-		        parameter_is_midi ((AutomationType)b->event_type())) {
-			    /* negate return value since we must return whether
-			     * or not a should sort before b, not b before a
-			     */
-			    return !MidiBuffer::second_simultaneous_midi_byte_is_first (a->buffer()[0], b->buffer()[0]);
-		    }
-	    }
-	    return a->time() < b->time();
-    }
-};
-
-void
-MidiPlaylist::remove_dependents (boost::shared_ptr<Region> region)
-{
-}
-
-void
-MidiPlaylist::region_going_away (boost::weak_ptr<Region> region)
-{
-	boost::shared_ptr<Region> r = region.lock();
-	if (r) {
-		remove_dependents(r);
+	bool operator() (const Evoral::Event<Time>* a, const Evoral::Event<Time>* b)
+	{
+		if (a->time () == b->time ()) {
+			if (a->is_midi () && b->is_midi ()) {
+				/* negate return value since we must return whether
+				 * or not a should sort before b, not b before a
+				 */
+				return !MidiBuffer::second_simultaneous_midi_byte_is_first (a->buffer ()[0], b->buffer ()[0]);
+			}
+			return a->type () < b->type ();
+		}
+		return a->time () < b->time ();
 	}
-}
+};
 
 int
 MidiPlaylist::set_state (const XMLNode& node, int version)
@@ -139,7 +127,7 @@ MidiPlaylist::set_state (const XMLNode& node, int version)
 void
 MidiPlaylist::dump () const
 {
-	boost::shared_ptr<Region> r;
+	std::shared_ptr<Region> r;
 
 	cerr << "Playlist \"" << _name << "\" " << endl
 	<< regions.size() << " regions "
@@ -158,9 +146,9 @@ MidiPlaylist::dump () const
 }
 
 bool
-MidiPlaylist::destroy_region (boost::shared_ptr<Region> region)
+MidiPlaylist::destroy_region (std::shared_ptr<Region> region)
 {
-	boost::shared_ptr<MidiRegion> r = boost::dynamic_pointer_cast<MidiRegion> (region);
+	std::shared_ptr<MidiRegion> r = std::dynamic_pointer_cast<MidiRegion> (region);
 
 	if (!r) {
 		return false;
@@ -195,7 +183,7 @@ MidiPlaylist::destroy_region (boost::shared_ptr<Region> region)
 	return changed;
 }
 void
-MidiPlaylist::_split_region (boost::shared_ptr<Region> region, timepos_t const & playlist_position, ThawList& thawlist)
+MidiPlaylist::_split_region (std::shared_ptr<Region> region, timepos_t const & playlist_position, ThawList& thawlist)
 {
 	if (!region->covers (playlist_position)) {
 		return;
@@ -206,14 +194,14 @@ MidiPlaylist::_split_region (boost::shared_ptr<Region> region, timepos_t const &
 		return;
 	}
 
-	boost::shared_ptr<const MidiRegion> mr = boost::dynamic_pointer_cast<MidiRegion>(region);
+	std::shared_ptr<const MidiRegion> mr = std::dynamic_pointer_cast<MidiRegion>(region);
 
 	if (mr == 0) {
 		return;
 	}
 
-	boost::shared_ptr<Region> left;
-	boost::shared_ptr<Region> right;
+	std::shared_ptr<Region> left;
+	std::shared_ptr<Region> right;
 
 	string before_name;
 	string after_name;
@@ -224,31 +212,28 @@ MidiPlaylist::_split_region (boost::shared_ptr<Region> region, timepos_t const &
 	RegionFactory::region_name (before_name, region->name(), false);
 
 	{
-		PropertyList plist;
+		PropertyList plist (region->derive_properties (false));
 
 		plist.add (Properties::length, before);
 		plist.add (Properties::name, before_name);
 		plist.add (Properties::left_of_split, true);
-		plist.add (Properties::layering_index, region->layering_index ());
-		plist.add (Properties::layer, region->layer ());
 
 		/* note: we must use the version of ::create with an offset here,
 		   since it supplies that offset to the Region constructor, which
 		   is necessary to get audio region gain envelopes right.
 		*/
-	        left = RegionFactory::create (region, plist, true, &thawlist);
+		left = RegionFactory::create (region, plist, true, &thawlist);
 	}
 
 	RegionFactory::region_name (after_name, region->name(), false);
 
 	{
-		PropertyList plist;
+		PropertyList plist (region->derive_properties (false));
 
 		plist.add (Properties::length, after);
 		plist.add (Properties::name, after_name);
 		plist.add (Properties::right_of_split, true);
-		plist.add (Properties::layering_index, region->layering_index ());
-		plist.add (Properties::layer, region->layer ());
+		plist.add (Properties::reg_group, Region::get_retained_group_id());
 
 		/* same note as above */
 		right = RegionFactory::create (region, before, plist, true, &thawlist);
@@ -271,7 +256,7 @@ MidiPlaylist::contained_automation()
 	set<Evoral::Parameter> ret;
 
 	for (RegionList::const_iterator r = regions.begin(); r != regions.end(); ++r) {
-		boost::shared_ptr<MidiRegion> mr = boost::dynamic_pointer_cast<MidiRegion>(*r);
+		std::shared_ptr<MidiRegion> mr = std::dynamic_pointer_cast<MidiRegion>(*r);
 
 		for (Automatable::Controls::iterator c = mr->model()->controls().begin();
 				c != mr->model()->controls().end(); ++c) {
@@ -287,13 +272,11 @@ MidiPlaylist::contained_automation()
 void
 MidiPlaylist::render (MidiChannelFilter* filter)
 {
-	typedef pair<MidiStateTracker*,samplepos_t> TrackerInfo;
-
 	Playlist::RegionReadLock rl (this);
 
 	DEBUG_TRACE (DEBUG::MidiPlaylistIO, string_compose ("---- MidiPlaylist::render (regions: %1)-----\n", regions.size()));
 
-	std::vector< boost::shared_ptr<Region> > regs;
+	std::list<std::shared_ptr<MidiRegion>> regs;
 
 	for (RegionList::iterator i = regions.begin(); i != regions.end(); ++i) {
 
@@ -307,14 +290,13 @@ MidiPlaylist::render (MidiChannelFilter* filter)
 			continue;
 		}
 
-		regs.push_back (*i);
-	}
+		std::shared_ptr<MidiRegion> mr = std::dynamic_pointer_cast<MidiRegion> (*i);
+		if (!mr) {
+			continue;
+		}
 
-	/* If we are reading from a single region, we can read directly into _rendered.  Otherwise,
-	   we read into a temporarily list, sort it, then write that to _rendered.
-	*/
-	Evoral::EventList<samplepos_t>  evlist;
-	Evoral::EventSink<samplepos_t>* tgt;
+		regs.push_back (mr);
+	}
 
 	/* RAII */
 	RTMidiBuffer::WriteProtectRender wpr (_rendered);
@@ -322,49 +304,127 @@ MidiPlaylist::render (MidiChannelFilter* filter)
 	if (regs.empty()) {
 		wpr.acquire ();
 		_rendered.clear ();
-	} else {
+		DEBUG_TRACE (DEBUG::MidiPlaylistIO, string_compose ("---- End MidiPlaylist::render, events: %1\n", _rendered.size()));
+		return;
+	}
 
-		if (regs.size() == 1) {
-			tgt = &_rendered;
-			wpr.acquire ();
-			_rendered.clear ();
-		} else {
-			tgt = &evlist;
+	if (regs.size() == 1) {
+		wpr.acquire ();
+		_rendered.clear ();
+		std::shared_ptr<MidiRegion> mr = regs.front ();
+		DEBUG_TRACE (DEBUG::MidiPlaylistIO, string_compose ("render from %1\n", mr->name()));
+		mr->render (_rendered, 0, _note_mode, filter);
+		DEBUG_TRACE (DEBUG::MidiPlaylistIO, string_compose ("---- End MidiPlaylist::render, events: %1\n", _rendered.size()));
+		return;
+	}
+
+	RegionSortByLayer cmp;
+	regs.sort (cmp);
+
+	bool all_transparent = true;
+	bool no_layers = true;
+
+	layer_t layer = regs.front()->layer ();
+
+	/* skip bottom-most region, transparency is irrelevant */
+	for (auto i = ++regs.begin(); i != regs.end(); ++i) {
+		if ((*i)->opaque ()) {
+			all_transparent = false;
 		}
-
-		DEBUG_TRACE (DEBUG::MidiPlaylistIO, string_compose ("\t%1 regions to read, direct: %2\n", regs.size(), (regs.size() == 1)));
-
-		for (vector<boost::shared_ptr<Region> >::iterator i = regs.begin(); i != regs.end(); ++i) {
-
-			boost::shared_ptr<MidiRegion> mr = boost::dynamic_pointer_cast<MidiRegion>(*i);
-
-			if (!mr) {
-				continue;
-			}
-
-			DEBUG_TRACE (DEBUG::MidiPlaylistIO, string_compose ("render from %1\n", mr->name()));
-			mr->render (*tgt, 0, _note_mode, filter);
+		if ((*i)->layer () != layer) {
+			no_layers = false;
 		}
-
-		if (!evlist.empty()) {
-			/* We've read from multiple regions into evlist, sort the event list by time. */
-			EventsSortByTimeAndType<samplepos_t> cmp;
-			evlist.sort (cmp);
-
-			/* Copy ordered events from event list to _rendered. */
-
-			wpr.acquire ();
-			_rendered.clear ();
-
-			for (Evoral::EventList<samplepos_t>::iterator e = evlist.begin(); e != evlist.end(); ++e) {
-				Evoral::Event<samplepos_t>* ev (*e);
-				_rendered.write (ev->time(), ev->event_type(), ev->size(), ev->buffer());
-				delete ev;
-			}
+		if (!all_transparent && !no_layers) {
+			/* no need to check further */
+			break;
 		}
 	}
 
-	/* no need to release - RAII with WriteProtectRender takes care of it */
+	Evoral::EventList<samplepos_t> evlist;
+
+	if (all_transparent || no_layers) {
+
+		DEBUG_TRACE (DEBUG::MidiPlaylistIO, string_compose ("\t%1 regions to read\n", regs.size()));
+
+		for (auto i = regs.rbegin(); i != regs.rend(); ++i) {
+			std::shared_ptr<MidiRegion> mr = *i;
+			DEBUG_TRACE (DEBUG::MidiPlaylistIO, string_compose ("render from %1\n", mr->name()));
+			mr->render (evlist, 0, _note_mode, filter);
+		}
+		EventsSortByTimeAndType<samplepos_t> cmp;
+		evlist.sort (cmp);
+
+	} else {
+
+		DEBUG_TRACE (DEBUG::MidiPlaylistIO, string_compose ("\t%1 layered regions to read\n", regs.size()));
+
+		bool top = true;
+		std::vector<samplepos_t> bounds;
+		EventsSortByTimeAndType<samplepos_t> cmp;
+
+		/* iterate, top-most region first */
+		for (auto i = regs.rbegin(); i != regs.rend(); ++i) {
+			std::shared_ptr<MidiRegion> mr = *i;
+			DEBUG_TRACE (DEBUG::MidiPlaylistIO, string_compose ("maybe render from %1\n", mr->name()));
+
+			if (top) {
+				/* render topmost region as-is */
+				mr->render (evlist, 0, _note_mode, filter);
+				top = false;
+			} else {
+				Evoral::EventList<samplepos_t> tmp;
+				mr->render (tmp, 0, _note_mode, filter);
+
+				/* insert region-bound markers of opaque regions above */
+				for (auto const& p : bounds) {
+					tmp.write (p, Evoral::NO_EVENT, 0, 0);
+				}
+				tmp.sort (cmp);
+
+				MidiStateTracker mtr;
+				Evoral::EventList<samplepos_t> const slist (evlist);
+
+				for (Evoral::EventList<samplepos_t>::iterator e = tmp.begin(); e != tmp.end(); ++e) {
+					Evoral::Event<samplepos_t>* ev (*e);
+					timepos_t t (ev->time());
+
+					if (ev->event_type () == Evoral::NO_EVENT) {
+						/* reached region bound of an opaque region above this region. */
+						mtr.resolve_state (evlist, slist, ev->time());
+					} else if (region_is_audible_at (mr, t)) {
+						/* no opaque region above this event */
+						uint8_t* evbuf = ev->buffer();
+						if (3 == ev->size() && (evbuf[0] & 0xf0) == MIDI_CMD_NOTE_OFF && !mtr.active (evbuf[1], evbuf[0] & 0x0f)) {
+							; /* skip note off */
+						} else {
+							evlist.write (ev->time(), ev->event_type(), ev->size(), evbuf);
+							mtr.track (evbuf);
+						}
+					} else {
+						/* there is an opaque region above this event, skip this event. */
+					}
+					delete ev;
+				}
+			}
+
+			if (mr->opaque ()) {
+				bounds.push_back (mr->position ().samples ());
+			}
+
+			EventsSortByTimeAndType<samplepos_t> cmp;
+			evlist.sort (cmp);
+		}
+	}
+
+	wpr.acquire ();
+	_rendered.clear ();
+
+	/* Copy ordered events from event list to _rendered. */
+	for (Evoral::EventList<samplepos_t>::iterator e = evlist.begin(); e != evlist.end(); ++e) {
+		Evoral::Event<samplepos_t>* ev (*e);
+		_rendered.write (ev->time(), ev->event_type(), ev->size(), ev->buffer());
+		delete ev;
+	}
 
 	DEBUG_TRACE (DEBUG::MidiPlaylistIO, string_compose ("---- End MidiPlaylist::render, events: %1\n", _rendered.size()));
 }
@@ -373,4 +433,65 @@ RTMidiBuffer*
 MidiPlaylist::rendered ()
 {
 	return &_rendered;
+}
+
+std::shared_ptr<Region>
+MidiPlaylist::combine (RegionList const & rl, std::shared_ptr<Track> trk)
+{
+	RegionWriteLock rwl (this, true);
+
+	if (rl.size() < 2) {
+		return std::shared_ptr<Region> ();
+	}
+
+	RegionList sorted (rl);
+	sorted.sort (RegionSortByLayerAndPosition());
+
+	std::shared_ptr<Region> first = sorted.front();
+
+	timepos_t earliest (timepos_t::max (Temporal::BeatTime));
+	timepos_t latest (Temporal::BeatTime);
+
+	for (auto const & r : rl) {
+		assert (std::dynamic_pointer_cast<MidiRegion> (r));
+		if (r->position() < earliest) {
+			earliest = r->position();
+		}
+		if (r->end() > latest) {
+			latest = r->end();
+		}
+	}
+
+	std::shared_ptr<MidiSource> ms (session().create_midi_source_by_stealing_name (trk));
+	std::shared_ptr<MidiRegion> new_region = std::dynamic_pointer_cast<MidiRegion> (RegionFactory::create (ms, first->derive_properties (false), true, &rwl.thawlist));
+
+	timepos_t pos (first->position());
+	new_region->set_position (pos);
+
+	for (auto const & other : sorted) {
+		new_region->merge (std::dynamic_pointer_cast<MidiRegion> (other));
+		remove_region_internal (other, rwl.thawlist);
+	}
+
+	/* thin automation.
+	 * Combining MIDI regions plays back automation, the compound
+	 * will have individual points just like automation was played back
+	 * and recorded. So it has to be thinned it like after a write-pass.
+	 */
+	for (auto& l: new_region->model ()->controls()) {
+		l.second->list()->thin (Config->get_automation_thinning_factor ());
+	}
+
+	/* write MIDI to disk */
+
+	new_region->midi_source (0)->session_saved ();
+
+	add_region_internal (new_region, pos, rwl.thawlist);
+
+	return new_region;
+}
+
+void
+MidiPlaylist::uncombine (std::shared_ptr<Region> r)
+{
 }

@@ -47,7 +47,7 @@ namespace ARDOUR { class Session; }
 
 IOProcessor::IOProcessor (Session& s, bool with_input, bool with_output,
 			  const string& proc_name, const string io_name, DataType dtype, bool sendish)
-	: Processor (s, proc_name, (dtype == DataType::AUDIO ? Temporal::AudioTime : Temporal::BeatTime))
+	: Processor (s, proc_name, Temporal::TimeDomainProvider (dtype == DataType::AUDIO ? Temporal::AudioTime : Temporal::BeatTime))
 {
 	/* these are true in this constructor whether we actually create the associated
 	   IO objects or not.
@@ -70,9 +70,9 @@ IOProcessor::IOProcessor (Session& s, bool with_input, bool with_output,
 
 /* create an IOProcessor that proxies to an existing IO object */
 
-IOProcessor::IOProcessor (Session& s, boost::shared_ptr<IO> in, boost::shared_ptr<IO> out,
-                          const string& proc_name, Temporal::TimeDomain td, bool sendish)
-	: Processor(s, proc_name, td)
+IOProcessor::IOProcessor (Session& s, std::shared_ptr<IO> in, std::shared_ptr<IO> out,
+                          const string& proc_name, Temporal::TimeDomainProvider const & tdp, bool sendish)
+	: Processor(s, proc_name, tdp)
 	, _input (in)
 	, _output (out)
 {
@@ -98,7 +98,7 @@ IOProcessor::~IOProcessor ()
 }
 
 void
-IOProcessor::set_input (boost::shared_ptr<IO> io)
+IOProcessor::set_input (std::shared_ptr<IO> io)
 {
 	/* CALLER MUST HOLD PROCESS LOCK */
 
@@ -107,7 +107,7 @@ IOProcessor::set_input (boost::shared_ptr<IO> io)
 }
 
 void
-IOProcessor::set_output (boost::shared_ptr<IO> io)
+IOProcessor::set_output (std::shared_ptr<IO> io)
 {
 	/* CALLER MUST HOLD PROCESS LOCK */
 
@@ -116,7 +116,7 @@ IOProcessor::set_output (boost::shared_ptr<IO> io)
 }
 
 XMLNode&
-IOProcessor::state ()
+IOProcessor::state () const
 {
 	XMLNode& node (Processor::state ());
 
@@ -335,7 +335,7 @@ IOProcessor::set_name (const std::string& new_name)
 }
 
 bool
-IOProcessor::feeds (boost::shared_ptr<Route> other) const
+IOProcessor::feeds (std::shared_ptr<Route> other) const
 {
 	return _output && _output->connected_to (other->input());
 }

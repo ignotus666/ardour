@@ -81,13 +81,14 @@ public:
 	MidiTimeAxisView (PublicEditor&, ARDOUR::Session*, ArdourCanvas::Canvas& canvas);
 	virtual ~MidiTimeAxisView ();
 
-	void set_route (boost::shared_ptr<ARDOUR::Route>);
+	void set_route (std::shared_ptr<ARDOUR::Route>);
 
 	MidiStreamView* midi_view();
 
-	void set_height (uint32_t, TrackHeightMode m = OnlySelf);
+	void set_height (uint32_t, TrackHeightMode m = OnlySelf, bool from_idle = false);
+	void set_layer_display (LayerDisplay d);
 
-	boost::shared_ptr<ARDOUR::MidiRegion> add_region (Temporal::timepos_t const &, Temporal::timecnt_t const &, bool);
+	std::shared_ptr<ARDOUR::MidiRegion> add_region (Temporal::timepos_t const &, Temporal::timecnt_t const &, bool);
 
 	void show_all_automation (bool apply_to_selection = false);
 	void show_existing_automation (bool apply_to_selection = false);
@@ -110,7 +111,7 @@ public:
 
 	uint8_t get_preferred_midi_channel () const;
 
-	void get_per_region_note_selection (std::list<std::pair<PBD::ID, std::set<boost::shared_ptr<Evoral::Note<Temporal::Beats> > > > >&);
+	void get_per_region_note_selection (std::list<std::pair<PBD::ID, std::set<std::shared_ptr<Evoral::Note<Temporal::Beats> > > > >&);
 	void use_midnam_info ();
 
 protected:
@@ -140,6 +141,8 @@ private:
 	void route_active_changed ();
 	void note_range_changed ();
 	void contents_height_changed ();
+
+	void update_scroomer_visbility (uint32_t, LayerDisplay);
 
 	void update_control_names ();
 	void update_midi_controls_visibility (uint32_t);
@@ -172,7 +175,7 @@ private:
 	Gtk::Menu* controller_menu;
 
 	void add_single_channel_controller_item (Gtk::Menu_Helpers::MenuList& ctl_items, int ctl, const std::string& name);
-	void add_multi_channel_controller_item (Gtk::Menu_Helpers::MenuList& ctl_items, uint16_t chanels, int ctl, const std::string& name);
+	void add_multi_channel_controller_item (Gtk::Menu_Helpers::MenuList& ctl_items, uint16_t channels, int ctl, const std::string& name);
 	void build_controller_menu ();
 	void toggle_restore_pgm_on_load ();
 	void toggle_channel_selector ();
@@ -187,7 +190,7 @@ private:
 	void add_note_selection_region_view (RegionView* rv, uint8_t note, uint16_t chn_mask);
 	void extend_note_selection_region_view (RegionView*, uint8_t note, uint16_t chn_mask);
 	void toggle_note_selection_region_view (RegionView*, uint8_t note, uint16_t chn_mask);
-	void get_per_region_note_selection_region_view (RegionView*, std::list<std::pair<PBD::ID, std::set<boost::shared_ptr<Evoral::Note<Temporal::Beats> > > > >&);
+	void get_per_region_note_selection_region_view (RegionView*, std::list<std::pair<PBD::ID, std::set<std::shared_ptr<Evoral::Note<Temporal::Beats> > > > >&);
 
 	void ensure_step_editor ();
 
@@ -197,6 +200,10 @@ private:
 	ParameterMenuMap _controller_menu_map;
 
 	StepEditor* _step_editor;
+
+	std::shared_ptr<AutomationTimeAxisView> velocity_track;
+	Gtk::CheckMenuItem* velocity_menu_item;
+	void create_velocity_automation_child (Evoral::Parameter const &, bool show);
 };
 
 #endif /* __ardour_midi_time_axis_h__ */

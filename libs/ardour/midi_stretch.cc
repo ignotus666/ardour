@@ -45,12 +45,12 @@ MidiStretch::~MidiStretch ()
 }
 
 int
-MidiStretch::run (boost::shared_ptr<Region> r, Progress*)
+MidiStretch::run (std::shared_ptr<Region> r, Progress*)
 {
 	SourceList nsrcs;
 	char suffix[32];
 
-	boost::shared_ptr<MidiRegion> region = boost::dynamic_pointer_cast<MidiRegion>(r);
+	std::shared_ptr<MidiRegion> region = std::dynamic_pointer_cast<MidiRegion>(r);
 	if (!region) {
 		return -1;
 	}
@@ -70,27 +70,25 @@ MidiStretch::run (boost::shared_ptr<Region> r, Progress*)
 
 	/* create new sources */
 
-	if (make_new_sources (region, nsrcs, suffix))
+	if (make_new_sources (region, nsrcs, suffix)) {
 		return -1;
-
-	boost::shared_ptr<MidiSource> src = region->midi_source(0);
-	{
-		Source::Lock lock(src->mutex());
-		src->load_model(lock);
 	}
 
-	boost::shared_ptr<MidiModel> old_model = src->model();
+	std::shared_ptr<MidiSource> src = region->midi_source(0);
+	Source::ReaderLock lock (src->mutex());
 
-	boost::shared_ptr<MidiSource> new_src = boost::dynamic_pointer_cast<MidiSource>(nsrcs[0]);
+	std::shared_ptr<MidiModel> old_model = src->model();
+	std::shared_ptr<MidiSource> new_src = std::dynamic_pointer_cast<MidiSource>(nsrcs[0]);
+
 	if (!new_src) {
 		error << _("MIDI stretch created non-MIDI source") << endmsg;
 		return -1;
 	}
 
-	Glib::Threads::Mutex::Lock sl (new_src->mutex ());
+	Source::WriterLock sl (new_src->mutex ());
 
-	new_src->load_model(sl, true);
-	boost::shared_ptr<MidiModel> new_model = new_src->model();
+	new_src->load_model (sl, true);
+	std::shared_ptr<MidiModel> new_model = new_src->model();
 	new_model->start_write();
 
 #ifdef DEBUG_MIDI_STRETCH
@@ -123,7 +121,7 @@ MidiStretch::run (boost::shared_ptr<Region> r, Progress*)
 
 	/* set length of new region to precisely match source length */
 
-	results[0]->set_length (region->length() * _request.time_fraction);
+	results[0]->set_length (region->length().scale (_request.time_fraction));
 
 	return ret;
 }

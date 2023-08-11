@@ -18,10 +18,10 @@ main (int argc, char** argv)
 		::exit (EXIT_FAILURE);
 	}
 
-#if 0
+#if 1
 	Evoral::SMF smf;
-	smf.open (fn);
-	printf ("SMF '%s' tracks=%d, ppqn=%d\n", fn, smf.num_tracks (), smf.ppqn());
+	smf.open (fn, 1, true);
+	printf ("SMF '%s' tracks=%d, channels=%d, ppqn=%d (n_notes: %ld, n_tempi: %d)\n", fn, smf.num_tracks (), smf.num_channels (), smf.ppqn(), smf.n_note_on_events (), smf.num_tempos ());
 #else
 	FILE* f = g_fopen(fn, "r");
 	if (!f) {

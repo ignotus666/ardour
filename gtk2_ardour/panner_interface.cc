@@ -33,13 +33,13 @@ using namespace Gtk;
 using namespace ARDOUR;
 using namespace Gtkmm2ext;
 
-PannerInterface::PannerInterface (boost::shared_ptr<Panner> p)
+PannerInterface::PannerInterface (std::shared_ptr<Panner> p)
 	: _panner (p)
 	, _tooltip (this)
 	, _send_mode (false)
 	, _editor (0)
 {
-	set_flags (Gtk::CAN_FOCUS);
+	set_can_focus ();
 
 	add_events (Gdk::ENTER_NOTIFY_MASK|Gdk::LEAVE_NOTIFY_MASK|
 	            Gdk::KEY_PRESS_MASK|Gdk::KEY_RELEASE_MASK|
@@ -71,7 +71,7 @@ PannerInterface::on_leave_notify_event (GdkEventCrossing *)
 {
 	Keyboard::magic_widget_drop_focus ();
 	if (!proxy_controllable ().expired ()) {
-		PBD::Controllable::GUIFocusChanged (boost::weak_ptr<PBD::Controllable> ());
+		PBD::Controllable::GUIFocusChanged (std::weak_ptr<PBD::Controllable> ());
 	}
 	return false;
 }

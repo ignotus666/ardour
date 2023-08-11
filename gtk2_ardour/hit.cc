@@ -29,7 +29,7 @@
 using namespace ARDOUR;
 using namespace ArdourCanvas;
 
-Hit::Hit (MidiRegionView& region, Item* parent, double size, const boost::shared_ptr<NoteType> note, bool with_events)
+Hit::Hit (MidiRegionView& region, Item* parent, double size, const std::shared_ptr<NoteType> note, bool with_events)
 	: NoteBase (region, with_events, note)
 {
 	_polygon = new ArdourCanvas::Polygon (parent);
@@ -144,4 +144,11 @@ void
 Hit::set_ignore_events (bool ignore)
 {
 	_polygon->set_ignore_events (ignore);
+}
+
+double
+Hit::visual_velocity() const
+{
+	/* We don't display velocity in any explicit way */
+	return 0.0;
 }

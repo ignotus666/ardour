@@ -19,8 +19,9 @@
 #ifndef __osc_osccontrollable_h__
 #define __osc_osccontrollable_h__
 
+#include <memory>
 #include <string>
-#include <boost/shared_ptr.hpp>
+
 #include <sigc++/sigc++.h>
 #include <lo/lo.h>
 
@@ -35,16 +36,16 @@ namespace ARDOUR {
 class OSCControllable : public PBD::Stateful
 {
   public:
-	OSCControllable (lo_address addr, const std::string& path, boost::shared_ptr<PBD::Controllable>);
+	OSCControllable (lo_address addr, const std::string& path, std::shared_ptr<PBD::Controllable>);
 	virtual ~OSCControllable ();
 
 	lo_address address() const { return addr; }
 
-	XMLNode& get_state ();
+	XMLNode& get_state () const;
 	int set_state (const XMLNode& node, int version);
 
   protected:
-	boost::shared_ptr<PBD::Controllable> controllable;
+	std::shared_ptr<PBD::Controllable> controllable;
 	PBD::ScopedConnection changed_connection;
 	lo_address addr;
 	std::string path;
@@ -57,14 +58,14 @@ class OSCRouteControllable : public OSCControllable
 
   public:
 	OSCRouteControllable (lo_address addr, const std::string& path,
-			      boost::shared_ptr<PBD::Controllable>,
-			      boost::shared_ptr<ARDOUR::Route>);
+			      std::shared_ptr<PBD::Controllable>,
+			      std::shared_ptr<ARDOUR::Route>);
 	~OSCRouteControllable ();
 
-	boost::shared_ptr<ARDOUR::Route> route() const { return _route; }
+	std::shared_ptr<ARDOUR::Route> route() const { return _route; }
 
   private:
-	boost::shared_ptr<ARDOUR::Route> _route;
+	std::shared_ptr<ARDOUR::Route> _route;
 
 	void send_change_message ();
 };

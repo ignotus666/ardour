@@ -55,8 +55,10 @@
 
 namespace ARDOUR {
 	class IO;
+	class ControlGroup;
 	class GainControl;
 	class Session;
+	class Stripable;
 	class Route;
 	class RouteGroup;
 	class PeakMeter;
@@ -80,10 +82,10 @@ public:
 	GainMeterBase (ARDOUR::Session*, bool horizontal, int, int);
 	virtual ~GainMeterBase ();
 
-	virtual void set_controls (boost::shared_ptr<ARDOUR::Route> route,
-	                           boost::shared_ptr<ARDOUR::PeakMeter> meter,
-	                           boost::shared_ptr<ARDOUR::Amp> amp,
-	                           boost::shared_ptr<ARDOUR::GainControl> control);
+	virtual void set_controls (std::shared_ptr<ARDOUR::Stripable> stripable,
+	                           std::shared_ptr<ARDOUR::PeakMeter> meter,
+	                           std::shared_ptr<ARDOUR::Amp> amp,
+	                           std::shared_ptr<ARDOUR::GainControl> control);
 
 	void update_gain_sensitive ();
 	void update_meters ();
@@ -94,10 +96,14 @@ public:
 	void set_width (Width, int len=0);
 	void set_meter_strip_name (const char * name);
 	void set_fader_name (const char * name);
+	void set_fader_fg (uint32_t);
+	void set_fader_bg (uint32_t);
+	void unset_fader_fg ();
+	void unset_fader_bg ();
 
 	virtual void setup_meters (int len=0);
 
-	boost::shared_ptr<PBD::Controllable> get_controllable();
+	std::shared_ptr<PBD::Controllable> get_controllable();
 
 	LevelMeterHBox& get_level_meter() const { return *level_meter; }
 	ArdourWidgets::SliderController& get_gain_slider() const { return *gain_slider; }
@@ -118,10 +124,10 @@ protected:
 	friend class MeterStrip;
 	friend class RouteTimeAxisView;
 	friend class VCAMasterStrip;
-	boost::shared_ptr<ARDOUR::Route> _route;
-	boost::shared_ptr<ARDOUR::PeakMeter> _meter;
-	boost::shared_ptr<ARDOUR::Amp> _amp;
-	boost::shared_ptr<ARDOUR::GainControl> _control;
+	std::shared_ptr<ARDOUR::Stripable> _stripable;
+	std::shared_ptr<ARDOUR::PeakMeter> _meter;
+	std::shared_ptr<ARDOUR::Amp> _amp;
+	std::shared_ptr<ARDOUR::GainControl> _control;
 	std::vector<sigc::connection> connections;
 	PBD::ScopedConnectionList model_connections;
 
@@ -182,8 +188,10 @@ protected:
 	Gtk::Menu* meter_menu;
 	void popup_meter_menu (GdkEventButton*);
 
-	void amp_stop_touch ();
-	void amp_start_touch ();
+	void amp_stop_touch (int);
+	void amp_start_touch (int);
+
+	std::shared_ptr<ARDOUR::ControlGroup> _touch_control_group;
 
 	void set_route_group_meter_point (ARDOUR::Route&, ARDOUR::MeterPoint);
 	void set_meter_point (ARDOUR::Route&, ARDOUR::MeterPoint);
@@ -204,6 +212,8 @@ protected:
 	ARDOUR::DataType _data_type;
 	ARDOUR::ChanCount _previous_amp_output_streams;
 
+	std::shared_ptr<ARDOUR::Route> route();
+
 private:
 
 	bool level_meter_button_press (GdkEventButton *);
@@ -219,10 +229,10 @@ class GainMeter : public GainMeterBase, public Gtk::VBox
          GainMeter (ARDOUR::Session*, int);
 	virtual ~GainMeter ();
 
-	virtual void set_controls (boost::shared_ptr<ARDOUR::Route> route,
-	                           boost::shared_ptr<ARDOUR::PeakMeter> meter,
-	                           boost::shared_ptr<ARDOUR::Amp> amp,
-	                           boost::shared_ptr<ARDOUR::GainControl> control);
+	virtual void set_controls (std::shared_ptr<ARDOUR::Stripable> stripable,
+	                           std::shared_ptr<ARDOUR::PeakMeter> meter,
+	                           std::shared_ptr<ARDOUR::Amp> amp,
+	                           std::shared_ptr<ARDOUR::GainControl> control);
 
 	int get_gm_width ();
 	void setup_meters (int len=0);

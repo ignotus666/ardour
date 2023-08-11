@@ -25,14 +25,14 @@
 #ifndef ardour_osc_h
 #define ardour_osc_h
 
+#include <bitset>
+#include <memory>
 #include <string>
 #include <vector>
-#include <bitset>
 
 #include <sys/time.h>
 #include <pthread.h>
 
-#include <boost/shared_ptr.hpp>
 
 #include <lo/lo.h>
 
@@ -48,6 +48,7 @@
 
 #include "pbd/i18n.h"
 
+
 class OSCControllable;
 class OSCRouteObserver;
 class OSCGlobalObserver;
@@ -57,10 +58,11 @@ class OSCCueObserver;
 namespace ARDOUR {
 class Session;
 class Route;
+class ZeroConf;
 }
 
 /* this is mostly a placeholder because I suspect that at some
-   point we will want to add more members to accomodate
+   point we will want to add more members to accommodate
    certain types of requests to the OSC UI
 */
 
@@ -80,7 +82,7 @@ class OSC : public ARDOUR::ControlProtocol, public AbstractUI<OSCUIRequest>
 
 	static OSC* instance() { return _instance; }
 
-	XMLNode& get_state ();
+	XMLNode& get_state () const;
 	int set_state (const XMLNode&, int version);
 
 	void stripable_selection_changed () {}
@@ -106,8 +108,6 @@ class OSC : public ARDOUR::ControlProtocol, public AbstractUI<OSCUIRequest>
 	int start ();
 	int stop ();
 
-	static void* request_factory (uint32_t);
-
 	enum OSCDebugMode {
 		Off,
 		Unhandled,
@@ -121,9 +121,9 @@ class OSC : public ARDOUR::ControlProtocol, public AbstractUI<OSCUIRequest>
 		BusOnly = 3
 	};
 
-	typedef std::vector<boost::shared_ptr<ARDOUR::Stripable> > Sorted;
+	typedef std::vector<std::shared_ptr<ARDOUR::Stripable> > Sorted;
 	Sorted get_sorted_stripables(std::bitset<32> types, bool cue, uint32_t custom, Sorted my_list);
-	typedef std::map<boost::shared_ptr<ARDOUR::AutomationControl>, uint32_t> FakeTouchMap;
+	typedef std::map<std::shared_ptr<ARDOUR::AutomationControl>, uint32_t> FakeTouchMap;
 	FakeTouchMap _touch_timeout;
 
 // keep a surface's global setup by remote server url
@@ -142,7 +142,7 @@ class OSC : public ARDOUR::ControlProtocol, public AbstractUI<OSCUIRequest>
 		uint32_t custom_mode;		// use custom strip list
 		OSCTempMode temp_mode;		// use temp strip list
 		Sorted temp_strips;			// temp strip list for grouponly, vcaonly, auxonly
-		boost::shared_ptr<ARDOUR::Stripable> temp_master; // stripable this surface uses as temp master
+		std::shared_ptr<ARDOUR::Stripable> temp_master; // stripable this surface uses as temp master
 		Sorted strips;				// list of stripables for this surface
 		// strips
 		uint32_t bank;				// current bank
@@ -153,8 +153,8 @@ class OSC : public ARDOUR::ControlProtocol, public AbstractUI<OSCUIRequest>
 		OSCSelectObserver* sel_obs;	// So we can sync select feedback with selected channel
 		uint32_t expand;			// Used by /select/select
 		bool expand_enable;			// use expand instead of select
-		boost::shared_ptr<ARDOUR::Stripable> expand_strip; // stripable this surface uses for expand
-		boost::shared_ptr<ARDOUR::Stripable> select; // stripable this surface uses as selected
+		std::shared_ptr<ARDOUR::Stripable> expand_strip; // stripable this surface uses for expand
+		std::shared_ptr<ARDOUR::Stripable> select; // stripable this surface uses as selected
 		int plug_page;				// current plugin page
 		uint32_t plug_page_size;	// plugin page size (number of controls)
 		int plugin_id;			// id of current plugin
@@ -189,6 +189,8 @@ class OSC : public ARDOUR::ControlProtocol, public AbstractUI<OSCUIRequest>
 		 * [12]	- Send Playhead position like primary/secondary GUI clocks
 		 * [13] - Send well known feedback (for /select/command
 		 * [14] - use OSC 1.0 only (#reply -> /reply)
+		 * [15] - report 8x8 trigger grid status
+		 * [16] - report mixer scene status
 		 *
 		 * Strip_type bits:
 		 * [0] - Audio Tracks
@@ -222,7 +224,7 @@ class OSC : public ARDOUR::ControlProtocol, public AbstractUI<OSCUIRequest>
 		uint32_t custom_mode;			// use custom strip list
 		OSCTempMode temp_mode;			// use custom strip list
 		Sorted temp_strips;				// temp strip list for grouponly, vcaonly, auxonly
-		boost::shared_ptr<ARDOUR::Stripable> temp_master; // temp master stripable
+		std::shared_ptr<ARDOUR::Stripable> temp_master; // temp master stripable
 		std::bitset<32> strip_types;	// strip_types for this linkset
 		Sorted strips;					// list of valid strips in order for this set
 	};
@@ -262,6 +264,13 @@ class OSC : public ARDOUR::ControlProtocol, public AbstractUI<OSCUIRequest>
 	std::string get_remote_port () { return remote_port; }
 	void set_remote_port (std::string pt) { remote_port = pt; }
 
+	CONTROL_PROTOCOL_THREADS_NEED_TEMPO_MAP_DECL();
+
+	int trigger_bank_state (lo_address addr);
+	int trigger_grid_state (lo_address addr, bool zero_it = false);
+
+	int mixer_scene_state (lo_address addr, bool zero_it = false);
+
   protected:
         void thread_init ();
 	void do_request (OSCUIRequest*);
@@ -295,7 +304,9 @@ class OSC : public ARDOUR::ControlProtocol, public AbstractUI<OSCUIRequest>
 	double scrub_place;		// place of play head at latest jog/scrub wheel tick
 	int64_t scrub_time;		// when did the wheel move last?
 	bool global_init;
-	boost::shared_ptr<ARDOUR::Stripable> _select;	// which stripable out of /surface/stripables is gui selected
+	std::shared_ptr<ARDOUR::Stripable> _select;	// which stripable out of /surface/stripables is gui selected
+
+	ARDOUR::ZeroConf* _zeroconf;
 
 	void register_callbacks ();
 
@@ -312,8 +323,8 @@ class OSC : public ARDOUR::ControlProtocol, public AbstractUI<OSCUIRequest>
 	std::string get_port (std::string host);
 	OSCSurface * get_surface (lo_address addr, bool quiet = false);
 	int check_surface (lo_message msg);
-	uint32_t get_sid (boost::shared_ptr<ARDOUR::Stripable> strip, lo_address addr);
-	boost::shared_ptr<ARDOUR::Stripable> get_strip (uint32_t ssid, lo_address addr);
+	uint32_t get_sid (std::shared_ptr<ARDOUR::Stripable> strip, lo_address addr);
+	std::shared_ptr<ARDOUR::Stripable> get_strip (uint32_t ssid, lo_address addr);
 	void global_feedback (OSCSurface* sur);
 	void strip_feedback (OSCSurface* sur, bool new_bank_size);
 	void surface_destroy (OSCSurface* sur);
@@ -330,7 +341,7 @@ class OSC : public ARDOUR::ControlProtocol, public AbstractUI<OSCUIRequest>
 
 	int set_automation (const char *path, const char* types, lo_arg **argv, int argc, lo_message msg);
 	int touch_detect (const char *path, const char* types, lo_arg **argv, int argc, lo_message msg);
-	int fake_touch (boost::shared_ptr<ARDOUR::AutomationControl> ctrl);
+	int fake_touch (std::shared_ptr<ARDOUR::AutomationControl> ctrl);
 
 	int spill (const char *path, const char* types, lo_arg **argv, int argc, lo_message msg);
 
@@ -348,7 +359,7 @@ class OSC : public ARDOUR::ControlProtocol, public AbstractUI<OSCUIRequest>
 	}
 
 	// cue
-	Sorted cue_get_sorted_stripables(boost::shared_ptr<ARDOUR::Stripable> aux, uint32_t id, lo_address);
+	Sorted cue_get_sorted_stripables(std::shared_ptr<ARDOUR::Stripable> aux, uint32_t id, lo_address);
 	int cue_parse (const char *path, const char* types, lo_arg **argv, int argc, lo_message msg);
 	int cue_set (uint32_t aux, lo_message msg);
 	int _cue_set (uint32_t aux, lo_address addr);
@@ -362,7 +373,7 @@ class OSC : public ARDOUR::ControlProtocol, public AbstractUI<OSCUIRequest>
 	int cue_aux_fader (float position, lo_message msg);
 	int cue_aux_mute (float state, lo_message msg);
 	void cue_set_aux (uint32_t aux, lo_message msg);
-	boost::shared_ptr<ARDOUR::Send> cue_get_send (uint32_t id, lo_address addr);
+	std::shared_ptr<ARDOUR::Send> cue_get_send (uint32_t id, lo_address addr);
 	// end cue
 
 	// link
@@ -484,6 +495,12 @@ class OSC : public ARDOUR::ControlProtocol, public AbstractUI<OSCUIRequest>
 		return 0; \
 	}
 
+	PATH_CALLBACK1(trigger_cue_row,i,);
+	PATH_CALLBACK1(trigger_stop_all,i,);  //0 = "stop at end of bar"  1 = "stop now"
+
+	PATH_CALLBACK1(store_mixer_scene,i,);
+	PATH_CALLBACK1(apply_mixer_scene,i,);
+
 	PATH_CALLBACK1(set_transport_speed,f,);
 	PATH_CALLBACK1(add_marker_name,s,&);
 	PATH_CALLBACK1(access_action,s,&);
@@ -515,6 +532,9 @@ class OSC : public ARDOUR::ControlProtocol, public AbstractUI<OSCUIRequest>
 		} \
 		return 0; \
 	}
+
+	PATH_CALLBACK1_MSG(osc_tbank_step_routes,i);
+	PATH_CALLBACK1_MSG(osc_tbank_step_rows,i);
 
 	PATH_CALLBACK1_MSG(scrub,f);
 	PATH_CALLBACK1_MSG(jog,f);
@@ -628,14 +648,20 @@ class OSC : public ARDOUR::ControlProtocol, public AbstractUI<OSCUIRequest>
 	PATH_CALLBACK2_MSG(route_plugin_descriptor,i,i);
 	PATH_CALLBACK2_MSG(route_plugin_reset,i,i);
 
+	PATH_CALLBACK2(tbank_set_size,i,i);
+
+	PATH_CALLBACK2_MSG(trigger_bang,i,i);
+	PATH_CALLBACK2_MSG(trigger_unbang,i,i);
+	PATH_CALLBACK2_MSG(trigger_stop,i,i);  /* second arg is 'stop now' */
+
 	int strip_parse (const char *path, const char* types, lo_arg **argv, int argc, lo_message msg);
 	int master_parse (const char *path, const char* types, lo_arg **argv, int argc, lo_message msg);
 	int monitor_parse (const char *path, const char* types, lo_arg **argv, int argc, lo_message msg);
-	int _strip_parse (const char *path, const char *sub_path, const char* types, lo_arg **argv, int argc, boost::shared_ptr<ARDOUR::Stripable> s, int param_1, bool strp, lo_message msg);
-	int strip_state (const char *path, boost::shared_ptr<ARDOUR::Stripable> s, int ssid, lo_message msg);
+	int _strip_parse (const char *path, const char *sub_path, const char* types, lo_arg **argv, int argc, std::shared_ptr<ARDOUR::Stripable> s, int param_1, bool strp, lo_message msg);
+	int strip_state (const char *path, std::shared_ptr<ARDOUR::Stripable> s, int ssid, lo_message msg);
 	int strip_list (lo_message msg);
-	int _strip_select (boost::shared_ptr<ARDOUR::Stripable> s, lo_address addr);
-	int _strip_select2 (boost::shared_ptr<ARDOUR::Stripable> s, OSCSurface *sur, lo_address addr);
+	int _strip_select (std::shared_ptr<ARDOUR::Stripable> s, lo_address addr);
+	int _strip_select2 (std::shared_ptr<ARDOUR::Stripable> s, OSCSurface *sur, lo_address addr);
 
 	void loop_location (int start, int end);
 
@@ -649,6 +675,10 @@ class OSC : public ARDOUR::ControlProtocol, public AbstractUI<OSCUIRequest>
 	int route_plugin_list(int ssid, lo_message msg);
 	int route_plugin_descriptor(int ssid, int piid, lo_message msg);
 	int route_plugin_reset(int ssid, int piid, lo_message msg);
+
+	int trigger_bang(int rid, int stop_now, lo_message msg);
+	int trigger_unbang(int rid, int stop_now, lo_message msg);
+	int trigger_stop(int rid, int row_id, lo_message msg);
 
 	//banking functions
 	int set_bank (uint32_t bank_start, lo_message msg);
@@ -690,7 +720,7 @@ class OSC : public ARDOUR::ControlProtocol, public AbstractUI<OSCUIRequest>
 	int sel_previous (lo_message msg);
 	int sel_next (lo_message msg);
 	int sel_delta (int delta, lo_message msg);
-	boost::shared_ptr<ARDOUR::Send> get_send (boost::shared_ptr<ARDOUR::Stripable> st, lo_address addr);
+	std::shared_ptr<ARDOUR::Send> get_send (std::shared_ptr<ARDOUR::Stripable> st, lo_address addr);
 	int sel_sendgain (int id, float dB, lo_message msg);
 	int sel_sendfader (int id, float pos, lo_message msg);
 	int sel_sendenable (int id, float pos, lo_message msg);
@@ -718,15 +748,18 @@ class OSC : public ARDOUR::ControlProtocol, public AbstractUI<OSCUIRequest>
 	int sel_new_personal_send (char *n, lo_message msg);
 	int set_temp_mode (lo_address addr);
 	int parse_sel_group (const char *path, const char* types, lo_arg **argv, int argc, lo_message msg);
-	boost::shared_ptr<ARDOUR::VCA> get_vca_by_name (std::string vname);
+	std::shared_ptr<ARDOUR::VCA> get_vca_by_name (std::string vname);
 
-	void listen_to_route (boost::shared_ptr<ARDOUR::Stripable>, lo_address);
+	void listen_to_route (std::shared_ptr<ARDOUR::Stripable>, lo_address);
 
-	void route_name_changed (const PBD::PropertyChange&, boost::weak_ptr<ARDOUR::Route> r, lo_address addr);
+	void route_name_changed (const PBD::PropertyChange&, std::weak_ptr<ARDOUR::Route> r, lo_address addr);
 	void recalcbanks ();
 	void _recalcbanks ();
 	void notify_routes_added (ARDOUR::RouteList &);
 	void notify_vca_added (ARDOUR::VCAList &);
+
+	int osc_tbank_step_routes (int step, lo_message msg);
+	int osc_tbank_step_rows (int step, lo_message msg);
 
 	int cancel_all_solos ();
 	int osc_toggle_roll (bool ret2strt);

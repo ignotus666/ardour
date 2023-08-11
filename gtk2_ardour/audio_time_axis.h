@@ -70,14 +70,11 @@ public:
 	AudioTimeAxisView (PublicEditor&, ARDOUR::Session*, ArdourCanvas::Canvas& canvas);
 	virtual ~AudioTimeAxisView ();
 
-	void set_route (boost::shared_ptr<ARDOUR::Route>);
+	void set_route (std::shared_ptr<ARDOUR::Route>);
 
 	AudioStreamView* audio_view();
 
 	void set_show_waveforms_recording (bool yn);
-
-	/* Overridden from parent to store display state */
-	guint32 show_at (double y, int& nth, Gtk::VBox *parent);
 
 	void create_automation_child (const Evoral::Parameter& param, bool show);
 
@@ -96,9 +93,6 @@ private:
 
 	Gtk::Menu* build_mode_menu();
 	void build_automation_action_menu (bool);
-
-
-	void hide ();
 
 	void update_control_names ();
 };

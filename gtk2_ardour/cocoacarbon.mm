@@ -47,20 +47,6 @@
 using namespace std;
 using namespace PBD;
 
-bool
-cocoa_open_url (const char* uri)
-{
-	NSString* struri = [[NSString alloc] initWithUTF8String:uri];
-	NSURL* nsurl = [[NSURL alloc] initWithString:struri];
-
-	bool ret = [[NSWorkspace sharedWorkspace] openURL:nsurl];
-
-	[struri release];
-	[nsurl release];
-
-	return ret;
-}
-
 void
 set_language_preference ()
 {
@@ -85,6 +71,8 @@ set_language_preference ()
 
 	if (languages && ((count = [languages count]) > 0)) {
 
+		cout << "User has " << [languages count] << " set in macOS preferences\n";
+
 		bool have_translatable_languages = true;
 
 		const char *cstr = [[languages objectAtIndex:0] UTF8String];
@@ -97,17 +85,26 @@ set_language_preference ()
 				*/
 				have_translatable_languages = false;
 				cout << "User has en as primary language choice. " << PROGRAM_NAME << " will not be translated\n";
+			} else if (len == 5 && cstr[len-2] == 'G' && cstr[len-1] == 'B') {
+				/* primary language is english (GB). Stop
+				   looking, because we know there is a
+				   translation.
+				*/
+				cout << "Use has en_GB a primary language choice. " << PROGRAM_NAME << " will be translated\n";
 			} else if (len == 5 && cstr[len-2] == 'U' && cstr[len-1] == 'S') {
 				/* primary language choice is english (US). Stop looking, and do not set
 				   LANGUAGE. gettext needs to just skip translation entirely.
 				*/
 				have_translatable_languages = false;
 				cout << "User has en_US as primary language choice. " << PROGRAM_NAME << " will not be translated\n";
+			} else {
+				/* primary language choice is english with some
+				 * non-anglosphere locale, eg. en_DE. We will
+				 * not translate.
+				 */
+				have_translatable_languages = false;
+				cout << "User has " << cstr << " as primary language/locale choice. " << PROGRAM_NAME << " will not be translated\n";
 			}
-
-			/* else en-<FOO> ... still leave the door open for translation
-			   to other version of english (e.g. en_IN, en_GB, etc)
-			*/
 		}
 
 		if (have_translatable_languages) {
@@ -133,6 +130,8 @@ set_language_preference ()
 			setenv ("LANGUAGE", stupid_apple_string.c_str(), 0);
 			cout << "LANGUAGE set to " << getenv ("LANGUAGE") << endl;
 		}
+	} else {
+		cout << "User has no languages set in macOS preferences\n";
 	}
 
 	/* now get AppleLocale value and use that to set LC_ALL because Launchd-started processes (i.e. GUI apps)

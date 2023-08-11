@@ -2,7 +2,7 @@
  * Copyright (C) 2006-2016 David Robillard <d@drobilla.net>
  * Copyright (C) 2007-2017 Paul Davis <paul@linuxaudiosystems.com>
  * Copyright (C) 2010 Carl Hetherington <carl@carlh.net>
- * Copyright (C) 2013-2019 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2013-2023 Robin Gareus <robin@gareus.org>
  * Copyright (C) 2014-2017 Tim Mayberry <mojofunk@gmail.com>
  * Copyright (C) 2015-2016 Nick Mainsbridge <mainsbridge@gmail.com>
  * Copyright (C) 2018 Julien "_FrnchFrgg_" RIVAUD <frnchfrgg@free.fr>
@@ -355,7 +355,7 @@ Boolean ComponentAndDescriptionMatch_Loosely(ArdourComponent inComponent, const 
 }
 
 
-AUPlugin::AUPlugin (AudioEngine& engine, Session& session, boost::shared_ptr<CAComponent> _comp)
+AUPlugin::AUPlugin (AudioEngine& engine, Session& session, std::shared_ptr<CAComponent> _comp)
 	: Plugin (engine, session)
 	, comp (_comp)
 	, unit (new CAAudioUnit)
@@ -495,7 +495,7 @@ AUPlugin::discover_factory_presets ()
 void
 AUPlugin::init ()
 {
-	g_atomic_int_set (&_current_latency, UINT_MAX);
+	_current_latency.store (UINT_MAX);
 
 	OSErr err;
 
@@ -760,10 +760,10 @@ AUPlugin::default_value (uint32_t port)
 samplecnt_t
 AUPlugin::plugin_latency () const
 {
-	guint lat = g_atomic_int_get (&_current_latency);;
+	guint lat = _current_latency.load ();;
 	if (lat == UINT_MAX) {
 		lat = unit->Latency() * _session.sample_rate();
-		g_atomic_int_set (&_current_latency, lat);
+		_current_latency.store (lat);
 	}
 	return lat;
 }
@@ -1124,7 +1124,7 @@ AUPlugin::match_variable_io (ChanCount& in, ChanCount& aux_in, ChanCount& out)
 	/* preferred setting (provided by plugin_insert) */
 	const int32_t preferred_out = out.n_audio ();
 
-	AUPluginInfoPtr pinfo = boost::dynamic_pointer_cast<AUPluginInfo>(get_info());
+	AUPluginInfoPtr pinfo = std::dynamic_pointer_cast<AUPluginInfo>(get_info());
 	vector<pair<int,int> > io_configs = pinfo->io_configs;
 
 #ifndef NDEBUG
@@ -1489,10 +1489,10 @@ AUPlugin::connect_and_run (BufferSet& bufs,
 			MidiBuffer& m = bufs.get_midi (i);
 			for (MidiBuffer::iterator i = m.begin(); i != m.end(); ++i) {
 				Evoral::Event<samplepos_t> ev (*i);
-				if (ev.is_channel_event()) {
+				if (ev.is_channel_event () && ev.time() >= offset && ev.time() < offset + nframes) {
 					const uint8_t* b = ev.buffer();
 					DEBUG_TRACE (DEBUG::AudioUnitProcess, string_compose ("%1: MIDI event %2\n", name(), ev));
-					unit->MIDIEvent (b[0], b[1], b[2], ev.time());
+					unit->MIDIEvent (b[0], b[1], b[2], ev.time() - offset);
 				}
 				/* XXX need to handle sysex and other message types */
 			}
@@ -1638,7 +1638,7 @@ AUPlugin::get_musical_time_location_callback (UInt32*   outDeltaSampleOffsetToNe
 	DEBUG_TRACE (DEBUG::AudioUnitProcess, "AU calls ardour music time location callback\n");
 
 	TempoMetric metric = tmap->metric_at (timepos_t (transport_sample + input_offset));
-	BBT_Time bbt = tmap->bbt_at (timepos_t (transport_sample));
+	BBT_Argument bbt = tmap->bbt_at (timepos_t (transport_sample));
 
 	if (outDeltaSampleOffsetToNextBeat) {
 		if (bbt.ticks == 0) {
@@ -1776,6 +1776,7 @@ AUPlugin::describe_io_port (ARDOUR::DataType dt, bool input, uint32_t id) const
 	}
 
 	std::string busname;
+	uint32_t    bus_number = 0;
 	bool is_sidechain = false;
 
 	if (dt == DataType::AUDIO) {
@@ -1788,7 +1789,8 @@ AUPlugin::describe_io_port (ARDOUR::DataType dt, bool input, uint32_t id) const
 					ss << " / Bus " << (1 + bus);
 					busname = _bus_name_in[bus];
 					is_sidechain = bus > 0;
-					busname = _bus_name_in[bus];
+					busname      = _bus_name_in[bus];
+					bus_number   = bus;
 					break;
 				}
 				pid -= bus_inused[bus];
@@ -1801,7 +1803,8 @@ AUPlugin::describe_io_port (ARDOUR::DataType dt, bool input, uint32_t id) const
 					id = pid;
 					ss << _bus_name_out[bus];
 					ss << " / Bus " << (1 + bus);
-					busname = _bus_name_out[bus];
+					busname    = _bus_name_out[bus];
+					bus_number = bus;
 					break;
 				}
 				pid -= bus_outputs[bus];
@@ -1820,8 +1823,9 @@ AUPlugin::describe_io_port (ARDOUR::DataType dt, bool input, uint32_t id) const
 	Plugin::IOPortDescription iod (ss.str());
 	iod.is_sidechain = is_sidechain;
 	if (!busname.empty()) {
-		iod.group_name = busname;
+		iod.group_name    = busname;
 		iod.group_channel = id;
+		iod.bus_number    = bus_number;
 	}
 	return iod;
 }
@@ -1847,7 +1851,7 @@ AUPlugin::parameter_is_control (uint32_t param) const
 {
 	assert(param < descriptors.size());
 	if (descriptors[param].automatable) {
-		/* corrently ardour expects all controls to be automatable
+		/* currently ardour expects all controls to be automatable
 		 * IOW ardour GUI elements mandate an Evoral::Parameter
 		 * for all input+control ports.
 		 */
@@ -2290,7 +2294,7 @@ AUPlugin::find_presets ()
 
 	PluginInfoPtr nfo = get_info();
 	find_files_matching_filter (preset_files, preset_search_path, au_preset_filter,
-			boost::dynamic_pointer_cast<AUPluginInfo> (nfo).get(),
+			std::dynamic_pointer_cast<AUPluginInfo> (nfo).get(),
 			true, true, true);
 
 	if (preset_files.empty()) {
@@ -2347,7 +2351,7 @@ AUPlugin::has_editor () const
 
 /* ****************************************************************************/
 
-AUPluginInfo::AUPluginInfo (boost::shared_ptr<CAComponentDescription> d)
+AUPluginInfo::AUPluginInfo (std::shared_ptr<CAComponentDescription> d)
 	: version (0)
 	, max_outputs (0)
 	, descriptor (d)
@@ -2362,7 +2366,7 @@ AUPluginInfo::load (Session& session)
 		PluginPtr plugin;
 
 		DEBUG_TRACE (DEBUG::AudioUnitConfig, "load AU as a component\n");
-		boost::shared_ptr<CAComponent> comp (new CAComponent(*descriptor));
+		std::shared_ptr<CAComponent> comp (new CAComponent(*descriptor));
 
 		if (!comp->IsValid()) {
 			error << ("AudioUnit: not a valid Component") << endmsg;
@@ -2374,7 +2378,7 @@ AUPluginInfo::load (Session& session)
 		AUPluginInfo *aup = new AUPluginInfo (*this);
 		DEBUG_TRACE (DEBUG::AudioUnitConfig, string_compose ("plugin info for %1 = %2\n", this, aup));
 		plugin->set_info (PluginInfoPtr (aup));
-		boost::dynamic_pointer_cast<AUPlugin> (plugin)->set_fixed_size_buffers (aup->creator == "Universal Audio");
+		std::dynamic_pointer_cast<AUPlugin> (plugin)->set_fixed_size_buffers (aup->creator == "Universal Audio");
 		return plugin;
 	}
 
@@ -2388,10 +2392,10 @@ std::vector<Plugin::PresetRecord>
 AUPluginInfo::get_presets (bool user_only) const
 {
 	std::vector<Plugin::PresetRecord> p;
-	boost::shared_ptr<CAComponent> comp;
+	std::shared_ptr<CAComponent> comp;
 
 	try {
-		comp = boost::shared_ptr<CAComponent>(new CAComponent(*descriptor));
+		comp = std::shared_ptr<CAComponent>(new CAComponent(*descriptor));
 		if (!comp->IsValid()) {
 			throw failed_constructor();
 		}
@@ -2424,6 +2428,7 @@ AUPluginInfo::get_presets (bool user_only) const
 	}
 
 	if (user_only) {
+		std::sort (p.begin (), p.end());
 		return p;
 	}
 
@@ -2433,7 +2438,7 @@ AUPluginInfo::get_presets (bool user_only) const
 	UInt32 dataSize;
 	Boolean isWritable;
 
-	boost::shared_ptr<CAAudioUnit> unit (new CAAudioUnit);
+	std::shared_ptr<CAAudioUnit> unit (new CAAudioUnit);
 	if (noErr != CAAudioUnit::Open (*(comp.get()), *unit)) {
 		return p;
 	}
@@ -2460,6 +2465,7 @@ AUPluginInfo::get_presets (bool user_only) const
 	CFRelease (presets);
 	unit->Uninitialize ();
 
+	std::sort (p.begin (), p.end ());
 	return p;
 }
 
@@ -2520,7 +2526,7 @@ AUPlugin::set_info (PluginInfoPtr info)
 {
 	Plugin::set_info (info);
 
-	AUPluginInfoPtr pinfo = boost::dynamic_pointer_cast<AUPluginInfo>(get_info());
+	AUPluginInfoPtr pinfo = std::dynamic_pointer_cast<AUPluginInfo>(get_info());
 	_has_midi_input = pinfo->needs_midi_input ();
 	_has_midi_output = false;
 }
@@ -2654,7 +2660,7 @@ AUPlugin::parameter_change_listener (void* /*arg*/, void* src, const AudioUnitEv
 		if (event->mArgument.mProperty.mPropertyID == kAudioUnitProperty_Latency) {
 			DEBUG_TRACE (DEBUG::AudioUnitConfig, string_compose("AU Latency Change Event %1 <> %2\n", new_value, unit->Latency()));
 			guint lat = unit->Latency() * _session.sample_rate();
-			g_atomic_int_set (&_current_latency, lat);
+			_current_latency.store (lat);
 		}
 		return;
 	}

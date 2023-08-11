@@ -221,6 +221,11 @@ Parser::trace_event (Parser &, MIDI::byte *msg, size_t len, samplecnt_t /*when*/
 				   << "Clock"
 				   << endmsg;
 				break;
+			case 0xf9:
+				*o << trace_prefix
+				   << "Tick"
+				   << endmsg;
+				break;
 			case 0xfa:
 				*o << trace_prefix
 				   << "Start"
@@ -550,6 +555,9 @@ Parser::realtime_msg(unsigned char inbyte)
 	switch (inbyte) {
 	case 0xf8:
 		timing (*this, _timestamp);
+		break;
+	case 0xf9:
+		tick (*this, _timestamp);
 		break;
 	case 0xfa:
 		start (*this, _timestamp);

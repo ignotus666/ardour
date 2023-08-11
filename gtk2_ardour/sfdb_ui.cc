@@ -49,9 +49,13 @@
 #include <gtkmm/scrolledwindow.h>
 #include <gtkmm/stock.h>
 
+#include "ardour/debug.h"
+
+#include "pbd/convert.h"
 #include "pbd/tokenizer.h"
 #include "pbd/enumwriter.h"
 #include "pbd/file_utils.h"
+#include "pbd/natsort.h"
 #include "pbd/pthread_utils.h"
 #include "pbd/string_convert.h"
 #include "pbd/xml++.h"
@@ -182,7 +186,7 @@ SoundFileBox::SoundFileBox (bool /*persistent*/)
 	format.set_alignment (1, 0.5);
 	channels.set_text (_("Channels:"));
 	channels.set_alignment (1, 0.5);
-	samplerate.set_text (_("Sample rate:"));
+	samplerate.set_text (_("Sample Rate:"));
 	samplerate.set_alignment (1, 0.5);
 	tempomap.set_text (_("Tempo Map:"));
 	tempomap.set_alignment (1, 0.5);
@@ -214,7 +218,6 @@ SoundFileBox::SoundFileBox (bool /*persistent*/)
 	table.attach (timecode_clock,  1, 2, row, row+1, FILL, FILL);  row+=1;
 	table.attach (tempomap_value,  1, 2, row, row+1, FILL, FILL);  row+=1;
 
-	length_clock.set_is_duration (true, timepos_t());
 	length_clock.set_mode (ARDOUR_UI::instance()->primary_clock->mode());
 	timecode_clock.set_mode (AudioClock::Timecode);
 
@@ -334,14 +337,11 @@ SoundFileBox::setup_labels (const string& filename)
 
 	if (SMFSource::valid_midi_file (path)) {
 
-		boost::shared_ptr<SMFSource> ms;
-		try {
-			ms = boost::dynamic_pointer_cast<SMFSource> (
-				SourceFactory::createExternal (DataType::MIDI, *_session,
-				                               path, 0, Source::Flag (0), false));
-		} catch (const std::exception& e) {
-			error << string_compose(_("Could not read file: %1 (%2)."),
-			                        path, e.what()) << endmsg;
+		bool err = false;
+		Evoral::SMF smf;
+		if (smf.open (path)) {
+			error << string_compose(_("Could not read file: %1."), path) << endmsg;
+			err = true;
 		}
 
 		preview_label.set_markup (_("<b>Midi File Information</b>"));
@@ -351,22 +351,22 @@ SoundFileBox::setup_labels (const string& filename)
 		timecode_clock.set (timepos_t ());
 		tags_entry.set_sensitive (false);
 
-		if (ms) {
-			if (ms->smf_format()==0) {
+		if (!err) {
+			if (smf.smf_format()==0) {
 				format_text.set_text ("MIDI Type 0");
 			} else {
-				format_text.set_text (string_compose("%1 (%2 Tracks)", ms->smf_format()==2 ? "MIDI Type 2" : "MIDI Type 1", ms->num_tracks()));
+				format_text.set_text (string_compose("%1 (%2 Tracks)", smf.smf_format()==2 ? "MIDI Type 2" : "MIDI Type 1", smf.num_tracks()));
 			}
-			channels_value.set_text (to_string<uint32_t>(ms->num_channels()));
+			channels_value.set_text (ARDOUR_UI_UTILS::midi_channels_as_string (smf.used_channels()));
 			length_clock.set_duration (timecnt_t (0));
-			switch (ms->num_tempos()) {
+			switch (smf.num_tempos()) {
 			case 0:
 				tempomap_value.set_text (_("No tempo data"));
 				break;
 			case 1: {
-				Evoral::SMF::Tempo* t = ms->nth_tempo (0);
+				Evoral::SMF::Tempo* t = smf.nth_tempo (0);
 				assert (t);
-				tempomap_value.set_text (string_compose (_("%1/%2 \u2669 = %3"),
+				tempomap_value.set_text (string_compose (_(u8"%1/%2 \u2669 = %3"),
 				                                         t->numerator,
 				                                         t->denominator,
 				                                         t->tempo ()));
@@ -374,16 +374,16 @@ SoundFileBox::setup_labels (const string& filename)
 			}
 			default:
 				tempomap_value.set_text (string_compose (_("map with %1 sections"),
-				                                         ms->num_tempos()));
+				                                         smf.num_tempos()));
 				break;
 			}
 		} else {
 			channels_value.set_text ("");
-			length_clock.set (timepos_t());
+			length_clock.set_duration (timecnt_t());
 			tempomap_value.set_text (_("No tempo data"));
 		}
 
-		if (_session && ms) {
+		if (_session && !err) {
 			play_btn.set_sensitive (true);
 		} else {
 			play_btn.set_sensitive (false);
@@ -394,13 +394,13 @@ SoundFileBox::setup_labels (const string& filename)
 
 	if(!AudioFileSource::get_soundfile_info (filename, sf_info, error_msg)) {
 
-		preview_label.set_markup (_("<b>Sound File Information</b>"));
+		preview_label.set_markup (_("<b>File Information</b>"));
 		format_text.set_text ("");
 		channels_value.set_text ("");
 		samplerate_value.set_text ("");
 		tags_entry.get_buffer()->set_text ("");
 
-		length_clock.set (timepos_t());
+		length_clock.set_duration (timecnt_t());
 		timecode_clock.set (timepos_t());
 
 		tags_entry.set_sensitive (false);
@@ -409,7 +409,29 @@ SoundFileBox::setup_labels (const string& filename)
 		return false;
 	}
 
-	preview_label.set_markup (string_compose ("<b>%1</b>", Glib::Markup::escape_text (Glib::path_get_basename (filename))));
+	try {
+
+		preview_label.set_markup (string_compose ("<b>%1</b>", Glib::Markup::escape_text (Glib::path_get_basename (filename))));
+
+	} catch (Glib::ConvertError& err) {
+
+		error << string_compose (_("Could not use confusing filename [%1] (%2)"), filename, err.what()) << endmsg;
+
+		preview_label.set_markup (_("<b>Sound File Information</b>"));
+		format_text.set_text ("");
+		channels_value.set_text ("");
+		samplerate_value.set_text ("");
+		tags_entry.get_buffer()->set_text ("");
+
+		length_clock.set_duration (timecnt_t());
+		timecode_clock.set (timepos_t());
+
+		tags_entry.set_sensitive (false);
+		play_btn.set_sensitive (false);
+
+		return false;
+	}
+
 	std::string n = sf_info.format_name;
 	if (n.substr (0, 8) == X_("Format: ")) {
 		n = n.substr (8);
@@ -418,12 +440,12 @@ SoundFileBox::setup_labels (const string& filename)
 	channels_value.set_text (to_string (sf_info.channels));
 
 	if (_session && sf_info.samplerate != _session->sample_rate()) {
-		samplerate.set_markup (string_compose ("<b>%1</b>", _("Sample rate:")));
+		samplerate.set_markup (string_compose ("<b>%1</b>", _("Sample Rate:")));
 		samplerate_value.set_markup (string_compose (X_("<b>%1 Hz</b>"), sf_info.samplerate));
 		samplerate_value.set_name ("NewSessionSR1Label");
 		samplerate.set_name ("NewSessionSR1Label");
 	} else {
-		samplerate.set_text (_("Sample rate:"));
+		samplerate.set_text (_("Sample Rate:"));
 		samplerate_value.set_text (string_compose (X_("%1 Hz"), sf_info.samplerate));
 		samplerate_value.set_name ("NewSessionSR2Label");
 		samplerate.set_name ("NewSessionSR2Label");
@@ -432,7 +454,6 @@ SoundFileBox::setup_labels (const string& filename)
 	samplecnt_t const nfr = _session ? _session->nominal_sample_rate() : 25;
 	double src_coef = (double) nfr / sf_info.samplerate;
 
-	length_clock.set_is_duration (true, timepos_t());
 	length_clock.set_duration (timecnt_t (samplecnt_t (llrint (sf_info.length * src_coef + 0.5))), true);
 	timecode_clock.set (timepos_t (samplepos_t (llrint (sf_info.timecode * src_coef + 0.5))), true);
 
@@ -500,12 +521,12 @@ SoundFileBox::audition ()
 		return;
 	}
 
-	boost::shared_ptr<Region> r;
+	std::shared_ptr<Region> r;
 
 	if (SMFSource::valid_midi_file (path)) {
 
-		boost::shared_ptr<SMFSource> ms =
-			boost::dynamic_pointer_cast<SMFSource> (
+		std::shared_ptr<SMFSource> ms =
+			std::dynamic_pointer_cast<SMFSource> (
 					SourceFactory::createExternal (DataType::MIDI, *_session,
 											 path, 0, Source::Flag (0), false));
 
@@ -518,13 +539,13 @@ SoundFileBox::audition ()
 		plist.add (ARDOUR::Properties::name, rname);
 		plist.add (ARDOUR::Properties::layer, 0);
 
-		r = boost::dynamic_pointer_cast<MidiRegion> (RegionFactory::create (boost::dynamic_pointer_cast<Source>(ms), plist, false));
+		r = std::dynamic_pointer_cast<MidiRegion> (RegionFactory::create (std::dynamic_pointer_cast<Source>(ms), plist, false));
 		assert(r);
 
 	} else {
 
 		SourceList srclist;
-		boost::shared_ptr<AudioFileSource> afs;
+		std::shared_ptr<AudioFileSource> afs;
 		bool old_sbp = AudioSource::get_build_peakfiles ();
 
 		/* don't even think of building peakfiles for these files */
@@ -533,12 +554,12 @@ SoundFileBox::audition ()
 
 		for (int n = 0; n < sf_info.channels; ++n) {
 			try {
-				afs = boost::dynamic_pointer_cast<AudioFileSource> (
+				afs = std::dynamic_pointer_cast<AudioFileSource> (
 					SourceFactory::createExternal (DataType::AUDIO, *_session,
 											 path, n,
 											 Source::Flag (ARDOUR::AudioFileSource::NoPeakFile), false));
 				if (afs->sample_rate() != _session->nominal_sample_rate()) {
-					boost::shared_ptr<SrcFileSource> sfs (new SrcFileSource(*_session, afs, _src_quality));
+					std::shared_ptr<SrcFileSource> sfs (new SrcFileSource(*_session, afs, _src_quality));
 					srclist.push_back(sfs);
 				} else {
 					srclist.push_back(afs);
@@ -557,7 +578,7 @@ SoundFileBox::audition ()
 			return;
 		}
 
-		afs = boost::dynamic_pointer_cast<AudioFileSource> (srclist[0]);
+		afs = std::dynamic_pointer_cast<AudioFileSource> (srclist[0]);
 		string rname = region_name_from_path (afs->path(), false);
 
 		PropertyList plist;
@@ -567,7 +588,7 @@ SoundFileBox::audition ()
 		plist.add (ARDOUR::Properties::name, rname);
 		plist.add (ARDOUR::Properties::layer, 0);
 
-		r = boost::dynamic_pointer_cast<AudioRegion> (RegionFactory::create (srclist, plist, false));
+		r = std::dynamic_pointer_cast<AudioRegion> (RegionFactory::create (srclist, plist, false));
 	}
 
 	timepos_t audition_position;
@@ -712,7 +733,6 @@ SoundFileBrowser::SoundFileBrowser (string title, ARDOUR::Session* s, bool persi
 	VBox* vbox;
 	HBox* hbox;
 
-
 	hbox = manage(new HBox);
 	hbox->pack_start (found_entry);
 	hbox->pack_start (found_search_btn);
@@ -737,7 +757,6 @@ SoundFileBrowser::SoundFileBrowser (string title, ARDOUR::Session* s, bool persi
 	notebook.append_page (*vbox, _("Search Tags"));
 
 	//add freesound search
-#ifdef FREESOUND_GOT_FIXED
 
 	HBox* passbox;
 	Label* label;
@@ -745,29 +764,51 @@ SoundFileBrowser::SoundFileBrowser (string title, ARDOUR::Session* s, bool persi
 	passbox = manage(new HBox);
 	passbox->set_spacing (6);
 
+	vbox = manage (new VBox);
 	label = manage (new Label);
+	label->set_alignment (Gtk::ALIGN_START);
 	label->set_text (_("Tags:"));
-	passbox->pack_start (*label, false, false);
-	passbox->pack_start (freesound_entry, true, true);
+	vbox->pack_start (*label, false, false);
+	vbox->pack_start (freesound_entry, true, true);
+	passbox->pack_start(*vbox, true, true);
 
+	vbox = manage (new VBox);
 	label = manage (new Label);
 	label->set_text (_("Sort:"));
-	passbox->pack_start (*label, false, false);
-	passbox->pack_start (freesound_sort, false, false);
+	label->set_alignment (Gtk::ALIGN_START);
+	vbox->pack_start (*label, false, false);
+	vbox->pack_start (freesound_sort, false, false);
 	freesound_sort.clear_items();
 
 	// Order of the following must correspond with enum sortMethod
 	// in sfdb_freesound_mootcher.h
-	freesound_sort.append_text(_("None"));
-	freesound_sort.append_text(_("Longest"));
-	freesound_sort.append_text(_("Shortest"));
-	freesound_sort.append_text(_("Newest"));
-	freesound_sort.append_text(_("Oldest"));
-	freesound_sort.append_text(_("Most downloaded"));
-	freesound_sort.append_text(_("Least downloaded"));
-	freesound_sort.append_text(_("Highest rated"));
-	freesound_sort.append_text(_("Lowest rated"));
+	freesound_sort.append(_("None"));
+	freesound_sort.append(_("Longest"));
+	freesound_sort.append(_("Shortest"));
+	freesound_sort.append(_("Newest"));
+	freesound_sort.append(_("Oldest"));
+	freesound_sort.append(_("Most downloaded"));
+	freesound_sort.append(_("Least downloaded"));
+	freesound_sort.append(_("Highest rated"));
+	freesound_sort.append(_("Lowest rated"));
 	freesound_sort.set_active(0);
+	passbox->pack_start(*vbox, false, false);
+
+	vbox = manage (new VBox);
+	label = manage (new Label);
+	label->set_text (_("License:"));
+	label->set_alignment (Gtk::ALIGN_START);
+	vbox->pack_start (*label, false, false);
+
+	vbox->pack_start (freesound_licence, false, false);
+	freesound_licence.clear_items();
+	freesound_licence.append(_("Any"));
+	freesound_licence.append(_("CC-BY"));
+	freesound_licence.append(_("CC-BY-NC"));
+	freesound_licence.append(_("PD"));
+	freesound_licence.set_active(0);
+
+	passbox->pack_start(*vbox, false, false);
 
 	passbox->pack_start (freesound_search_btn, false, false);
 	passbox->pack_start (freesound_more_btn, false, false);
@@ -787,32 +828,40 @@ SoundFileBrowser::SoundFileBrowser (string title, ARDOUR::Session* s, bool persi
 	vbox->pack_start (*passbox, PACK_SHRINK);
 	vbox->pack_start (*scroll);
 
-	freesound_list_view.append_column(_("ID")      , freesound_list_columns.id);
-	freesound_list_view.append_column(_("Filename"), freesound_list_columns.filename);
-	// freesound_list_view.append_column(_("URI")     , freesound_list_columns.uri);
-	freesound_list_view.append_column(_("Duration"), freesound_list_columns.duration);
-	freesound_list_view.append_column(_("Size"), freesound_list_columns.filesize);
-	freesound_list_view.append_column(_("Samplerate"), freesound_list_columns.smplrate);
-	freesound_list_view.append_column(_("License"), freesound_list_columns.license);
-	freesound_list_view.get_column(0)->set_alignment(0.5);
-	freesound_list_view.get_column(1)->set_expand(true); // filename
-	freesound_list_view.get_column(1)->set_resizable(true); // filename
-	freesound_list_view.get_column(2)->set_alignment(0.5);
-	freesound_list_view.get_column(3)->set_alignment(0.5);
-	freesound_list_view.get_column(4)->set_alignment(0.5);
-	freesound_list_view.get_column(5)->set_alignment(0.5);
+	freesound_list_view.append_column(_("ID")      ,    freesound_list_columns.id);
+	freesound_list_view.append_column(_("Filename"),    freesound_list_columns.filename);
+	freesound_list_view.append_column(_("Duration"),    freesound_list_columns.duration);
+	freesound_list_view.append_column(_("Size"),        freesound_list_columns.filesize);
+	freesound_list_view.append_column(_("Sample Rate"), freesound_list_columns.smplrate);
+	freesound_list_view.append_column(_("License"),     freesound_list_columns.license);
+
+	// filename
+	freesound_list_view.get_column(1)->set_expand(true);
+	freesound_list_view.get_column(1)->set_resizable(true);
+	freesound_list_view.get_column(1)->set_sizing(Gtk::TREE_VIEW_COLUMN_FIXED);
+
+	// duration: justify contents right
+	CellRendererText* renderer = dynamic_cast<CellRendererText*> (freesound_list_view.get_column(2)->get_first_cell ());
+	if (renderer) {
+		renderer->property_xalign () = 1.0;
+	}
 
 	freesound_list_view.get_selection()->signal_changed().connect(sigc::mem_fun(*this, &SoundFileBrowser::freesound_list_view_selected));
-	freesound_list_view.set_tooltip_column(1);
+	freesound_list_view.set_tooltip_column(7);
 
 	freesound_list_view.get_selection()->set_mode (SELECTION_MULTIPLE);
 	freesound_list_view.signal_row_activated().connect (sigc::mem_fun (*this, &SoundFileBrowser::freesound_list_view_activated));
 	freesound_search_btn.signal_clicked().connect(sigc::mem_fun(*this, &SoundFileBrowser::freesound_search_clicked));
 	freesound_entry.signal_activate().connect(sigc::mem_fun(*this, &SoundFileBrowser::freesound_search_clicked));
+
+	/* disable "More" button when search parameters change */
+	freesound_entry.signal_changed().connect(sigc::mem_fun(*this, &SoundFileBrowser::freesound_search_params_changed));
+	freesound_sort.signal_changed().connect(sigc::mem_fun(*this, &SoundFileBrowser::freesound_search_params_changed));
+	freesound_licence.signal_changed().connect(sigc::mem_fun(*this, &SoundFileBrowser::freesound_search_params_changed));
+
 	freesound_more_btn.signal_clicked().connect(sigc::mem_fun(*this, &SoundFileBrowser::freesound_more_clicked));
 	freesound_similar_btn.signal_clicked().connect(sigc::mem_fun(*this, &SoundFileBrowser::freesound_similar_clicked));
 	notebook.append_page (*vbox, _("Search Freesound"));
-#endif
 
 	notebook.set_size_request (500, -1);
 	notebook.signal_switch_page().connect (sigc::hide_return (sigc::hide (sigc::hide (sigc::mem_fun (*this, &SoundFileBrowser::reset_options)))));
@@ -942,7 +991,7 @@ SoundFileBrowser::add_gain_meter ()
 
 	gm = new GainMeter (_session, 250);
 
-	boost::shared_ptr<Route> r = _session->the_auditioner ();
+	std::shared_ptr<Route> r = _session->the_auditioner ();
 
 	gm->set_controls (r, r->shared_peak_meter(), r->amp(), r->gain_control());
 	gm->set_fader_name (X_("GainFader"));
@@ -980,7 +1029,7 @@ SoundFileBrowser::stop_metering ()
 void
 SoundFileBrowser::meter ()
 {
-	if (is_mapped () && _session && gm) {
+	if (get_mapped () && _session && gm) {
 		gm->update_meters ();
 	}
 }
@@ -1065,25 +1114,33 @@ std::string
 SoundFileBrowser::freesound_get_audio_file(Gtk::TreeIter iter)
 {
 
-	Mootcher *mootcher = new Mootcher;
+	Mootcher *mootcher = new Mootcher(freesound_token);
 	std::string file;
 
 	string id  = (*iter)[freesound_list_columns.id];
 	string uri = (*iter)[freesound_list_columns.uri];
-	string ofn = (*iter)[freesound_list_columns.filename];
+	string filename = ARDOUR::legalize_for_path((*iter)[freesound_list_columns.filename]);
 
-	if (mootcher->checkAudioFile(ofn, id)) {
+	if (mootcher->checkAudioFile(filename, id)) {
 		// file already exists, no need to download it again
 		file = mootcher->audioFileName;
 		delete mootcher;
-		(*iter)[freesound_list_columns.started] = false;
+		(*iter)[freesound_list_columns.downloading] = false;
 		return file;
 	}
-	if (!(*iter)[freesound_list_columns.started]) {
+
+	if (!(*iter)[freesound_list_columns.downloading]) {
 		// start downloading the sound file
-		(*iter)[freesound_list_columns.started] = true;
-		mootcher->fetchAudioFile(ofn, id, uri, this);
+		DEBUG_TRACE(PBD::DEBUG::Freesound, string_compose("downloading %1 (id %2) from %3...\n", filename, id, uri));
+		(*iter)[freesound_list_columns.downloading] = true;
+		// if we don't already have a token, fetchAudioFile() will get
+		// one: otherwise it'll return the one we already gave it.
+		if (!mootcher->fetchAudioFile(filename, id, uri, this, freesound_token)) {
+			// download cancelled or failed
+			(*iter)[freesound_list_columns.downloading] = false;
+		}
 	}
+
 	return "";
 }
 
@@ -1103,7 +1160,7 @@ SoundFileBrowser::freesound_list_view_selected ()
 		switch (rows.size()) {
 			case 0:
 				// nothing selected
-				freesound_similar_btn.set_sensitive(false);
+				freesound_similar_btn.set_sensitive (false);
 				set_action_sensitive (false);
 				break;
 			case 1:
@@ -1113,13 +1170,17 @@ SoundFileBrowser::freesound_list_view_selected ()
 					chooser.set_filename (file);
 					preview.setup_labels (file);
 					set_action_sensitive (true);
+				} else {
+					// file doesn't exist yet, maybe still downloading:
+					// disable preview
+					preview.setup_labels ("");
 				}
-				freesound_similar_btn.set_sensitive(true);
+				freesound_similar_btn.set_sensitive (true);
 				break;
 			default:
 				// multiple items selected
 				preview.setup_labels ("");
-				freesound_similar_btn.set_sensitive(false);
+				freesound_similar_btn.set_sensitive (false);
 				break;
 		}
 
@@ -1138,7 +1199,7 @@ SoundFileBrowser::refresh_display(std::string ID, std::string file)
 		std::string selected_ID = (*row)[freesound_list_columns.id];
 		if (ID == selected_ID) {
 			// the selected item in the freesound list is the item that has just finished downloading
-			chooser.set_filename(file);
+			chooser.set_filename (file);
 			preview.setup_labels (file);
 			set_action_sensitive (true);
 		}
@@ -1165,11 +1226,18 @@ SoundFileBrowser::freesound_more_clicked ()
 }
 
 void
+SoundFileBrowser::freesound_search_params_changed ()
+{
+	freesound_page = 1;
+	freesound_more_btn.set_sensitive(false);
+}
+
+void
 SoundFileBrowser::freesound_similar_clicked ()
 {
 	ListPath rows = freesound_list_view.get_selection()->get_selected_rows ();
 	if (rows.size() == 1) {
-		Mootcher mootcher;
+		Mootcher mootcher(""); // no need for oauth token when searching
 		string id;
 		Gtk::TreeIter iter = freesound_list->get_iter(*rows.begin());
 		id = (*iter)[freesound_list_columns.id];
@@ -1187,10 +1255,25 @@ SoundFileBrowser::freesound_similar_clicked ()
 	}
 }
 
+std::string SoundFileBrowser::freesound_licence_filter()
+{
+	/* Return a filter string corresponding to the chosen licence filter
+	 * type: see https://freesound.org/docs/api/resources_apiv2.html#text-search
+	 * Note that values containing spaces need to be enclosed in
+	 * double-quotes, though the documentation doesn't mention this.
+	 */
+	switch (freesound_licence.get_active_row_number()) {
+		case 1: return "license: Attribution"; // CC-BY
+		case 2: return "license: \"Attribution Noncommercial\""; // CC-BY-NC
+		case 3: return "license: \"Creative Commons 0\""; // PD
+		default: return "";
+	}
+}
+
 void
 SoundFileBrowser::freesound_search()
 {
-	Mootcher mootcher;
+	Mootcher mootcher(""); // no need for oauth token when searching
 
 	string search_string = freesound_entry.get_text ();
 	enum sortMethod sort_method = (enum sortMethod) freesound_sort.get_active_row_number();
@@ -1203,11 +1286,7 @@ SoundFileBrowser::freesound_search()
 	std::string theString = mootcher.searchText(
 			search_string,
 			freesound_page,
-#ifdef __APPLE__
-			"", // OSX eats anything incl mp3
-#else
-			"type:wav OR type:aiff OR type:flac OR type:aif OR type:ogg OR type:oga",
-#endif
+			freesound_licence_filter(),
 			sort_method
 			);
 
@@ -1226,14 +1305,14 @@ SoundFileBrowser::handle_freesound_results(std::string theString) {
 		return;
 	}
 
-	if ( strcmp(root->name().c_str(), "response") != 0) {
-		error << string_compose ("root node name == %1 != \"response\"", root->name()) << endmsg;
+	if ( strcmp(root->name().c_str(), "root") != 0) {
+		error << string_compose ("root node name == %1 != \"root\"", root->name()) << endmsg;
 		return;
 	}
 
 	// find out how many pages are available to search
 	int freesound_n_pages = 1;
-	XMLNode *res = root->child("num_pages");
+	XMLNode *res = root->child("count");
 	if (res) {
 		string result = res->child("text")->content();
 		freesound_n_pages = atoi(result);
@@ -1242,19 +1321,19 @@ SoundFileBrowser::handle_freesound_results(std::string theString) {
 	int more_pages = freesound_n_pages - freesound_page;
 
 	if (more_pages > 0) {
-		freesound_more_btn.set_sensitive(true);
+		freesound_more_btn.set_sensitive (true);
 		freesound_more_btn.set_tooltip_text(string_compose(P_(
 						"%1 more page of 100 results available",
 						"%1 more pages of 100 results available",
 						more_pages), more_pages));
 	} else {
-		freesound_more_btn.set_sensitive(false);
+		freesound_more_btn.set_sensitive (false);
 		freesound_more_btn.set_tooltip_text(_("No more results available"));
 	}
 
-	XMLNode *sounds_root = root->child("sounds");
+	XMLNode *sounds_root = root->child("results");
 	if (!sounds_root) {
-		error << "no child node \"sounds\" found!" << endmsg;
+		error << "no child node \"results\" found!" << endmsg;
 		return;
 	}
 
@@ -1268,49 +1347,60 @@ SoundFileBrowser::handle_freesound_results(std::string theString) {
 	XMLNode *node;
 	for (niter = sounds.begin(); niter != sounds.end(); ++niter) {
 		node = *niter;
-		if( strcmp( node->name().c_str(), "resource") != 0 ) {
-			error << string_compose ("node->name()=%1 != \"resource\"", node->name()) << endmsg;
+		if( strcmp( node->name().c_str(), "list-item") != 0 ) {
+			error << string_compose ("node->name()=%1 != \"list-item\"", node->name()) << endmsg;
 			break;
 		}
 
 		// node->dump(cerr, "node:");
 
-
 		XMLNode *id_node  = node->child ("id");
-		XMLNode *uri_node = node->child ("serve");
-		XMLNode *ofn_node = node->child ("original_filename");
-		XMLNode *dur_node = node->child ("duration");
-		XMLNode *siz_node = node->child ("filesize");
-		XMLNode *srt_node = node->child ("samplerate");
-		XMLNode *lic_node = node->child ("license");
+		XMLNode *uri_node;
+		XMLNode *pre_node = node->child ("previews");
+		if (false && pre_node) {
+			uri_node = pre_node->child ("preview-hq-ogg");
+		} else {
+		        uri_node = node->child ("download");
+		}
+		XMLNode *filename_node = node->child ("name");
+		XMLNode *duration_node = node->child ("duration");
+		XMLNode *filesize_node = node->child ("filesize");
+		XMLNode *samplerate_node = node->child ("samplerate");
+		XMLNode *licence_node = node->child ("license");
 
-		if (id_node && uri_node && ofn_node && dur_node && siz_node && srt_node) {
+		if (id_node && uri_node && filename_node && duration_node && filesize_node && samplerate_node) {
 
-			std::string  id =  id_node->child("text")->content();
-			std::string uri = uri_node->child("text")->content();
-			std::string ofn = ofn_node->child("text")->content();
-			std::string dur = dur_node->child("text")->content();
-			std::string siz = siz_node->child("text")->content();
-			std::string srt = srt_node->child("text")->content();
-			std::string lic = lic_node->child("text")->content();
+			std::string id       =  id_node->child("text")->content();
+			std::string uri      = uri_node->child("text")->content();
+			std::string filename = filename_node->child("text")->content();
+			std::string duration = duration_node->child("text")->content();
+			std::string filesize = filesize_node->child("text")->content();
+			std::string samplerate = samplerate_node->child("text")->content();
+			std::string licence = licence_node->child("text")->content();
 
-			std::string r;
-			// cerr << "id=" << id << ",uri=" << uri << ",ofn=" << ofn << ",dur=" << dur << endl;
+			DEBUG_TRACE(PBD::DEBUG::Freesound, string_compose(
+					"id=%1 ,uri=%2 ,filename=%3 ,duration=%4\n",
+					id, uri, filename, duration
+			));
 
-			double duration_seconds = atof(dur);
+			double duration_seconds = atof (duration);
 			double h, m, s;
 			char duration_hhmmss[16];
-			if (duration_seconds >= 99 * 60 * 60) {
+			if (duration_seconds > 99 * 60 * 60) {
 				strcpy(duration_hhmmss, ">99h");
 			} else {
 				s = modf(duration_seconds/60, &m) * 60;
 				m = modf(m/60, &h) * 60;
-				sprintf(duration_hhmmss, "%02.fh:%02.fm:%04.1fs",
-						h, m, s
-				       );
+				if (h > 0) {
+					sprintf(duration_hhmmss, "%2.fh:%02.fm:%04.1fs", h, m, s);
+				} else if (m > 0) {
+					sprintf(duration_hhmmss, "%2.fm:%04.1fs", m, s);
+				} else {
+					sprintf(duration_hhmmss, "%4.1fs", s);
+				}
 			}
 
-			double size_bytes = atof(siz);
+			double size_bytes = atof(filesize);
 			char bsize[32];
 			if (size_bytes < 1000) {
 				sprintf(bsize, "%.0f %s", size_bytes, _("B"));
@@ -1326,16 +1416,16 @@ SoundFileBrowser::handle_freesound_results(std::string theString) {
 
 			/* see http://www.freesound.org/help/faq/#licenses */
 			char shortlicense[64];
-			if(!lic.compare(0, 42, "http://creativecommons.org/licenses/by-nc/")){
+			if (licence.find("://creativecommons.org/licenses/by-nc/") != std::string::npos){
 				sprintf(shortlicense, "CC-BY-NC");
-			} else if(!lic.compare(0, 39, "http://creativecommons.org/licenses/by/")) {
+			} else if (licence.find ("://creativecommons.org/licenses/by/") != std::string::npos) {
 				sprintf(shortlicense, "CC-BY");
-			} else if(!lic.compare("http://creativecommons.org/licenses/sampling+/1.0/")) {
+			} else if (licence.find ("://creativecommons.org/licenses/sampling+/1.0/") != std::string::npos) {
 				sprintf(shortlicense, "sampling+");
-			} else if(!lic.compare(0, 40, "http://creativecommons.org/publicdomain/")) {
+			} else if (licence.find ("://creativecommons.org/publicdomain/") != std::string::npos) {
 				sprintf(shortlicense, "PD");
 			} else {
-				snprintf(shortlicense, 64, "%s", lic.c_str());
+				snprintf(shortlicense, 64, "%s", licence.c_str());
 				shortlicense[63]= '\0';
 			}
 
@@ -1344,12 +1434,15 @@ SoundFileBrowser::handle_freesound_results(std::string theString) {
 
 			row[freesound_list_columns.id      ] = id;
 			row[freesound_list_columns.uri     ] = uri;
-			row[freesound_list_columns.filename] = ofn;
+			row[freesound_list_columns.filename] = filename;
 			row[freesound_list_columns.duration] = duration_hhmmss;
 			row[freesound_list_columns.filesize] = bsize;
-			row[freesound_list_columns.smplrate] = srt;
+			row[freesound_list_columns.smplrate] = samplerate;
 			row[freesound_list_columns.license ] = shortlicense;
+			row[freesound_list_columns.tooltip ] = Gtkmm2ext::markup_escape_text(filename) + "\n" + licence;
 			matches++;
+		} else {
+			error << _("Failed to retrieve XML for file") << std::endl;
 		}
 	}
 }
@@ -1365,10 +1458,35 @@ SoundFileBrowser::get_paths ()
 		vector<string> filenames = chooser.get_filenames();
 		vector<string>::iterator i;
 
+		struct SortByName {
+			bool operator() (std::string const& a, std::string const& b) const {
+				return PBD::naturally_less (a.c_str (), b.c_str ());
+			}
+		};
+
+		std::map<std::string, int64_t, SortByName> im;
+
 		for (i = filenames.begin(); i != filenames.end(); ++i) {
 			GStatBuf buf;
 			if ((!g_stat((*i).c_str(), &buf)) && S_ISREG(buf.st_mode)) {
 				results.push_back (*i);
+				im[*i] = buf.st_mtime;
+			}
+		}
+		if (sort_order () == FileMtime) {
+			results.clear ();
+			std::multimap<int64_t, std::string> im2;
+			std::transform (im.begin (), im.end (),
+					std::inserter (im2, im2.begin ()),
+					[](std::pair<std::string, int64_t>i) {return std::pair<int64_t, std::string>(i.second, i.first);});
+
+			for (auto const& i : im2) {
+				results.push_back (i.second);
+			}
+		} else if (sort_order () == FileName) {
+			results.clear ();
+			for (auto const& i : im) {
+				results.push_back (i.first);
 			}
 		}
 
@@ -1416,9 +1534,13 @@ SoundFileOmega::reset_options ()
 
 		channel_combo.set_sensitive (false);
 		action_combo.set_sensitive (false);
+		sort_combo.set_sensitive (false);
 		where_combo.set_sensitive (false);
 		copy_files_btn.set_active (true);
 		copy_files_btn.set_sensitive (false);
+		midi_track_name_combo.set_sensitive (false);
+		smf_tempo_btn.set_sensitive (false);
+		smf_marker_btn.set_sensitive (false);
 
 		return false;
 
@@ -1427,6 +1549,7 @@ SoundFileOmega::reset_options ()
 		channel_combo.set_sensitive (true);
 		action_combo.set_sensitive (true);
 		where_combo.set_sensitive (true);
+		sort_combo.set_sensitive (paths.size () > 1 && (ImportAsTrack == get_mode () || ImportAsTrigger == get_mode ()));
 
 		/* if we get through this function successfully, this may be
 		   reset at the end, once we know if we can use hard links
@@ -1455,11 +1578,9 @@ SoundFileOmega::reset_options ()
 		return false;
 	}
 
-	if (have_a_midi_file) {
-		smf_tempo_btn.show ();
-	} else {
-		smf_tempo_btn.hide ();
-	}
+	midi_track_name_combo.set_sensitive (have_a_midi_file);
+	smf_tempo_btn.set_sensitive (have_a_midi_file);
+	smf_marker_btn.set_sensitive (have_a_midi_file);
 
 	string existing_choice;
 	vector<string> action_strings;
@@ -1512,8 +1633,6 @@ SoundFileOmega::reset_options ()
 	set_popdown_strings (action_combo, action_strings);
 
 	/* preserve any existing choice, if possible */
-
-
 	if (existing_choice.length()) {
 		vector<string>::iterator x;
 		for (x = action_strings.begin(); x != action_strings.end(); ++x) {
@@ -1757,10 +1876,10 @@ SoundFileOmega::SoundFileOmega (string title, ARDOUR::Session* s,
 				bool persistent,
 				Editing::ImportMode mode_hint)
 	: SoundFileBrowser (title, s, persistent)
-	, instrument_combo (false)
-	, copy_files_btn ( _("Copy files to session"))
-	, smf_tempo_btn (_("Use MIDI Tempo Map (if defined)"))
-	, smf_marker_btn (_("Import MIDI markers (if any)"))
+	, instrument_combo (InstrumentSelector::ForTrackSelector)
+	, copy_files_btn ( _("Copy audio files to session"))
+	, smf_tempo_btn (_("Use MIDI Tempo Map"))
+	, smf_marker_btn (_("Import MIDI markers"))
 	, selected_audio_track_cnt (selected_audio_tracks)
 	, selected_midi_track_cnt (selected_midi_tracks)
 	, _import_active (false)
@@ -1770,9 +1889,9 @@ SoundFileOmega::SoundFileOmega (string title, ARDOUR::Session* s,
 
 	set_size_request (-1, 550);
 
-	block_two.set_border_width (12);
-	block_three.set_border_width (12);
-	block_four.set_border_width (12);
+	options.set_row_spacings(8);
+	options.set_col_spacings(0);
+	options.set_border_width(6);
 
 	str.clear ();
 	str.push_back (_("file timestamp"));
@@ -1787,45 +1906,62 @@ SoundFileOmega::SoundFileOmega (string title, ARDOUR::Session* s,
 	instrument_combo.signal_changed().connect(sigc::mem_fun(*this, &SoundFileOmega::instrument_combo_changed) );
 
 	Label* l = manage (new Label);
-	l->set_markup (_("<b>Add files ...</b>"));
-	options.attach (*l, 0, 1, 0, 1, FILL, SHRINK, 8, 0);
-	options.attach (action_combo, 0, 1, 1, 2, FILL, SHRINK, 8, 0);
+	l->set_markup (_("<b>Add files:</b>"));
+	l->set_alignment(Gtk::ALIGN_END, Gtk::ALIGN_CENTER);
+	options.attach (*l, 0, 1, 0, 1, FILL, SHRINK, 4, 0);
+	options.attach (action_combo, 1, 2, 0, 1, FILL, SHRINK, 2, 0);
 
 	l = manage (new Label);
-	l->set_markup (_("<b>Insert at</b>"));
-	options.attach (*l, 0, 1, 3, 4, FILL, SHRINK, 8, 0);
-	options.attach (where_combo, 0, 1, 4, 5, FILL, SHRINK, 8, 0);
+	l->set_markup (_("<b>Insert at:</b>"));
+	l->set_alignment(Gtk::ALIGN_END, Gtk::ALIGN_CENTER);
+	options.attach (*l, 0, 1, 1, 2, FILL, SHRINK, 4, 0);
+	options.attach (where_combo, 1, 2, 1, 2, FILL, SHRINK, 2, 0);
 
 	l = manage (new Label);
-	l->set_markup (_("<b>Mapping</b>"));
-	options.attach (*l, 1, 2, 0, 1, FILL, SHRINK, 8, 0);
-	options.attach (channel_combo, 1, 2, 1, 2, FILL, SHRINK, 8, 0);
+	l->set_markup (_("<b>Mapping:</b>"));
+	l->set_alignment(Gtk::ALIGN_END, Gtk::ALIGN_CENTER);
+	options.attach (*l, 0, 1, 2, 3, FILL, SHRINK, 4, 0);
+	options.attach (channel_combo, 1, 2, 2, 3, FILL, SHRINK, 2, 0);
 
 	l = manage (new Label);
-	l->set_markup (_("<b>Conversion quality</b>"));
-	options.attach (*l, 1, 2, 3, 4, FILL, SHRINK, 8, 0);
-	options.attach (src_combo, 1, 2, 4, 5, FILL, SHRINK, 8, 0);
+	l->set_markup (_("<b>Sort order:</b>"));
+	l->set_alignment(Gtk::ALIGN_END, Gtk::ALIGN_CENTER);
+	options.attach (*l, 0, 1, 3, 4, FILL, SHRINK, 4, 0);
+	options.attach (sort_combo, 1, 2, 3, 4, FILL, SHRINK, 2, 0);
 
-	l = manage (new Label);
-	l->set_markup (_("<b>MIDI Track Names</b>"));
-	options.attach (*l, 2, 3, 0, 1, FILL, SHRINK, 8, 0);
-	options.attach (midi_track_name_combo, 2, 3, 1, 2, FILL, SHRINK, 8, 0);
-
-	options.attach (smf_tempo_btn, 2, 3, 3, 4, FILL, SHRINK, 8, 0);
-	options.attach (smf_marker_btn, 2, 3, 4, 5, FILL, SHRINK, 8, 0);
-
-	l = manage (new Label);
-	l->set_markup (_("<b>Instrument</b>"));
-	options.attach (*l, 3, 4, 0, 1, FILL, SHRINK, 8, 0);
-	options.attach (instrument_combo, 3, 4, 1, 2, FILL, SHRINK, 8, 0);
-
-	Alignment *hspace = manage (new Alignment ());
-	hspace->set_size_request (2, 2);
-	options.attach (*hspace, 0, 3, 2, 3, FILL, SHRINK, 0, 8);
+	/* 2nd col: MIDI */
 
 	Alignment *vspace = manage (new Alignment ());
-	vspace->set_size_request (2, 2);
-	options.attach (*vspace, 2, 3, 0, 3, EXPAND, SHRINK, 0, 0);
+	vspace->set_size_request (16, 2);
+	options.attach (*vspace, 2, 3, 6, 7, SHRINK, SHRINK, 0, 0);
+
+	l = manage (new Label);
+	l->set_markup (_("<b>MIDI Instrument:</b>"));
+	l->set_alignment(Gtk::ALIGN_END, Gtk::ALIGN_CENTER);
+	options.attach (*l, 3, 4, 0, 1, FILL, SHRINK, 4, 0);
+	options.attach (instrument_combo, 4, 5, 0, 1, FILL, SHRINK, 2, 0);
+
+	l = manage (new Label);
+	l->set_markup (_("<b>MIDI Track Names:</b>"));
+	l->set_alignment(Gtk::ALIGN_END, Gtk::ALIGN_CENTER);
+	options.attach (*l, 3, 4, 1, 2, FILL, SHRINK, 4, 0);
+	options.attach (midi_track_name_combo, 4, 5, 1, 2, FILL, SHRINK, 2, 0);
+
+	options.attach (smf_tempo_btn, 4, 5, 2, 3, FILL, SHRINK, 2, 0);
+	options.attach (smf_marker_btn, 4, 5, 3, 4, FILL, SHRINK, 2, 0);
+
+	/* 3rd col (Audio-only) */
+	vspace = manage (new Alignment ());
+	vspace->set_size_request (16, 2);
+	options.attach (*vspace, 5, 6, 6, 7, SHRINK, SHRINK, 0, 0);
+
+	l = manage (new Label);
+	l->set_markup (_("<b>Audio conversion quality:</b>"));
+	l->set_alignment(Gtk::ALIGN_END, Gtk::ALIGN_CENTER);
+	options.attach (*l, 6, 7, 0, 1, FILL, SHRINK, 4, 0);
+	options.attach (src_combo, 7, 8, 0, 1, FILL, SHRINK, 2, 0);
+
+	options.attach (copy_files_btn, 7, 8, 1, 2, FILL, SHRINK, 2, 0);
 
 	str.clear ();
 	str.push_back (_("by track number"));
@@ -1852,20 +1988,18 @@ SoundFileOmega::SoundFileOmega (string title, ARDOUR::Session* s,
 	src_combo.set_sensitive (false);
 	src_combo.signal_changed().connect (sigc::mem_fun (*this, &SoundFileOmega::src_combo_changed));
 
+	str.clear ();
+	str.push_back (_("by file name"));
+	str.push_back (_("by modification time"));
+	str.push_back (_("by selection order"));
+	set_popdown_strings (sort_combo, str);
+	sort_combo.set_active_text (str.front());
+	sort_combo.set_sensitive (false);
+
 	action_combo.signal_changed().connect (sigc::mem_fun (*this, &SoundFileOmega::reset_options_noret));
 	channel_combo.signal_changed().connect (sigc::mem_fun (*this, &SoundFileOmega::reset_options_noret));
 
 	copy_files_btn.set_active (true);
-
-	Gtk::Label* copy_label = dynamic_cast<Gtk::Label*>(copy_files_btn.get_child());
-
-	if (copy_label) {
-		copy_label->set_size_request (175, -1);
-		copy_label->set_line_wrap (true);
-	}
-
-	block_four.pack_start (copy_files_btn, false, false);
-	options.attach (block_four, 3, 4, 4, 5, FILL, SHRINK, 8, 0);
 
 	vpacker.pack_start (options, false, true);
 
@@ -1915,6 +2049,21 @@ ImportMode
 SoundFileOmega::get_mode () const
 {
 	return string2importmode (action_combo.get_active_text());
+}
+
+SoundFileBrowser::SortOrder
+SoundFileOmega::sort_order () const
+{
+	std::string const& str (sort_combo.get_active_text());
+	if (str == _("by file name")) {
+		return SoundFileBrowser::FileName;
+	} else if (str == _("by modification time")) {
+		return SoundFileBrowser::FileMtime;
+	} else if (str == _("by selection order")) {
+		return SoundFileBrowser::SelectionOrder;
+	}
+	warning << string_compose (_("programming error: unknown import sort string %1"), str) << endmsg;
+	return SelectionOrder;
 }
 
 void
@@ -2030,7 +2179,7 @@ SoundFileOmega::reset (uint32_t selected_audio_tracks, uint32_t selected_midi_tr
 		chooser.set_filter (audio_and_midi_filter);
 	}
 
-	if (is_visible()) {
+	if (get_visible()) {
 		reset_options ();
 	}
 }
@@ -2038,7 +2187,7 @@ SoundFileOmega::reset (uint32_t selected_audio_tracks, uint32_t selected_midi_tr
 void
 SoundFileOmega::file_selection_changed ()
 {
-	if (resetting_ourselves || !is_visible ()) {
+	if (resetting_ourselves || !get_visible ()) {
 		return;
 	}
 
@@ -2095,7 +2244,7 @@ SoundFileOmega::do_something (int action)
 	_import_active = true;
 
 	if (copy_files_btn.get_active()) {
-		PublicEditor::instance().do_import (paths, chns, mode, quality, mts, mtd, where, instrument, with_midi_markers);
+		PublicEditor::instance().do_import (paths, chns, mode, quality, mts, mtd, where, instrument, std::shared_ptr<Track>(), with_midi_markers);
 	} else {
 		PublicEditor::instance().do_embed (paths, chns, mode, where, instrument);
 	}

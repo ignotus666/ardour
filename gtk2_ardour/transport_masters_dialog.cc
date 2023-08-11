@@ -30,6 +30,7 @@
 #include "widgets/tooltips.h"
 #include "widgets/ardour_icon.h"
 
+#include "gtkmm2ext/colors.h"
 #include "gtkmm2ext/utils.h"
 #include "gtkmm2ext/gui_thread.h"
 
@@ -37,7 +38,6 @@
 #include "floating_text_entry.h"
 #include "transport_masters_dialog.h"
 #include "ui_config.h"
-#include "utils.h"
 
 #include "pbd/i18n.h"
 
@@ -83,16 +83,15 @@ TransportMastersWidget::TransportMastersWidget ()
 	col_title[4].set_markup (string_compose ("<span weight=\"bold\">%1</span>", _("Format")));               align[4]=0.5;
 	col_title[5].set_markup (string_compose ("<span weight=\"bold\">%1</span>", _("Sync Position + Delta")));align[5]=0.5;
 	col_title[6].set_markup (string_compose ("<span weight=\"bold\">%1</span>", _("Last Message + Age")));   align[6]=0.5;
-	col_title[7].set_markup (string_compose ("<span weight=\"bold\">%1</span>", _("Active\nCommands")));     align[7]=0.5;
-	col_title[8].set_markup (string_compose ("<span weight=\"bold\">%1</span>", _("Clock\nSynced")));        align[9]=0.0;
-	col_title[9].set_markup (string_compose ("<span weight=\"bold\">%1</span>", _("29.97/\n30")));          align[10]=0.0;
-	col_title[10].set_markup (string_compose ("<span weight=\"bold\">%1</span>", _("Remove")));              align[11]=0.5;
+	col_title[7].set_markup (string_compose ("<span weight=\"bold\">%1</span>", _("Clock\nSynced")));        align[7]=0.0;
+	col_title[8].set_markup (string_compose ("<span weight=\"bold\">%1</span>", _("29.97/\n30")));           align[8]=0.0;
+	col_title[9].set_markup (string_compose ("<span weight=\"bold\">%1</span>", _("Remove")));               align[9]=0.5;
 
-	set_tooltip (col_title[7], _("Controls whether or not certain transport-related commands can be sent from the GUI or control "
-	                              "surfaces when this transport master is in use. The default is not to allow any such commands "
-	                              "when the master is in use."));
+	// set_tooltip (col_title[7], _("Controls whether or not certain transport-related commands can be sent from the GUI or control "
+	// "surfaces when this transport master is in use. The default is not to allow any such commands "
+	// "when the master is in use."));
 
-	set_tooltip (col_title[9], _("<b>When enabled</b> the external timecode source is assumed to use 29.97 fps instead of 30000/1001.\n"
+	set_tooltip (col_title[8], _("<b>When enabled</b> the external timecode source is assumed to use 29.97 fps instead of 30000/1001.\n"
 	                              "SMPTE 12M-1999 specifies 29.97df as 30000/1001. The spec further mentions that "
 	                              "drop-sample timecode has an accumulated error of -86ms over a 24-hour period.\n"
 	                              "Drop-sample timecode would compensate exactly for a NTSC color frame rate of 30 * 0.9990 (ie 29.970000). "
@@ -100,7 +99,7 @@ TransportMastersWidget::TransportMastersWidget ()
 	                              "because the variant of using exactly 29.97 fps has zero timecode drift.\n"
 		             ));
 
-	set_tooltip (col_title[8], string_compose (_("<b>When enabled</b> the external timecode source is assumed to be sample-clock synced to the audio interface\n"
+	set_tooltip (col_title[7], string_compose (_("<b>When enabled</b> the external timecode source is assumed to be sample-clock synced to the audio interface\n"
 	                                              "being used by %1."), PROGRAM_NAME));
 
 	table.set_col_spacings (12);
@@ -123,13 +122,13 @@ TransportMastersWidget::~TransportMastersWidget ()
 }
 
 void
-TransportMastersWidget::set_transport_master (boost::shared_ptr<TransportMaster> tm)
+TransportMastersWidget::set_transport_master (std::shared_ptr<TransportMaster> tm)
 {
 	_session->request_sync_source (tm);
 }
 
 void
-TransportMastersWidget::current_changed (boost::shared_ptr<TransportMaster> old_master, boost::shared_ptr<TransportMaster> new_master)
+TransportMastersWidget::current_changed (std::shared_ptr<TransportMaster> old_master, std::shared_ptr<TransportMaster> new_master)
 {
 	for (vector<Row*>::iterator r = rows.begin(); r != rows.end(); ++r) {
 		if ((*r)->tm == new_master) {
@@ -187,9 +186,12 @@ TransportMastersWidget::rebuild ()
 	TransportMasterManager::TransportMasters const & masters (TransportMasterManager::instance().transport_masters());
 
 	clear ();
-	table.resize (masters.size()+1, 14);
 
-	for (size_t col = 0; col < sizeof (col_title) / sizeof (col_title[0]); ++col) {
+	const size_t ncols = sizeof (col_title) / sizeof (col_title[0]);
+
+	table.resize (masters.size()+1, ncols);
+
+	for (size_t col = 0; col < ncols; ++col) {
 		table.attach (col_title[col], col, col+1, 0, 1);
 		col_title[col].set_alignment( align[col], 0.5);
 	}
@@ -226,9 +228,8 @@ TransportMastersWidget::rebuild ()
 		table.attach (r->format,          col, col+1, n, n+1, FILL, SHRINK); ++col;
 		table.attach (r->current_box,     col, col+1, n, n+1, FILL, SHRINK); ++col;
 		table.attach (r->last_box,        col, col+1, n, n+1, FILL, SHRINK); ++col;
-		table.attach (r->request_options, col, col+1, n, n+1, FILL, SHRINK); ++col;
 
-		boost::shared_ptr<TimecodeTransportMaster> ttm (boost::dynamic_pointer_cast<TimecodeTransportMaster> (r->tm));
+		std::shared_ptr<TimecodeTransportMaster> ttm (std::dynamic_pointer_cast<TimecodeTransportMaster> (r->tm));
 
 		if (ttm) {
 			table.attach (r->sclock_synced_button, col, col+1, n, n+1, FILL, SHRINK); ++col;
@@ -247,7 +248,6 @@ TransportMastersWidget::rebuild ()
 		r->label_box.signal_button_press_event().connect (sigc::mem_fun (*r, &TransportMastersWidget::Row::name_press));
 		r->port_combo.signal_changed().connect (sigc::mem_fun (*r, &TransportMastersWidget::Row::port_choice_changed));
 		r->use_button.signal_toggled().connect (sigc::mem_fun (*r, &TransportMastersWidget::Row::use_button_toggled));
-		r->request_options.signal_button_press_event().connect (sigc::mem_fun (*r, &TransportMastersWidget::Row::request_option_press), false);
 		r->remove_button.signal_clicked.connect (sigc::mem_fun (*r, &TransportMastersWidget::Row::remove_clicked));
 
 		if (ttm) {
@@ -283,7 +283,7 @@ TransportMastersWidget::idle_remove (TransportMastersWidget::Row* row)
 void
 TransportMastersWidget::update_ports ()
 {
-	if (!is_mapped()) {
+	if (!get_mapped ()) {
 		return;
 	}
 
@@ -313,13 +313,11 @@ TransportMastersWidget::update_usability ()
 	for (vector<Row*>::iterator r= rows.begin(); r != rows.end(); ++r) {
 		const bool usable = (*r)->tm->usable();
 		(*r)->use_button.set_sensitive (usable);
-		(*r)->request_options.set_sensitive (usable);
 	}
 }
 
 TransportMastersWidget::Row::Row (TransportMastersWidget& p)
 	: parent (p)
-	, request_option_menu (0)
 	, name_editor (0)
 	, save_when (0)
 	, save_last (" --:--:--:--")
@@ -331,8 +329,8 @@ TransportMastersWidget::Row::Row (TransportMastersWidget& p)
 
 	uint32_t bg = UIConfigurationBase::instance().color ("clock: background");
 	uint32_t fg = UIConfigurationBase::instance().color ("clock: text");
-	Gdk::Color bg_color = ARDOUR_UI_UTILS::gdk_color_from_rgba (bg);
-	Gdk::Color fg_color = ARDOUR_UI_UTILS::gdk_color_from_rgba (fg);
+	Gdk::Color bg_color = Gtkmm2ext::gdk_color_from_rgba (bg);
+	Gdk::Color fg_color = Gtkmm2ext::gdk_color_from_rgba (fg);
 
 	current_box.modify_bg (Gtk::STATE_NORMAL, bg_color);
 	current.modify_fg (Gtk::STATE_NORMAL, fg_color);
@@ -346,7 +344,6 @@ TransportMastersWidget::Row::Row (TransportMastersWidget& p)
 
 TransportMastersWidget::Row::~Row ()
 {
-	delete request_option_menu;
 }
 
 bool
@@ -434,11 +431,11 @@ TransportMastersWidget::Row::prop_change (PropertyChange what_changed)
 	}
 
 	if (what_changed.contains (Properties::fr2997)) {
-		fr2997_button.set_active (boost::dynamic_pointer_cast<TimecodeTransportMaster> (tm)->fr2997());
+		fr2997_button.set_active (std::dynamic_pointer_cast<TimecodeTransportMaster> (tm)->fr2997());
 	}
 
 	if (what_changed.contains (Properties::sclock_synced)) {
-		sclock_synced_button.set_active (boost::dynamic_pointer_cast<TimecodeTransportMaster> (tm)->sample_clock_synced());
+		sclock_synced_button.set_active (std::dynamic_pointer_cast<TimecodeTransportMaster> (tm)->sample_clock_synced());
 	}
 
 	if (what_changed.contains (Properties::collect)) {
@@ -450,10 +447,6 @@ TransportMastersWidget::Row::prop_change (PropertyChange what_changed)
 
 	if (what_changed.contains (Properties::name)) {
 		label.set_text (tm->name());
-	}
-
-	if (what_changed.contains (Properties::allowed_transport_requests)) {
-		request_options.set_text (tm->allowed_request_string());
 	}
 }
 
@@ -468,7 +461,7 @@ TransportMastersWidget::Row::use_button_toggled ()
 void
 TransportMastersWidget::Row::fr2997_button_toggled ()
 {
-	boost::dynamic_pointer_cast<TimecodeTransportMaster>(tm)->set_fr2997 (fr2997_button.get_active());
+	std::dynamic_pointer_cast<TimecodeTransportMaster>(tm)->set_fr2997 (fr2997_button.get_active());
 }
 
 void
@@ -477,43 +470,6 @@ TransportMastersWidget::Row::sync_button_toggled ()
 	tm->set_sample_clock_synced (sclock_synced_button.get_active());
 }
 
-bool
-TransportMastersWidget::Row::request_option_press (GdkEventButton* ev)
-{
-	if (ev->button == 1) {
-		if (!request_option_menu) {
-			build_request_options ();
-		}
-		request_option_menu->popup (1, ev->time);
-		return true;
-	}
-	return false;
-}
-
-void
-TransportMastersWidget::Row::build_request_options ()
-{
-	using namespace Gtk::Menu_Helpers;
-
-	request_option_menu = new Menu;
-
-	MenuList& items (request_option_menu->items());
-
-	items.push_back (CheckMenuElem (_("Accept start/stop commands")));
-	Gtk::CheckMenuItem* i = dynamic_cast<Gtk::CheckMenuItem *> (&items.back ());
-	i->set_active (tm->request_mask() & TR_StartStop);
-	i->signal_activate().connect (sigc::bind (sigc::mem_fun (*this, &TransportMastersWidget::Row::mod_request_type), TR_StartStop));
-
-	items.push_back (CheckMenuElem (_("Accept speed-changing commands")));
-	i = dynamic_cast<Gtk::CheckMenuItem *> (&items.back ());
-	i->set_active (tm->request_mask() & TR_Speed);
-	i->signal_activate().connect (sigc::bind (sigc::mem_fun (*this, &TransportMastersWidget::Row::mod_request_type), TR_Speed));
-
-	items.push_back (CheckMenuElem (_("Accept locate commands")));
-	i = dynamic_cast<Gtk::CheckMenuItem *> (&items.back ());
-	i->set_active (tm->request_mask() & TR_Locate);
-	i->signal_activate().connect (sigc::bind (sigc::mem_fun (*this, &TransportMastersWidget::Row::mod_request_type), TR_Locate));
-}
 
 void
 TransportMastersWidget::Row::mod_request_type (TransportRequestType t)
@@ -602,29 +558,29 @@ TransportMastersWidget::Row::update (Session* s, samplepos_t now)
 	samplepos_t when;
 	stringstream ss;
 	Time t;
-	boost::shared_ptr<TimecodeTransportMaster> ttm;
-	boost::shared_ptr<MIDIClock_TransportMaster> mtm;
+	std::shared_ptr<TimecodeTransportMaster> ttm;
+	std::shared_ptr<MIDIClock_TransportMaster> mtm;
 
 	if (!AudioEngine::instance()->running() || !s) {
 		return;
 	}
 
 	string current_str (" --:--:--:--");
-	string delta_str ("\u0394  ----  ");
+	string delta_str (u8"\u0394  ----  ");
 	string age_str ("         ");
 
 	if (tm->speed_and_position (speed, pos, most_recent, when, now)) {
 
-		if ((ttm = boost::dynamic_pointer_cast<TimecodeTransportMaster> (tm))) {
+		if ((ttm = std::dynamic_pointer_cast<TimecodeTransportMaster> (tm))) {
 			Timecode::TimecodeFormat fmt = ttm->apparent_timecode_format();
 			format.set_text (timecode_format_name (fmt));
 
 			sample_to_timecode (pos, t, false, false,
 					Timecode::timecode_to_frames_per_second (fmt),
 					Timecode::timecode_has_drop_frames (fmt),
-					AudioEngine::instance()->sample_rate(), 0, false, 0);
+					TEMPORAL_SAMPLE_RATE, 0, false, 0);
 
-		} else if ((mtm = boost::dynamic_pointer_cast<MIDIClock_TransportMaster> (tm))) {
+		} else if ((mtm = std::dynamic_pointer_cast<MIDIClock_TransportMaster> (tm))) {
 			char buf[16];
 			snprintf (buf, sizeof (buf), "%.1f BPM", mtm->bpm());
 			buf[15] = '\0';
@@ -646,7 +602,7 @@ TransportMastersWidget::Row::update (Session* s, samplepos_t now)
 
 	if (save_when) {
 		char gap[32];
-		float seconds = (now - save_when) / (float) AudioEngine::instance()->sample_rate();
+		float seconds = (now - save_when) / (float) TEMPORAL_SAMPLE_RATE;
 		if (seconds < 0) {
 			seconds = 0;
 		}

@@ -85,7 +85,7 @@ public:
 		ShuttleControl& sc;
 	};
 
-	boost::shared_ptr<ShuttleControllable> controllable () const
+	std::shared_ptr<ShuttleControllable> controllable () const
 	{
 		return _controllable;
 	}
@@ -101,14 +101,11 @@ public:
 	}
 
 public:
+	float speed_as_fract (float) const;
+	float fract_as_speed (float) const;
+
 	static int speed_as_semitones (float, bool&);
-	static int fract_as_semitones (float, bool&);
-
-	static float semitones_as_speed (int, bool);
-	static float semitones_as_fract (int, bool);
-
-	static int   speed_as_cents (float, bool&);
-	static float cents_as_speed (int, bool);
+	static int speed_as_cents (float, bool&);
 
 protected:
 	bool                                   _hovering;
@@ -118,11 +115,12 @@ protected:
 	double                                 shuttle_speed_on_grab;
 	double                                 requested_speed;
 	float                                  shuttle_fract;
-	boost::shared_ptr<ShuttleControllable> _controllable;
+	std::shared_ptr<ShuttleControllable> _controllable;
 	cairo_pattern_t*                       pattern;
 	cairo_pattern_t*                       shine_pattern;
 	PBD::microseconds_t                    last_shuttle_request;
 	PBD::ScopedConnection                  parameter_connection;
+	PBD::ScopedConnection                  port_connection;
 	ShuttleInfoButton                      _info_button;
 	Gtk::Menu*                             shuttle_context_menu;
 	ArdourWidgets::BindingProxy            binding_proxy;

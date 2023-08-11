@@ -27,10 +27,20 @@
 
 #include <vector>
 #include <boost/unordered_map.hpp>
+
 #include "pbd/signals.h"
+
+#include "gtkmm2ext/colors.h"
 
 namespace ArdourWaveView {
 	class WaveView;
+}
+
+namespace ArdourCanvas {
+	class Container;
+	class Rectangle;
+	class Item;
+	class Polygon;
 }
 
 class NoteBase;
@@ -41,7 +51,7 @@ class TimeAxisView;
 class RegionView;
 class MidiRegionView;
 
-class GhostRegion : public sigc::trackable
+class GhostRegion : virtual public sigc::trackable
 {
 public:
 	GhostRegion(RegionView& rv,
@@ -57,6 +67,8 @@ public:
 	virtual void set_colors();
 
 	void set_duration(double units);
+
+	virtual void set_selected (bool) {}
 
 	guint source_track_color(unsigned char alpha = 0xff);
 	bool is_automation_ghost();
@@ -89,7 +101,8 @@ public:
 	class GhostEvent : public sigc::trackable
 	{
 	public:
-		GhostEvent(::NoteBase *, ArdourCanvas::Container *);
+		GhostEvent (::NoteBase *, ArdourCanvas::Container *);
+		GhostEvent (::NoteBase *, ArdourCanvas::Container *, ArdourCanvas::Item* i);
 		virtual ~GhostEvent ();
 
 		NoteBase* event;
@@ -102,40 +115,37 @@ public:
 	                TimeAxisView& source_tv,
 	                double initial_unit_pos);
 
-	MidiGhostRegion(MidiRegionView& rv,
-	                MidiStreamView& msv,
-	                TimeAxisView& source_tv,
-	                double initial_unit_pos);
-
 	~MidiGhostRegion();
-
 	MidiStreamView* midi_view();
 
 	void set_height();
 	void set_samples_per_pixel (double spu);
 	void set_colors();
 
-	void update_contents_height();
+	virtual void update_contents_height();
 
-	void add_note(NoteBase*);
-	void update_note (GhostEvent* note);
-	void update_hit (GhostEvent* hit);
-	void remove_note (NoteBase*);
+	virtual void add_note(NoteBase*);
+	virtual void update_note (GhostEvent* note);
+	virtual void update_hit (GhostEvent* hit);
+	virtual void remove_note (NoteBase*);
+	virtual void note_selected (NoteBase*) {}
 
-	void redisplay_model();
+	void model_changed();
+	void view_changed();
 	void clear_events();
 
-private:
+  protected:
 	ArdourCanvas::Container* _note_group;
 	Gtkmm2ext::Color _outline;
 	ArdourCanvas::Rectangle* _tmp_rect;
 	ArdourCanvas::Polygon* _tmp_poly;
 
 	MidiRegionView& parent_mrv;
+	/* must match typedef in NoteBase */
 	typedef Evoral::Note<Temporal::Beats> NoteType;
-	MidiGhostRegion::GhostEvent* find_event (boost::shared_ptr<NoteType>);
+	MidiGhostRegion::GhostEvent* find_event (std::shared_ptr<NoteType>);
 
-	typedef boost::unordered_map<boost::shared_ptr<NoteType>, MidiGhostRegion::GhostEvent* > EventList;
+	typedef boost::unordered_map<std::shared_ptr<NoteType>, MidiGhostRegion::GhostEvent* > EventList;
 	EventList events;
 	EventList::iterator _optimization_iterator;
 };

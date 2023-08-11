@@ -31,6 +31,7 @@
 #include "ardour/audioengine.h"
 #include "ardour/audio_port.h"
 #include "ardour/audio_track.h"
+#include "ardour/io_plug.h"
 #include "ardour/midi_port.h"
 #include "ardour/midi_track.h"
 #include "ardour/monitor_return.h"
@@ -39,6 +40,7 @@
 #include "ardour/session.h"
 #include "ardour/solo_mute_release.h"
 
+#include "gtkmm2ext/colors.h"
 #include "gtkmm2ext/gtk_ui.h"
 #include "gtkmm2ext/keyboard.h"
 #include "gtkmm2ext/utils.h"
@@ -160,12 +162,13 @@ RecorderUI::RecorderUI ()
 	_meter_scroller.add (_meter_area);
 	_meter_scroller.set_policy (POLICY_AUTOMATIC, POLICY_AUTOMATIC);
 
-	_scroller_base.set_flags (CAN_FOCUS);
+	_scroller_base.set_can_focus ();
 	_scroller_base.add_events (Gdk::BUTTON_PRESS_MASK|Gdk::BUTTON_RELEASE_MASK);
 	_scroller_base.signal_button_press_event().connect (sigc::mem_fun(*this, &RecorderUI::scroller_button_event));
 	_scroller_base.signal_button_release_event().connect (sigc::mem_fun(*this, &RecorderUI::scroller_button_event));
 	_scroller_base.set_size_request (-1, PX_SCALE (20));
-	_scroller_base.signal_expose_event().connect (sigc::bind (sigc::ptr_fun(&ArdourWidgets::ArdourIcon::expose), &_scroller_base, ArdourWidgets::ArdourIcon::ShadedPlusSign));
+	_scroller_base.signal_expose_event ().connect (sigc::bind (sigc::ptr_fun (&ArdourWidgets::ArdourIcon::expose_with_text), &_scroller_base, ArdourWidgets::ArdourIcon::ShadedPlusSign,
+			_("Right-click or Double-click here\nto add Tracks")));
 
 	/* LAYOUT */
 
@@ -363,7 +366,7 @@ RecorderUI::tabbed_changed (bool tabbed)
 }
 
 XMLNode&
-RecorderUI::get_state ()
+RecorderUI::get_state () const
 {
 	XMLNode* node = new XMLNode (X_("Recorder"));
 	node->add_child_nocopy (Tabbable::get_state ());
@@ -390,6 +393,9 @@ RecorderUI::register_actions ()
 	ActionManager::register_action (group, "reset-input-peak-hold", _("Reset Input Peak Hold"), sigc::mem_fun (*this, &RecorderUI::peak_reset));
 	ActionManager::register_action (group, "arm-all", _("Record Arm All Tracks"), sigc::mem_fun (*this, &RecorderUI::arm_all));
 	ActionManager::register_action (group, "arm-none", _("Disable Record Arm of All Tracks"), sigc::mem_fun (*this, &RecorderUI::arm_none));
+	ActionManager::register_action (group, "rec-undo", _("Undo"), sigc::mem_fun (*this, &RecorderUI::rec_undo));
+	ActionManager::register_action (group, "rec-redo", _("Redo"), sigc::mem_fun (*this, &RecorderUI::rec_redo));
+	ActionManager::register_action (group, "alternate-rec-redo", _("Redo"), sigc::mem_fun (*this, &RecorderUI::rec_redo));
 }
 
 void
@@ -429,6 +435,7 @@ RecorderUI::set_session (Session* s)
 	_session->EndTimeChanged.connect (_session_connections, invalidator (*this), boost::bind (&RecorderUI::gui_extents_changed, this), gui_context());
 	_session->RecordStateChanged.connect (_session_connections, invalidator (*this), boost::bind (&RecorderUI::update_sensitivity, this), gui_context());
 	_session->UpdateRouteRecordState.connect (_session_connections, invalidator (*this), boost::bind (&RecorderUI::update_recordstate, this), gui_context());
+	_session->IOPluginsChanged.connect (_session_connections, invalidator (*this), boost::bind (&RecorderUI::io_plugins_changed, this), gui_context());
 
 	/* map_parameters */
 	parameter_changed ("show-group-tabs");
@@ -555,13 +562,26 @@ RecorderUI::start_updating ()
 	PortManager::AudioInputPorts const aip (AudioEngine::instance ()->audio_input_ports ());
 	PortManager::MIDIInputPorts const mip (AudioEngine::instance ()->midi_input_ports ());
 
-	if (aip.size () + mip.size () == 0) {
+	size_t iop_audio = 0;
+	size_t iop_midi  = 0;
+	std::shared_ptr<IOPlugList const> iop;
+	if (_session) {
+		iop = _session->io_plugs ();
+		for (auto& p : *iop) {
+			PortManager::AudioInputPorts const& aip (p->audio_input_ports ());
+			PortManager::MIDIInputPorts const& mip (p->midi_input_ports ());
+			iop_audio += aip.size ();
+			iop_midi += mip.size ();
+		}
+	}
+
+	if (aip.size () + mip.size () + iop_audio + iop_midi == 0) {
 		return;
 	}
 
 	switch (UIConfiguration::instance ().get_input_meter_layout ()) {
 		case LayoutAutomatic:
-			if (aip.size () + mip.size () > 16) {
+			if (aip.size () + mip.size () + iop_audio + iop_midi > 16) {
 				_vertical = true;
 			} else {
 				_vertical = false;
@@ -577,7 +597,7 @@ RecorderUI::start_updating ()
 
 	/* Audio */
 	for (PortManager::AudioInputPorts::const_iterator i = aip.begin (); i != aip.end (); ++i) {
-		_input_ports[i->first] = boost::shared_ptr<RecorderUI::InputPort> (new InputPort (i->first, DataType::AUDIO, this, _vertical));
+		_input_ports[i->first] = std::shared_ptr<RecorderUI::InputPort> (new InputPort (i->first, DataType::AUDIO, this, _vertical));
 		set_connections (i->first);
 	}
 
@@ -587,8 +607,14 @@ RecorderUI::start_updating ()
 		if (PortManager::port_is_control_only (pn)) {
 			continue;
 		}
-		_input_ports[i->first] = boost::shared_ptr<RecorderUI::InputPort> (new InputPort (i->first, DataType::MIDI, this, _vertical));
+		_input_ports[i->first] = std::shared_ptr<RecorderUI::InputPort> (new InputPort (i->first, DataType::MIDI, this, _vertical));
 		set_connections (i->first);
+	}
+
+	if (iop) {
+		for (auto const& p : *iop) {
+			io_plugin_add (p);
+		}
 	}
 
 	update_io_widget_labels ();
@@ -619,6 +645,8 @@ RecorderUI::stop_updating ()
 	_monitor_connection.disconnect ();
 	container_clear (_meter_table);
 	_input_ports.clear ();
+	_ioplugins.clear ();
+	_going_away_connections.drop_connections ();
 }
 
 void
@@ -639,7 +667,7 @@ RecorderUI::add_or_remove_io (DataType dt, vector<string> ports, bool add)
 			if (dt==DataType::MIDI && PortManager::port_is_control_only (pn)) {
 				continue;
 			}
-			_input_ports[*i] = boost::shared_ptr<RecorderUI::InputPort> (new InputPort (*i, dt, this, _vertical));
+			_input_ports[*i] = std::shared_ptr<RecorderUI::InputPort> (new InputPort (*i, dt, this, _vertical));
 			set_connections (*i);
 		}
 	} else {
@@ -649,6 +677,69 @@ RecorderUI::add_or_remove_io (DataType dt, vector<string> ports, bool add)
 		}
 	}
 
+	post_add_remove (spill_changed);
+}
+
+void
+RecorderUI::io_plugins_changed ()
+{
+	_fast_screen_update_connection.disconnect ();
+	std::shared_ptr<IOPlugList const> iop (_session->io_plugs ());
+	for (auto& p : *iop) {
+		if (_ioplugins.find (p) != _ioplugins.end ()) {
+			continue;
+		}
+		io_plugin_add (p);
+	}
+	post_add_remove (false);
+}
+
+void
+RecorderUI::io_plugin_add (std::shared_ptr<IOPlug> p)
+{
+	PortManager::AudioInputPorts const& aip (p->audio_input_ports ());
+	PortManager::MIDIInputPorts const& mip (p->midi_input_ports ());
+	_ioplugins.insert (p);
+	p->DropReferences.connect (_going_away_connections, invalidator (*this), boost::bind (&RecorderUI::io_plugin_going_away, this, std::weak_ptr<IOPlug>(p)), gui_context ());
+	for (auto i = aip.begin (); i != aip.end (); ++i) {
+		_input_ports[i->first] = std::shared_ptr<RecorderUI::InputPort> (new InputPort (i->first, DataType::AUDIO, this, _vertical, true));
+		set_connections (i->first);
+	}
+	for (auto i = mip.begin (); i != mip.end (); ++i) {
+		_input_ports[i->first] = std::shared_ptr<RecorderUI::InputPort> (new InputPort (i->first, DataType::MIDI, this, _vertical, true));
+		set_connections (i->first);
+	}
+}
+
+void
+RecorderUI::io_plugin_going_away (std::weak_ptr<IOPlug> wp)
+{
+	_fast_screen_update_connection.disconnect ();
+	bool spill_changed = false;
+
+	std::shared_ptr<IOPlug> p = wp.lock ();
+	if (!p) {
+		assert (0);
+		return;
+	}
+	PortManager::AudioInputPorts const& aip (p->audio_input_ports ());
+	PortManager::MIDIInputPorts const& mip (p->midi_input_ports ());
+	for (auto i = aip.begin (); i != aip.end (); ++i) {
+		_input_ports.erase (i->first);
+		spill_changed |= 0 != _spill_port_names.erase (i->first);
+	}
+	for (auto i = mip.begin (); i != mip.end (); ++i) {
+		_input_ports.erase (i->first);
+		spill_changed |= 0 != _spill_port_names.erase (i->first);
+	}
+
+	_ioplugins.erase (p);
+	post_add_remove (spill_changed);
+}
+
+void
+RecorderUI::post_add_remove (bool spill_changed)
+{
 	update_io_widget_labels ();
 	update_sensitivity ();
 	meter_area_layout ();
@@ -666,22 +757,35 @@ RecorderUI::add_or_remove_io (DataType dt, vector<string> ports, bool add)
 void
 RecorderUI::update_io_widget_labels ()
 {
-	uint32_t n_audio = 0;
-	uint32_t n_midi = 0;
+	uint32_t n_audio    = 0;
+	uint32_t n_midi     = 0;
+	uint32_t n_io_audio = 0;
+	uint32_t n_io_midi  = 0;
 
 	InputPortSet ips;
 	for (InputPortMap::const_iterator i = _input_ports.begin (); i != _input_ports.end (); ++i) {
 		ips.insert (i->second);
 	}
 	for (InputPortSet::const_iterator i = ips.begin (); i != ips.end (); ++i) {
-		boost::shared_ptr<InputPort> const& ip = *i;
-		switch (ip->data_type ()) {
-			case DataType::AUDIO:
-				ip->set_frame_label (string_compose (_("Audio Input %1"), ++n_audio));
-				break;
-			case DataType::MIDI:
-				ip->set_frame_label (string_compose (_("MIDI Input %1"), ++n_midi));
-				break;
+		std::shared_ptr<InputPort> const& ip = *i;
+		if (ip->ioplug ()) {
+			switch (ip->data_type ()) {
+				case DataType::AUDIO:
+					ip->set_frame_label (string_compose (_("I/O Plugin Audio %1"), ++n_io_audio));
+					break;
+				case DataType::MIDI:
+					ip->set_frame_label (string_compose (_("I/O Plugin MIDI %1"), ++n_io_midi));
+					break;
+			}
+		} else {
+			switch (ip->data_type ()) {
+				case DataType::AUDIO:
+					ip->set_frame_label (string_compose (_("Audio Input %1"), ++n_audio));
+					break;
+				case DataType::MIDI:
+					ip->set_frame_label (string_compose (_("MIDI Input %1"), ++n_midi));
+					break;
+			}
 		}
 	}
 }
@@ -690,8 +794,12 @@ bool
 RecorderUI::update_meters ()
 {
 	PortManager::AudioInputPorts const aip (AudioEngine::instance ()->audio_input_ports ());
+	std::shared_ptr<IOPlugList const>  iop;
+	if (_session) {
+		iop = _session->io_plugs ();
+	}
 
-	/* scope data needs to be read contiously */
+	/* scope data needs to be read continuously */
 	for (PortManager::AudioInputPorts::const_iterator i = aip.begin (); i != aip.end (); ++i) {
 		InputPortMap::iterator im = _input_ports.find (i->first);
 		if (im != _input_ports.end()) {
@@ -699,7 +807,19 @@ RecorderUI::update_meters ()
 		}
 	}
 
-	if (!contents ().is_mapped ()) {
+	if (iop) {
+		for (auto const& p : *iop) {
+			PortManager::AudioInputPorts const& aip (p->audio_input_ports ());
+			for (auto i = aip.begin (); i != aip.end (); ++i) {
+				InputPortMap::iterator im = _input_ports.find (i->first);
+				if (im != _input_ports.end()) {
+					im->second->update (*(i->second.scope));
+				}
+			}
+		}
+	}
+
+	if (!contents ().get_mapped ()) {
 		return true;
 	}
 
@@ -716,6 +836,26 @@ RecorderUI::update_meters ()
 		if (im != _input_ports.end()) {
 			im->second->update ((float const*)i->second.meter->chn_active);
 			im->second->update (*(i->second.monitor));
+		}
+	}
+
+	if (iop) {
+		for (auto const& p : *iop) {
+			PortManager::AudioInputPorts const& aip (p->audio_input_ports ());
+			PortManager::MIDIInputPorts const& mip (p->midi_input_ports ());
+			for (auto i = aip.begin (); i != aip.end (); ++i) {
+				InputPortMap::iterator im = _input_ports.find (i->first);
+				if (im != _input_ports.end()) {
+					im->second->update (accurate_coefficient_to_dB (i->second.meter->level), accurate_coefficient_to_dB (i->second.meter->peak));
+				}
+			}
+			for (PortManager::MIDIInputPorts::const_iterator i = mip.begin (); i != mip.end (); ++i) {
+				InputPortMap::iterator im = _input_ports.find (i->first);
+				if (im != _input_ports.end()) {
+					im->second->update ((float const*)i->second.meter->chn_active);
+					im->second->update (*(i->second.monitor));
+				}
+			}
 		}
 	}
 
@@ -756,13 +896,13 @@ RecorderUI::meter_area_layout ()
 
 	InputPortSet ips;
 	for (InputPortMap::const_iterator i = _input_ports.begin (); i != _input_ports.end (); ++i) {
-		boost::shared_ptr<InputPort> const& ip = i->second;
+		std::shared_ptr<InputPort> const& ip = i->second;
 		ip->show ();
 		ips.insert (ip);
 	}
 
 	for (InputPortSet::const_iterator i = ips.begin (); i != ips.end (); ++i) {
-		boost::shared_ptr<InputPort> const& ip = *i;
+		std::shared_ptr<InputPort> const& ip = *i;
 		_meter_table.attach (*ip, col, col + 1, row, row + 1, SHRINK|FILL, SHRINK, spc, spc);
 
 		if (++col >= _meter_area_cols) {
@@ -799,7 +939,7 @@ RecorderUI::meter_area_size_request (GtkRequisition* requisition)
 	int spc    = 2;
 
 	for (InputPortMap::const_iterator i = _input_ports.begin (); i != _input_ports.end (); ++i) {
-		boost::shared_ptr<InputPort> const& ip = i->second;
+		std::shared_ptr<InputPort> const& ip = i->second;
 		Requisition r = ip->size_request ();
 		width  = std::max (width, r.width + spc * 2);
 		height = std::max (height, r.height + spc * 2);
@@ -836,7 +976,7 @@ RecorderUI::port_pretty_name_changed (string pn)
 }
 
 void
-RecorderUI::regions_changed (boost::shared_ptr<ARDOUR::RegionList>, PBD::PropertyChange const& what_changed)
+RecorderUI::regions_changed (std::shared_ptr<ARDOUR::RegionList>, PBD::PropertyChange const& what_changed)
 {
 	PBD::PropertyChange interests;
 
@@ -884,7 +1024,7 @@ RecorderUI::set_connections (string const& p)
 
 	WeakRouteList wrl;
 
-	boost::shared_ptr<RouteList> rl = _session->get_tracks ();
+	std::shared_ptr<RouteList> rl = _session->get_tracks ();
 	for (RouteList::const_iterator r = rl->begin(); r != rl->end(); ++r) {
 		if ((*r)->input()->connected_to (p)) {
 			wrl.push_back (*r);
@@ -937,7 +1077,7 @@ RecorderUI::spill_port (string const& p)
 void
 RecorderUI::initial_track_display ()
 {
-	boost::shared_ptr<RouteList> r = _session->get_tracks ();
+	std::shared_ptr<RouteList> r = _session->get_tracks ();
 	RouteList                    rl (*r);
 	_recorders.clear ();
 	add_routes (rl);
@@ -949,7 +1089,7 @@ RecorderUI::add_routes (RouteList& rl)
 	rl.sort (Stripable::Sorter ());
 	for (RouteList::iterator r = rl.begin (); r != rl.end (); ++r) {
 		/* we're only interested in Tracks */
-		if (!boost::dynamic_pointer_cast<Track> (*r)) {
+		if (!std::dynamic_pointer_cast<Track> (*r)) {
 			continue;
 		}
 
@@ -992,8 +1132,8 @@ RecorderUI::tra_name_edit (TrackRecordAxis* tra, bool next)
 struct TrackRecordAxisSorter {
 	bool operator() (const TrackRecordAxis* ca, const TrackRecordAxis* cb)
 	{
-		boost::shared_ptr<Stripable> const& a = ca->stripable ();
-		boost::shared_ptr<Stripable> const& b = cb->stripable ();
+		std::shared_ptr<Stripable> const& a = ca->stripable ();
+		std::shared_ptr<Stripable> const& b = cb->stripable ();
 		return Stripable::Sorter(true)(a, b);
 	}
 };
@@ -1080,7 +1220,7 @@ void
 RecorderUI::update_spacer_width (Allocation&, TrackRecordAxis* rec)
 {
 	int w = rec->summary_xpos ();
-	if (_rec_group_tabs->is_visible ()) {
+	if (_rec_group_tabs->get_visible ()) {
 		w += _rec_group_tabs->get_width ();
 	}
 	_space.set_size_request (w, -1); //< Note: this is idempotent
@@ -1093,7 +1233,7 @@ RecorderUI::new_track_for_port (DataType dt, string const& port_name)
 	ArdourDialog d (_("Create track for input"), true, false);
 
 	Entry track_name_entry;
-	InstrumentSelector instrument_combo;
+	InstrumentSelector instrument_combo(InstrumentSelector::ForTrackDefault);
 	ComboBoxText strict_io_combo;
 
 	string pn = AudioEngine::instance()->get_pretty_name_by_name (port_name);
@@ -1103,8 +1243,8 @@ RecorderUI::new_track_for_port (DataType dt, string const& port_name)
 		track_name_entry.set_text (port_name);
 	}
 
-	strict_io_combo.append_text (_("Flexible-I/O"));
-	strict_io_combo.append_text (_("Strict-I/O"));
+	strict_io_combo.append (_("Flexible-I/O"));
+	strict_io_combo.append (_("Strict-I/O"));
 	strict_io_combo.set_active (Config->get_strict_io () ? 1 : 0);
 
 	Label* l;
@@ -1164,9 +1304,9 @@ RecorderUI::new_track_for_port (DataType dt, string const& port_name)
 	}
 
 	if (dt == DataType::AUDIO) {
-		boost::shared_ptr<Route> r;
+		std::shared_ptr<Route> r;
 		try {
-			list<boost::shared_ptr<AudioTrack> > tl = _session->new_audio_track (1, outputs, NULL, 1, track_name, PresentationInfo::max_order, Normal, false);
+			list<std::shared_ptr<AudioTrack> > tl = _session->new_audio_track (1, outputs, NULL, 1, track_name, PresentationInfo::max_order, Normal, false);
 			r = tl.front ();
 		} catch (...) {
 			return;
@@ -1176,9 +1316,9 @@ RecorderUI::new_track_for_port (DataType dt, string const& port_name)
 			r->input ()->audio (0)->connect (port_name);
 		}
 	} else if (dt == DataType::MIDI) {
-		boost::shared_ptr<Route> r;
+		std::shared_ptr<Route> r;
 		try {
-			list<boost::shared_ptr<MidiTrack> > tl = _session->new_midi_track (
+			list<std::shared_ptr<MidiTrack> > tl = _session->new_midi_track (
 					ChanCount (DataType::MIDI, 1), ChanCount (DataType::MIDI, 1),
 					strict_io,
 					instrument_combo.selected_instrument (), (Plugin::PresetRecord*) 0,
@@ -1211,9 +1351,28 @@ RecorderUI::arm_none ()
 }
 
 void
+RecorderUI::rec_undo ()
+{
+	if (_session) {
+		_session->undo (1);
+	}
+}
+
+void
+RecorderUI::rec_redo ()
+{
+	if (_session) {
+		_session->redo (1);
+	}
+}
+
+void
 RecorderUI::peak_reset ()
 {
 	AudioEngine::instance ()->reset_input_meters ();
+	for (auto& p : _ioplugins) {
+		p->reset_input_meters ();
+	}
 }
 
 /* ****************************************************************************/
@@ -1224,9 +1383,9 @@ Glib::RefPtr<Gtk::SizeGroup> RecorderUI::InputPort::_name_size_group;
 Glib::RefPtr<Gtk::SizeGroup> RecorderUI::InputPort::_ctrl_size_group;
 Glib::RefPtr<Gtk::SizeGroup> RecorderUI::InputPort::_monitor_size_group;
 
-RecorderUI::InputPort::InputPort (string const& name, DataType dt, RecorderUI* parent, bool vertical)
+RecorderUI::InputPort::InputPort (string const& name, DataType dt, RecorderUI* parent, bool vertical, bool ioplug)
 	: _dt (dt)
-	, _monitor (dt, AudioEngine::instance()->sample_rate (), vertical ? InputPortMonitor::Vertical : InputPortMonitor::Horizontal)
+	, _monitor (dt, TEMPORAL_SAMPLE_RATE, vertical ? InputPortMonitor::Vertical : InputPortMonitor::Horizontal) // XXX
 	, _alignment (0.5, 0.5, 0, 0)
 	, _frame (vertical ? ArdourWidgets::Frame::Vertical : ArdourWidgets::Frame::Horizontal)
 	, _spill_button ("", ArdourButton::default_elements, true)
@@ -1235,6 +1394,7 @@ RecorderUI::InputPort::InputPort (string const& name, DataType dt, RecorderUI* p
 	, _name_label ("", ALIGN_CENTER, ALIGN_CENTER, false)
 	, _add_button ("+")
 	, _port_name (name)
+	, _ioplug (ioplug)
 	, _solo_release (0)
 {
 	if (!_size_groups_initialized) {
@@ -1274,7 +1434,10 @@ RecorderUI::InputPort::InputPort (string const& name, DataType dt, RecorderUI* p
 	_name_button.set_corner_radius (2);
 	_name_button.set_name ("generic button");
 	_name_button.set_text_ellipsize (Pango::ELLIPSIZE_MIDDLE);
-	_name_button.signal_clicked.connect (sigc::mem_fun (*this, &RecorderUI::InputPort::rename_port));
+
+	if (!_ioplug) {
+		_name_button.signal_clicked.connect (sigc::mem_fun (*this, &RecorderUI::InputPort::rename_port));
+	}
 
 	_name_label.set_ellipsize (Pango::ELLIPSIZE_MIDDLE);
 
@@ -1320,7 +1483,11 @@ RecorderUI::InputPort::InputPort (string const& name, DataType dt, RecorderUI* p
 	_monitor_size_group->add_widget (_monitor);
 
 	Gdk::Color bg;
-	ARDOUR_UI_UTILS::set_color_from_rgba (bg, UIConfiguration::instance ().color ("neutral:background2"));
+	if (_ioplug) {
+		Gtkmm2ext::set_color_from_rgba (bg, UIConfiguration::instance ().color ("neutral:background"));
+	} else {
+		Gtkmm2ext::set_color_from_rgba (bg, UIConfiguration::instance ().color ("neutral:background2"));
+	}
 	_frame.modify_bg (Gtk::STATE_NORMAL, bg);
 
 	/* top level packing with border */
@@ -1385,7 +1552,7 @@ RecorderUI::InputPort::update_rec_stat ()
 {
 	bool armed = false;
 	for (WeakRouteList::const_iterator r = _connected_routes.begin(); r != _connected_routes.end(); ++r) {
-		boost::shared_ptr<Route> rt = r->lock ();
+		std::shared_ptr<Route> rt = r->lock ();
 		if (!rt || !rt->rec_enable_control ()) {
 			continue;
 		}
@@ -1431,7 +1598,11 @@ RecorderUI::InputPort::setup_name ()
 		_name_button.set_text (_port_name);
 		_name_label.set_text ("");
 	}
-	set_tooltip (_name_button, string_compose (_("Set or edit the custom name for input port '%1'"), _port_name));
+	if (_ioplug) {
+		set_tooltip (_name_button, string_compose (_("I/O Plugin input port '%1'"), _port_name));
+	} else {
+		set_tooltip (_name_button, string_compose (_("Set or edit the custom name for input port '%1'"), _port_name));
+	}
 }
 
 void
@@ -1492,7 +1663,7 @@ RecorderUI::InputPort::spilled () const
 void
 RecorderUI::InputPort::allow_monitoring (bool en)
 {
-	if (_dt != DataType::AUDIO) {
+	if (_dt != DataType::AUDIO || _ioplug) {
 		en = false;
 	}
 	if (!en && _monitor_button.get_active ()) {
@@ -1518,7 +1689,7 @@ RecorderUI::InputPort::monitor_press (GdkEventButton* ev)
 	if (Keyboard::is_context_menu_event (ev)) {
 		return false;
 	}
-	if (ev->button != 1 && !Keyboard::is_button2_event (ev)) {
+	if (ev->button != 1 && !Keyboard::is_momentary_push_event (ev)) {
 		return false;
 	}
 
@@ -1526,7 +1697,7 @@ RecorderUI::InputPort::monitor_press (GdkEventButton* ev)
 	Session* s = AudioEngine::instance()->session ();
 	assert (s);
 
-	if (Keyboard::is_button2_event (ev)) {
+	if (Keyboard::is_momentary_push_event (ev)) {
 		/* momentary */
 		_solo_release = new SoloMuteRelease (mp.monitoring (_port_name));
 	}
@@ -1638,8 +1809,8 @@ RecorderUI::RecRuler::set_gui_extents (samplepos_t start, samplepos_t end)
 void
 RecorderUI::RecRuler::render (Cairo::RefPtr<Cairo::Context> const& cr, cairo_rectangle_t* r)
 {
-  cr->rectangle (r->x, r->y, r->width, r->height);
-  cr->clip ();
+	cr->rectangle (r->x, r->y, r->width, r->height);
+	cr->clip ();
 
 	if (!_session || _left >= _right) {
 		return;

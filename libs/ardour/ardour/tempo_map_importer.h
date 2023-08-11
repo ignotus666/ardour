@@ -20,7 +20,7 @@
 #ifndef __ardour_tempo_map_importer_h__
 #define __ardour_tempo_map_importer_h__
 
-#include <boost/shared_ptr.hpp>
+#include <memory>
 
 #include "pbd/xml++.h"
 
@@ -41,7 +41,7 @@ class LIBARDOUR_API TempoMapImportHandler : public ElementImportHandler
 class LIBARDOUR_API TempoMapImporter : public ElementImporter
 {
   private:
-	typedef boost::shared_ptr<XMLNode> XMLNodePtr;
+	typedef std::shared_ptr<XMLNode> XMLNodePtr;
   public:
 	TempoMapImporter (XMLTree const & source, Session & session, XMLNode const & node);
 

@@ -57,7 +57,7 @@ FFMPEGFileImportableSource::FFMPEGFileImportableSource (const std::string& path,
 	argp[a++] = strdup ("-of");
 	argp[a++] = strdup ("json");
 
-	ARDOUR::SystemExec* exec = new ARDOUR::SystemExec (ffprobe_exe, argp);
+	ARDOUR::SystemExec* exec = new ARDOUR::SystemExec (ffprobe_exe, argp, true);
 	PBD::info << "Probe command: { " << exec->to_s () << "}" << endmsg;
 
 	if (exec->start ()) {
@@ -186,7 +186,7 @@ FFMPEGFileImportableSource::start_ffmpeg ()
 #endif
 	argp[a++] = strdup ("-");
 
-	_ffmpeg_exec = new ARDOUR::SystemExec (ffmpeg_exe, argp);
+	_ffmpeg_exec = new ARDOUR::SystemExec (ffmpeg_exe, argp, true);
 	PBD::info << "Decode command: { " << _ffmpeg_exec->to_s () << "}" << endmsg;
 	if (_ffmpeg_exec->start ()) {
 		PBD::error << "FFMPEGFileImportableSource: External decoder (ffmpeg) cannot be started." << endmsg;
@@ -200,13 +200,13 @@ void
 FFMPEGFileImportableSource::reset ()
 {
 	// TODO: actually signal did_read_data to unblock
-	g_atomic_int_set (&_ffmpeg_should_terminate, 1);
+	_ffmpeg_should_terminate.store (1);
 	delete _ffmpeg_exec;
 	_ffmpeg_exec = 0;
 	_ffmpeg_conn.disconnect ();
 	_buffer.reset ();
 	_read_pos = 0;
-	g_atomic_int_set (&_ffmpeg_should_terminate, 0);
+	_ffmpeg_should_terminate.store (0);
 }
 
 void
@@ -221,7 +221,7 @@ FFMPEGFileImportableSource::did_read_data (std::string data, size_t size)
 
 	const char* cur = data.data ();
 	while (n_samples > 0) {
-		if (g_atomic_int_get (&_ffmpeg_should_terminate)) {
+		if (_ffmpeg_should_terminate.load ()) {
 			break;
 		}
 

@@ -47,8 +47,6 @@ namespace ArdourCanvas
 	class Polygon;
 }
 
-class PassThru;
-
 class Loopster : public ArdourCanvas::Rectangle
 {
 public:
@@ -61,21 +59,21 @@ private:
 	float _fraction;
 };
 
-class TriggerMaster : public ArdourCanvas::Rectangle
+class TriggerMaster : public ArdourCanvas::Rectangle, public sigc::trackable
 {
 public:
 	TriggerMaster (ArdourCanvas::Item* canvas);
 	~TriggerMaster ();
 
-	void set_triggerbox (boost::shared_ptr<ARDOUR::TriggerBox>);
+	void set_triggerbox (std::shared_ptr<ARDOUR::TriggerBox>);
 
 	void render (ArdourCanvas::Rect const&, Cairo::RefPtr<Cairo::Context>) const;
 
 	void _size_allocate (ArdourCanvas::Rect const&);
 
-	ArdourCanvas::Text*    name_text;
+	std::string   play_text;
+	std::string   loop_text;
 
-	void toggle_thru ();
 	void maybe_update ();
 	bool event_handler (GdkEvent*);
 	void selection_change ();
@@ -95,10 +93,9 @@ private:
 	void set_default_colors ();
 	void shape_stop_button ();
 
-	boost::shared_ptr<ARDOUR::TriggerBox> _triggerbox;
+	std::shared_ptr<ARDOUR::TriggerBox> _triggerbox;
 
 	Loopster* _loopster;
-	PassThru* _passthru;
 
 	Gtk::ColorSelectionDialog _color_dialog;
 	Gtk::Menu* _context_menu;
@@ -112,7 +109,7 @@ private:
 	sigc::connection      _update_connection;
 };
 
-typedef std::list<boost::shared_ptr<ARDOUR::TriggerBox> > TriggerBoxList;
+typedef std::list<std::shared_ptr<ARDOUR::TriggerBox> > TriggerBoxList;
 
 class CueMaster : public ArdourCanvas::Rectangle, public ARDOUR::SessionHandlePtr
 {

@@ -2,13 +2,15 @@
 
 if which realpath > /dev/null; then
 	TOP=`realpath "$TOP"`
+elif which readlink > /dev/null; then
+	TOP=`(cd "$TOP"; pwd)`
 fi
 
 #export G_DEBUG=fatal_criticals
 
 libs=$TOP/@LIBS@
 
-# http://tracker.ardour.org/view.php?id=5605#c18109
+# https://tracker.ardour.org/view.php?id=5605#c18109
 export GTK2_RC_FILES=/nonexistent
 
 #
@@ -17,10 +19,11 @@ export GTK2_RC_FILES=/nonexistent
 # can find all the components.
 #
 
-export ARDOUR_SURFACES_PATH=$libs/surfaces/osc:$libs/surfaces/faderport8:$libs/surfaces/faderport:$libs/surfaces/generic_midi:$libs/surfaces/tranzport:$libs/surfaces/powermate:$libs/surfaces/mackie:$libs/surfaces/us2400:$libs/surfaces/wiimote:$libs/surfaces/push2:$libs/surfaces/maschine2:$libs/surfaces/cc121:$libs/surfaces/launch_control_xl:$libs/surfaces/contourdesign:$libs/surfaces/websockets
+export ARDOUR_SURFACES_PATH=$libs/surfaces/osc:$libs/surfaces/faderport8:$libs/surfaces/faderport:$libs/surfaces/generic_midi:$libs/surfaces/tranzport:$libs/surfaces/powermate:$libs/surfaces/mackie:$libs/surfaces/us2400:$libs/surfaces/wiimote:$libs/surfaces/push2:$libs/surfaces/maschine2:$libs/surfaces/cc121:$libs/surfaces/launch_control_xl:$libs/surfaces/contourdesign:$libs/surfaces/websockets:$libs/surfaces/console1
 export ARDOUR_PANNER_PATH=$libs/panners
 export ARDOUR_DATA_PATH=$TOP/share:$TOP/build:$TOP/gtk2_ardour:$TOP/build/gtk2_ardour
 export ARDOUR_MIDIMAPS_PATH=$TOP/share/midi_maps
+export ARDOUR_MIDI_PATCH_PATH=$TOP/share/patchfiles
 export ARDOUR_EXPORT_FORMATS_PATH=$TOP/share/export
 export ARDOUR_THEMES_PATH=$TOP/gtk2_ardour/themes
 export ARDOUR_BACKEND_PATH=$libs/backends/jack:$libs/backends/dummy:$libs/backends/alsa:$libs/backends/coreaudio:$libs/backends/portaudio:$libs/backends/pulseaudio
@@ -40,10 +43,19 @@ export ARDOUR_DLL_PATH=$libs
 export GTK_PATH=~/.ardour3:$libs/clearlooks-newer
 export VAMP_PATH=$libs/vamp-plugins:$libs/vamp-pyin${VAMP_PATH:+:$VAMP_PATH}
 
-export LD_LIBRARY_PATH=$libs/ptformat:$libs/qm-dsp:$libs/vamp-sdk:$libs/surfaces:$libs/surfaces/control_protocol:$libs/ardour:$libs/midi++2:$libs/pbd:$libs/rubberband:$libs/soundtouch:$libs/gtkmm2ext:$libs/widgets:$libs/appleutility:$libs/taglib:$libs/evoral:$libs/evoral/src/libsmf:$libs/audiographer:$libs/temporal:$libs/libltc:$libs/canvas:$libs/waveview:$libs/ardouralsautil${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+export LD_LIBRARY_PATH=$libs/ptformat:$libs/qm-dsp:$libs/vamp-sdk:$libs/surfaces:$libs/ctrl-interface/control_protocol:$libs/ctrl-interface/midi_surface:$libs/ardour:$libs/midi++2:$libs/pbd:$libs/rubberband:$libs/soundtouch:$libs/gtkmm2ext:$libs/widgets:$libs/appleutility:$libs/taglib:$libs/evoral:$libs/evoral/src/libsmf:$libs/audiographer:$libs/temporal:$libs/libltc:$libs/canvas:$libs/waveview:$libs/ardouralsautil${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
 
 # DYLD_LIBRARY_PATH is for darwin.
 export DYLD_FALLBACK_LIBRARY_PATH=$LD_LIBRARY_PATH
+
+# allow Ardour to run when configured with --address-sanitizer
+# - halt_on_error=0 - why would we?
+#   Note, static zita-resampler is used by libardour and libalsa_audiobackend
+#   causing a [false positive] odr-violation at start.
+# - new_delete_type_mismatch=0  - because caps plugins do that
+# - leak_check_at_exit=0 - without ARDOUR_RUNNING_UNDER_VALGRIND=TRUE there are many false-positives
+#   besides, instant.xml leaks somewhat intentionally
+export ASAN_OPTIONS=halt_on_error=0:leak_check_at_exit=0:new_delete_type_mismatch=0${ASAN_OPTIONS:+:$ASAN_OPTIONS}
 
 ARDOURVERSION=@VERSION@
 EXECUTABLE=@EXECUTABLE@

@@ -34,7 +34,6 @@
 #endif
 
 using namespace ARDOUR;
-using namespace std;
 using namespace PBD;
 using namespace Glib;
 using namespace ArdourSurface;
@@ -43,47 +42,94 @@ using namespace ArdourCanvas;
 
 static double unselected_root_alpha = 0.5;
 
+static const char*
+row_interval_string (const Push2::RowInterval row_interval, const bool inkey)
+{
+	switch (row_interval) {
+	case Push2::Third:
+		return _(u8"3rd \u2191");
+	case Push2::Fourth:
+		return _(u8"4th \u2191");
+	case Push2::Fifth:
+		return _(u8"5th \u2191");
+	case Push2::Sequential:
+		return inkey ? _(u8"Octave \u2191") : _(u8"Sequential \u2191");
+	}
+
+	return "";
+}
+
+static const char*
+column_interval_string (const bool inkey)
+{
+	return inkey ? _(u8"Scale \u2192") : _(u8"Semitone \u2192");
+}
+
 ScaleLayout::ScaleLayout (Push2& p, Session & s, std::string const & name)
 	: Push2Layout (p, s, name)
-	, last_vpot (-1)
-	, vpot_delta_cnt (0)
+	, _last_vpot (-1)
+	, _vpot_delta_cnt (0)
 {
 	Pango::FontDescription fd ("Sans 10");
 
 	/* background */
 
-	bg = new ArdourCanvas::Rectangle (this);
-	bg->set (Rect (0, 0, display_width(), display_height()));
-	bg->set_fill_color (p2.get_color (Push2::DarkBackground));
+	_bg = new ArdourCanvas::Rectangle (this);
+	_bg->set (Rect (0, 0, display_width(), display_height()));
+	_bg->set_fill_color (_p2.get_color (Push2::DarkBackground));
 
-	left_scroll_text = new Text (this);
-	left_scroll_text->set_font_description (fd);
-	left_scroll_text->set_position (Duple (10, 5));
-	left_scroll_text->set_color (p2.get_color (Push2::LightBackground));
+	_left_scroll_text = new Text (this);
+	_left_scroll_text->set_font_description (fd);
+	_left_scroll_text->set_position (Duple (10, 5));
+	_left_scroll_text->set_color (_p2.get_color (Push2::LightBackground));
 
-	close_text = new Text (this);
-	close_text->set_font_description (fd);
-	close_text->set_position (Duple (25, 5));
-	close_text->set_color (p2.get_color (Push2::LightBackground));
-	close_text->set (_("Close"));
+	_close_text = new Text (this);
+	_close_text->set_font_description (fd);
+	_close_text->set_position (Duple (10, 5));
+	_close_text->set_color (_p2.get_color (Push2::LightBackground));
+	_close_text->set (_("Close"));
 
-	right_scroll_text = new Text (this);
-	right_scroll_text->set_font_description (fd);
-	right_scroll_text->set_position (Duple (10 + (7 * Push2Canvas::inter_button_spacing()), 5));
-	right_scroll_text->set_color (p2.get_color (Push2::LightBackground));
+	_right_scroll_text = new Text (this);
+	_right_scroll_text->set_font_description (fd);
+	_right_scroll_text->set_position (Duple (10 + (7 * Push2Canvas::inter_button_spacing()), 5));
+	_right_scroll_text->set_color (_p2.get_color (Push2::LightBackground));
 
 	Pango::FontDescription fd2 ("Sans 8");
-	inkey_text = new Text (this);
-	inkey_text->set_font_description (fd2);
-	inkey_text->set_position (Duple (10, 140));
-	inkey_text->set_color (p2.get_color (Push2::LightBackground));
-	inkey_text->set (_("InKey"));
+	_inkey_text = new Text (this);
+	_inkey_text->set_font_description (fd2);
+	_inkey_text->set_position (Duple (10, 140));
+	_inkey_text->set_color (_p2.get_color (Push2::LightBackground));
+	_inkey_text->set (_("Scale"));
 
-	chromatic_text = new Text (this);
-	chromatic_text->set_font_description (fd2);
-	chromatic_text->set_position (Duple (45, 140));
-	chromatic_text->set_color (p2.get_color (Push2::LightBackground));
-	chromatic_text->set (_("Chromatic"));
+	_chromatic_text = new Text (this);
+	_chromatic_text->set_font_description (fd2);
+	_chromatic_text->set_position (Duple (45, 140));
+	_chromatic_text->set_color (_p2.get_color (Push2::LightBackground));
+	_chromatic_text->set (_("Chromatic"));
+
+	_fixed_text = new Text (this);
+	_fixed_text->set_font_description (fd2);
+	_fixed_text->set_position (Duple (10 + (7 * Push2Canvas::inter_button_spacing()), 140));
+	_fixed_text->set_color (_p2.get_color (Push2::LightBackground));
+	_fixed_text->set (_("Fixed"));
+
+	_rooted_text = new Text (this);
+	_rooted_text->set_font_description (fd2);
+	_rooted_text->set_position (Duple (45 + (7 * Push2Canvas::inter_button_spacing()), 140));
+	_rooted_text->set_color (_p2.get_color (Push2::LightBackground));
+	_rooted_text->set (_("Rooted"));
+
+	_row_interval_text = new Text (this);
+	_row_interval_text->set_font_description (fd);
+	_row_interval_text->set_position (Duple (10, 60));
+	_row_interval_text->set_color (_p2.get_color (Push2::LightBackground));
+	_row_interval_text->set (row_interval_string (_p2.row_interval (), _p2.in_key ()));
+
+	_column_interval_text = new Text (this);
+	_column_interval_text->set_font_description (fd);
+	_column_interval_text->set_position (Duple (10, 80));
+	_column_interval_text->set_color (_p2.get_color (Push2::LightBackground));
+	_column_interval_text->set (column_interval_string (false));
 
 	for (int n = 0; n < 8; ++n) {
 
@@ -91,7 +137,7 @@ ScaleLayout::ScaleLayout (Push2& p, Session & s, std::string const & name)
 
 		Text* t = new Text (this);
 		t->set_font_description (fd);
-		t->set_color (change_alpha (p2.get_color (Push2::LightBackground), unselected_root_alpha));
+		t->set_color (change_alpha (_p2.get_color (Push2::LightBackground), unselected_root_alpha));
 		t->set_position (Duple (10 + (n * Push2Canvas::inter_button_spacing()), 5));
 
 		switch (n) {
@@ -118,11 +164,11 @@ ScaleLayout::ScaleLayout (Push2& p, Session & s, std::string const & name)
 			break;
 		}
 
-		upper_text.push_back (t);
+		_upper_text.push_back (t);
 
 		t = new Text (this);
 		t->set_font_description (fd);
-		t->set_color (change_alpha (p2.get_color (Push2::LightBackground), unselected_root_alpha));
+		t->set_color (change_alpha (_p2.get_color (Push2::LightBackground), unselected_root_alpha));
 		t->set_position (Duple (10 + (n*Push2Canvas::inter_button_spacing()), 140));
 
 		switch (n) {
@@ -133,28 +179,28 @@ ScaleLayout::ScaleLayout (Push2& p, Session & s, std::string const & name)
 			t->set (S_("Note|F"));
 			break;
 		case 2:
-			t->set (S_("Note|B\u266D/A\u266F"));
+			t->set (S_(u8"Note|B\u266D/A\u266F"));
 			break;
 		case 3:
-			t->set (S_("Note|E\u266D/D\u266F"));
+			t->set (S_(u8"Note|E\u266D/D\u266F"));
 			break;
 		case 4:
-			t->set (S_("Note|A\u266D/G\u266F"));
+			t->set (S_(u8"Note|A\u266D/G\u266F"));
 			break;
 		case 5:
-			t->set (S_("Note|D\u266D/C\u266F"));
+			t->set (S_(u8"Note|D\u266D/C\u266F"));
 			break;
 		case 6:
-			t->set (S_("Note|G\u266D/F\u266F"));
+			t->set (S_(u8"Note|G\u266D/F\u266F"));
 			break;
 		}
 
-		lower_text.push_back (t);
+		_lower_text.push_back (t);
 	}
 
 	build_scale_menu ();
 
-	p2.ScaleChange.connect (p2_connections, invalidator (*this), boost::bind (&ScaleLayout::show_root_state, this), &p2);
+	_p2.ScaleChange.connect (_p2_connections, invalidator (*this), boost::bind (&ScaleLayout::show_root_state, this), &_p2);
 }
 
 ScaleLayout::~ScaleLayout ()
@@ -171,16 +217,16 @@ void
 ScaleLayout::button_upper (uint32_t n)
 {
 	if (n == 0) {
-		if (scale_menu->can_scroll_left()) {
-			scale_menu->scroll (Push2Menu::DirectionLeft, true);
+		if (_scale_menu->can_scroll_left()) {
+			_scale_menu->scroll (Push2Menu::DirectionLeft, true);
 		} else {
-			p2.use_previous_layout ();
+			_p2.use_previous_layout ();
 		}
 		return;
 	}
 
 	if (n == 7) {
-		scale_menu->scroll (Push2Menu::DirectionRight, true);
+		_scale_menu->scroll (Push2Menu::DirectionRight, true);
 		return;
 	}
 
@@ -216,18 +262,29 @@ ScaleLayout::button_upper (uint32_t n)
 		return;
 	}
 
-	p2.set_pad_scale (root, p2.root_octave(), p2.mode(), p2.in_key());
+	_p2.set_pad_scale (root,
+	                   _p2.root_octave (),
+	                   _p2.mode (),
+	                   _p2.note_grid_origin (),
+	                   _p2.row_interval (),
+	                   _p2.in_key ());
 }
 
 void
 ScaleLayout::button_lower (uint32_t n)
 {
 	if (n == 0) {
-		p2.set_pad_scale (p2.scale_root(), p2.root_octave(), p2.mode(), !p2.in_key());
+		_p2.set_pad_scale (_p2.scale_root (),
+		                   _p2.root_octave (),
+		                   _p2.mode (),
+		                   _p2.note_grid_origin (),
+		                   _p2.row_interval (),
+		                   !_p2.in_key ());
 		return;
 	}
 
-	int root = 0;
+	int                   root   = _p2.scale_root();
+	Push2::NoteGridOrigin origin = _p2.note_grid_origin ();
 
 	switch (n) {
 	case 1:
@@ -256,57 +313,63 @@ ScaleLayout::button_lower (uint32_t n)
 		break;
 	case 7:
 		/* fixed mode */
-		return;
+		origin = (origin == Push2::Fixed) ? Push2::Rooted : Push2::Fixed;
+		break;
 	}
 
-	p2.set_pad_scale (root, p2.root_octave(), p2.mode(), p2.in_key());
+	_p2.set_pad_scale (root,
+	                   _p2.root_octave (),
+	                   _p2.mode (),
+	                   origin,
+	                   _p2.row_interval (),
+	                   _p2.in_key ());
 }
 
 void
 ScaleLayout::button_up ()
 {
-	scale_menu->scroll (Push2Menu::DirectionUp);
+	_scale_menu->scroll (Push2Menu::DirectionUp);
 }
 
 void
 ScaleLayout::button_down ()
 {
-	scale_menu->scroll (Push2Menu::DirectionDown);
+	_scale_menu->scroll (Push2Menu::DirectionDown);
 }
 
 void
 ScaleLayout::button_left ()
 {
-	scale_menu->scroll (Push2Menu::DirectionLeft);
+	_scale_menu->scroll (Push2Menu::DirectionLeft);
 }
 
 void
 ScaleLayout::button_right ()
 {
-	scale_menu->scroll (Push2Menu::DirectionRight);
+	_scale_menu->scroll (Push2Menu::DirectionRight);
 }
 
 void
 ScaleLayout::show ()
 {
-	boost::shared_ptr<Push2::Button> b;
+	std::shared_ptr<Push2::Button> b;
 
-	last_vpot = -1;
+	_last_vpot = -1;
 
-	b = p2.button_by_id (Push2::Upper1);
+	b = _p2.button_by_id (Push2::Upper1);
 	b->set_color (Push2::LED::White);
 	b->set_state (Push2::LED::OneShot24th);
-	p2.write (b->state_msg());
+	_p2.write (b->state_msg());
 
-	b = p2.button_by_id (Push2::Upper8);
+	b = _p2.button_by_id (Push2::Upper8);
 	b->set_color (Push2::LED::White);
 	b->set_state (Push2::LED::OneShot24th);
-	p2.write (b->state_msg());
+	_p2.write (b->state_msg());
 
-	b = p2.button_by_id (Push2::Lower1);
+	b = _p2.button_by_id (Push2::Lower1);
 	b->set_color (Push2::LED::White);
 	b->set_state (Push2::LED::OneShot24th);
-	p2.write (b->state_msg());
+	_p2.write (b->state_msg());
 
 	/* all root buttons should be dimly lit */
 
@@ -314,14 +377,15 @@ ScaleLayout::show ()
 	                                   Push2::Lower2, Push2::Lower3, Push2::Lower4, Push2::Lower5, Push2::Lower6, Push2::Lower7, };
 
 	for (size_t n = 0; n < sizeof (root_buttons) / sizeof (root_buttons[0]); ++n) {
-		b = p2.button_by_id (root_buttons[n]);
+		b = _p2.button_by_id (root_buttons[n]);
 
 		b->set_color (Push2::LED::DarkGray);
 		b->set_state (Push2::LED::OneShot24th);
-		p2.write (b->state_msg());
+		_p2.write (b->state_msg());
 	}
 
 	show_root_state ();
+	show_fixed_state ();
 
 	Container::show ();
 }
@@ -329,36 +393,32 @@ ScaleLayout::show ()
 void
 ScaleLayout::strip_vpot (int n, int delta)
 {
-	/* menu starts under the 2nd-from-left vpot */
+	if (_last_vpot != n) {
+		if (n > 0) {
+			uint32_t effective_column = n - 1;
+			uint32_t active = _scale_menu->active ();
 
-	if (n == 0) {
-		return;
-	}
-
-	if (last_vpot != n) {
-		uint32_t effective_column = n - 1;
-		uint32_t active = scale_menu->active ();
-
-		if (active / scale_menu->rows() != effective_column) {
-			/* knob turned is different than the current active column.
-			   Just change that.
-			*/
-			scale_menu->set_active (effective_column * scale_menu->rows()); /* top entry of that column */
-			return;
+			if (active / _scale_menu->rows() != effective_column) {
+				/* knob turned is different than the current active column.
+				   Just change that.
+				*/
+				_scale_menu->set_active (effective_column * _scale_menu->rows()); /* top entry of that column */
+				return;
+			}
 		}
 
 		/* new vpot, reset delta cnt */
 
-		vpot_delta_cnt = 0;
+		_vpot_delta_cnt = 0;
 	}
 
-	if ((delta < 0 && vpot_delta_cnt > 0) || (delta > 0 && vpot_delta_cnt < 0)) {
+	if ((delta < 0 && _vpot_delta_cnt > 0) || (delta > 0 && _vpot_delta_cnt < 0)) {
 		/* direction changed, reset */
-		vpot_delta_cnt = 0;
+		_vpot_delta_cnt = 0;
 	}
 
-	vpot_delta_cnt += delta;
-	last_vpot = n;
+	_vpot_delta_cnt += delta;
+	_last_vpot = n;
 
 	/* this thins out vpot delta events so that we don't scroll so fast
 	   through the menu.
@@ -366,17 +426,38 @@ ScaleLayout::strip_vpot (int n, int delta)
 
 	const int vpot_slowdown_factor = 4;
 
-	if ((vpot_delta_cnt < 0) && (vpot_delta_cnt % vpot_slowdown_factor == 0)) {
-		scale_menu->scroll (Push2Menu::DirectionUp);
-	} else if (vpot_delta_cnt % vpot_slowdown_factor == 0) {
-		scale_menu->scroll (Push2Menu::DirectionDown);
+	const bool moved_enough = _vpot_delta_cnt % vpot_slowdown_factor == 0;
+	if (moved_enough) {
+		if (n == 0) {
+			Push2::RowInterval row_interval = _p2.row_interval();
+			if (_vpot_delta_cnt < 0 && row_interval > Push2::Third) {
+				row_interval = (Push2::RowInterval)(row_interval - 1);
+			} else if (_vpot_delta_cnt > 0 && row_interval < Push2::Sequential) {
+				row_interval = (Push2::RowInterval)(row_interval + 1);
+			}
+
+			_p2.set_pad_scale (_p2.scale_root (),
+			                   _p2.root_octave (),
+			                   _p2.mode (),
+			                   _p2.note_grid_origin (),
+			                   row_interval,
+			                   _p2.in_key ());
+
+			_row_interval_text->set(row_interval_string(row_interval, _p2.in_key ()));
+		} else {
+			if (_vpot_delta_cnt < 0) {
+				_scale_menu->scroll (Push2Menu::DirectionUp);
+			} else {
+				_scale_menu->scroll (Push2Menu::DirectionDown);
+			}
+		}
 	}
 }
 
 void
 ScaleLayout::build_scale_menu ()
 {
-	vector<string> v;
+	std::vector<std::string> v;
 
 	/* must match in which enums are declared in push2.h
 	 */
@@ -419,25 +500,25 @@ ScaleLayout::build_scale_menu ()
 	v.push_back ("Persian");
 	v.push_back ("Algeria");
 
-	scale_menu = new Push2Menu (this, v);
-	scale_menu->Rearranged.connect (menu_connections, invalidator (*this), boost::bind (&ScaleLayout::menu_rearranged, this), &p2);
+	_scale_menu = new Push2Menu (this, v);
+	_scale_menu->Rearranged.connect (_menu_connections, invalidator (*this), boost::bind (&ScaleLayout::menu_rearranged, this), &_p2);
 
-	scale_menu->set_layout (6, 6);
-	scale_menu->set_text_color (p2.get_color (Push2::ParameterName));
-	scale_menu->set_active_color (p2.get_color (Push2::LightBackground));
+	_scale_menu->set_layout (6, 6);
+	_scale_menu->set_text_color (_p2.get_color (Push2::ParameterName));
+	_scale_menu->set_active_color (_p2.get_color (Push2::LightBackground));
 
-	Pango::FontDescription fd ("Sans Bold 8");
-	scale_menu->set_font_description (fd);
+	Pango::FontDescription fd ("Sans Bold Condensed 8");
+	_scale_menu->set_font_description (fd);
 
-	/* move menu into position so that its leftmost column is in the
-	 * 2nd-from-left column of the display/button layout.
-	 */
+	/* Move menu horizontally so that the leftmost column is in the
+	  2nd-from-left column of the display/button layout.  The Y position is
+	  just what appears centered to me. */
 
-	scale_menu->set_position (Duple (10 + Push2Canvas::inter_button_spacing(), 40));
+	_scale_menu->set_position (Duple (10 + Push2Canvas::inter_button_spacing(), 32));
 
 	/* listen for changes */
 
-	scale_menu->ActiveChanged.connect (menu_connections, invalidator (*this), boost::bind (&ScaleLayout::mode_changed, this), &p2);
+	_scale_menu->ActiveChanged.connect (_menu_connections, invalidator (*this), boost::bind (&ScaleLayout::mode_changed, this), &_p2);
 }
 
 void
@@ -448,93 +529,98 @@ ScaleLayout::show_root_state ()
 		return;
 	}
 
-	if (p2.in_key()) {
-		chromatic_text->set_color (change_alpha (chromatic_text->color(), unselected_root_alpha));
-		inkey_text->set_color (change_alpha (inkey_text->color(), 1.0));
+	_row_interval_text->set (
+	  row_interval_string (_p2.row_interval (), _p2.in_key ()));
+
+	_column_interval_text->set (column_interval_string (_p2.in_key ()));
+
+	if (_p2.in_key()) {
+		_chromatic_text->set_color (change_alpha (_chromatic_text->color(), unselected_root_alpha));
+		_inkey_text->set_color (change_alpha (_inkey_text->color(), 1.0));
 	} else {
-		inkey_text->set_color (change_alpha (chromatic_text->color(), unselected_root_alpha));
-		chromatic_text->set_color (change_alpha (inkey_text->color(), 1.0));
+		_inkey_text->set_color (change_alpha (_chromatic_text->color(), unselected_root_alpha));
+		_chromatic_text->set_color (change_alpha (_inkey_text->color(), 1.0));
 	}
 
 	Pango::FontDescription fd_bold ("Sans Bold 10");
 	Pango::FontDescription fd ("Sans 10");
 
 	uint32_t highlight_text = 0;
-	vector<Text*>* none_text_array = 0;
-	vector<Text*>* one_text_array = 0;
+	std::vector<Text*>* none_text_array = 0;
+	std::vector<Text*>* one_text_array = 0;
 	Push2::ButtonID bid = Push2::Upper2; /* keep compilers quiet */
 
-	switch (p2.scale_root()) {
+	switch (_p2.scale_root()) {
 	case 0:
 		highlight_text = 1;
-		none_text_array = &lower_text;
-		one_text_array = &upper_text;
+		none_text_array = &_lower_text;
+		one_text_array = &_upper_text;
 		bid = Push2::Upper2;
 		break;
 	case 1:
 		highlight_text = 5;
-		none_text_array = &lower_text;
-		one_text_array = &upper_text;
+		none_text_array = &_upper_text;
+		one_text_array = &_lower_text;
 		bid = Push2::Lower6;
 		break;
 	case 2:
 		highlight_text = 3;
-		none_text_array = &lower_text;
-		one_text_array = &upper_text;
+		none_text_array = &_lower_text;
+		one_text_array = &_upper_text;
 		bid = Push2::Upper4;
 		break;
 	case 3:
 		highlight_text = 3;
-		none_text_array = &upper_text;
-		one_text_array = &lower_text;
+		none_text_array = &_upper_text;
+		one_text_array = &_lower_text;
 		bid = Push2::Lower4;
 		break;
 	case 4:
 		highlight_text = 5;
-		none_text_array = &lower_text;
-		one_text_array = &upper_text;
+		none_text_array = &_lower_text;
+		one_text_array = &_upper_text;
 		bid = Push2::Upper6;
 		break;
 	case 5:
 		highlight_text = 1;
-		none_text_array = &upper_text;
-		one_text_array = &lower_text;
+		none_text_array = &_upper_text;
+		one_text_array = &_lower_text;
 		bid = Push2::Lower2;
 		break;
 	case 6:
 		highlight_text = 6;
-		none_text_array = &upper_text;
-		one_text_array = &lower_text;
+		none_text_array = &_upper_text;
+		one_text_array = &_lower_text;
 		bid = Push2::Lower7;
 		break;
 	case 7:
 		highlight_text = 2;
-		none_text_array = &lower_text;
-		one_text_array = &upper_text;
+		none_text_array = &_lower_text;
+		one_text_array = &_upper_text;
 		bid = Push2::Upper3;
 		break;
 	case 8:
 		highlight_text = 4;
-		none_text_array = &upper_text;
-		one_text_array = &lower_text;
+		none_text_array = &_upper_text;
+		one_text_array = &_lower_text;
 		bid = Push2::Lower5;
 		break;
 	case 9:
 		highlight_text = 4;
-		none_text_array = &lower_text;
-		one_text_array = &upper_text;
+		none_text_array = &_lower_text;
+		one_text_array = &_upper_text;
 		bid = Push2::Upper5;
 		break;
 	case 10:
 		highlight_text = 2;
-		none_text_array = &upper_text;
-		one_text_array = &lower_text;
+		none_text_array = &_upper_text;
+		one_text_array = &_lower_text;
 		bid = Push2::Lower3;
 		break;
 	case 11:
 		highlight_text = 6;
-		none_text_array = &lower_text;
-		one_text_array = &upper_text;
+		none_text_array = &_lower_text;
+		one_text_array = &_upper_text;
 		bid = Push2::Upper7;
 		break;
 	default:
@@ -558,64 +644,88 @@ ScaleLayout::show_root_state ()
 
 	}
 
-	boost::shared_ptr<Push2::Button> b = p2.button_by_id (bid);
+	std::shared_ptr<Push2::Button> b = _p2.button_by_id (bid);
 
-	if (b != root_button) {
-		if (root_button) {
+	if (b != _root_button) {
+		if (_root_button) {
 			/* turn the old one off (but not totally) */
-			root_button->set_color (Push2::LED::DarkGray);
-			root_button->set_state (Push2::LED::OneShot24th);
-			p2.write (root_button->state_msg());
+			_root_button->set_color (Push2::LED::DarkGray);
+			_root_button->set_state (Push2::LED::OneShot24th);
+			_p2.write (_root_button->state_msg());
 		}
 
-		root_button = b;
+		_root_button = b;
 
-		if (root_button) {
+		if (_root_button) {
 			/* turn the new one on */
-			root_button->set_color (Push2::LED::White);
-			root_button->set_state (Push2::LED::OneShot24th);
-			p2.write (root_button->state_msg());
+			_root_button->set_color (Push2::LED::White);
+			_root_button->set_state (Push2::LED::OneShot24th);
+			_p2.write (_root_button->state_msg());
 		}
 	}
 
-	scale_menu->set_active ((uint32_t) p2.mode ());
+	_scale_menu->set_active ((uint32_t) _p2.mode ());
+
+	show_fixed_state ();
+}
+
+void
+ScaleLayout::show_fixed_state ()
+{
+	if (!parent()) {
+		/* don't do this stuff if we're not visible */
+		return;
+	}
+
+	if (_p2.note_grid_origin() == Push2::Fixed) {
+		_rooted_text->set_color (change_alpha (_fixed_text->color(), unselected_root_alpha));
+		_fixed_text->set_color (change_alpha (_rooted_text->color(), 1.0));
+	} else {
+		_fixed_text->set_color (change_alpha (_fixed_text->color(), unselected_root_alpha));
+		_rooted_text->set_color (change_alpha (_rooted_text->color(), 1.0));
+	}
 }
 
 void
 ScaleLayout::mode_changed ()
 {
-	MusicalMode::Type m = (MusicalMode::Type) scale_menu->active();
-	p2.set_pad_scale (p2.scale_root(), p2.root_octave(), m, p2.in_key());
+	MusicalMode::Type m = (MusicalMode::Type) _scale_menu->active();
+	_p2.set_pad_scale (_p2.scale_root (),
+	                   _p2.root_octave (),
+	                   m,
+	                   _p2.note_grid_origin (),
+	                   _p2.row_interval (),
+	                   _p2.in_key ());
 }
 
 void
 ScaleLayout::menu_rearranged ()
 {
-	if (scale_menu->can_scroll_left()) {
-		left_scroll_text->set ("<");
-		close_text->hide ();
+	if (_scale_menu->can_scroll_left()) {
+		_left_scroll_text->set ("<");
+		_close_text->hide ();
 	} else {
-		left_scroll_text->set (string());
-		close_text->show ();
+		_left_scroll_text->set (std::string());
+		_close_text->show ();
 	}
 
-	if (scale_menu->can_scroll_right()) {
-		right_scroll_text->set (">");
+	if (_scale_menu->can_scroll_right()) {
+		_right_scroll_text->set (">");
 	} else {
-		right_scroll_text->set (string());
+		_right_scroll_text->set (std::string());
 	}
 }
 
 void
 ScaleLayout::update_cursor_buttons ()
 {
-	boost::shared_ptr<Push2::Button> b;
+	std::shared_ptr<Push2::Button> b;
 	bool change;
 
-	b = p2.button_by_id (Push2::Up);
+	b = _p2.button_by_id (Push2::Up);
 	change = false;
 
-	if (scale_menu->active() == 0) {
+	if (_scale_menu->active() == 0) {
 		if (b->color_index() != Push2::LED::Black) {
 			b->set_color (Push2::LED::Black);
 			change = true;
@@ -629,15 +739,15 @@ ScaleLayout::update_cursor_buttons ()
 
 	if (change) {
 		b->set_state (Push2::LED::OneShot24th);
-		p2.write (b->state_msg());
+		_p2.write (b->state_msg());
 	}
 
 	/* down */
 
-	b = p2.button_by_id (Push2::Down);
+	b = _p2.button_by_id (Push2::Down);
 	change = false;
 
-	if (scale_menu->active() == scale_menu->items() - 1) {
+	if (_scale_menu->active() == _scale_menu->items() - 1) {
 		if (b->color_index() != Push2::LED::Black) {
 			b->set_color (Push2::LED::Black);
 			change = true;
@@ -651,15 +761,15 @@ ScaleLayout::update_cursor_buttons ()
 	}
 	if (change) {
 		b->set_color (Push2::LED::OneShot24th);
-		p2.write (b->state_msg());
+		_p2.write (b->state_msg());
 	}
 
 	/* left */
 
-	b = p2.button_by_id (Push2::Left);
+	b = _p2.button_by_id (Push2::Left);
 	change = false;
 
-	if (scale_menu->active() < scale_menu->rows()) {
+	if (_scale_menu->active() < _scale_menu->rows()) {
 		if (b->color_index() != Push2::LED::Black) {
 			b->set_color (Push2::LED::Black);
 			change = true;
@@ -673,15 +783,15 @@ ScaleLayout::update_cursor_buttons ()
 	}
 	if (change) {
 		b->set_color (Push2::LED::OneShot24th);
-		p2.write (b->state_msg());
+		_p2.write (b->state_msg());
 	}
 
 	/* right */
 
-	b = p2.button_by_id (Push2::Right);
+	b = _p2.button_by_id (Push2::Right);
 	change = false;
 
-	if (scale_menu->active() > (scale_menu->items() - scale_menu->rows())) {
+	if (_scale_menu->active() > (_scale_menu->items() - _scale_menu->rows())) {
 		if (b->color_index() != Push2::LED::Black) {
 			b->set_color (Push2::LED::Black);
 			change = true;
@@ -696,6 +806,6 @@ ScaleLayout::update_cursor_buttons ()
 
 	if (change) {
 		b->set_color (Push2::LED::OneShot24th);
-		p2.write (b->state_msg());
+		_p2.write (b->state_msg());
 	}
 }

@@ -97,8 +97,9 @@ EditNoteDialog::EditNoteDialog (MidiRegionView* rv, set<NoteBase*> n)
 	_time_clock.set_session (_region_view->get_time_axis_view().session ());
 	_time_clock.set_mode (AudioClock::BBT);
 
-	timecnt_t dur = _region_view->source_relative_distance (timecnt_t ((*_events.begin())->note()->time(), timepos_t()), BeatTime);
-	timepos_t pos = _region_view->region()->source_position() + dur;
+	/* Calculate absolute position of the event on time timeline */
+	std::shared_ptr<ARDOUR::Region> region (_region_view->region ());
+	timepos_t const pos = region->source_position() + timecnt_t ((*_events.begin())->note()->time ());
 
 	_time_clock.set (pos, true);
 
@@ -110,15 +111,7 @@ EditNoteDialog::EditNoteDialog (MidiRegionView* rv, set<NoteBase*> n)
 
 	_length_clock.set_session (_region_view->get_time_axis_view().session ());
 	_length_clock.set_mode (AudioClock::BBT);
-
-	dur = _region_view->region_relative_distance (timecnt_t ((*_events.begin())->note()->end_time (), timepos_t()), BeatTime);
-	pos = _region_view->region()->position() + dur;
-	timecnt_t offset;
-	dur = _region_view->region_relative_distance (timecnt_t ((*_events.begin())->note()->time (), timepos_t()), BeatTime);
-	offset = timecnt_t (_region_view->region()->position(), timepos_t()) + dur;
-
-	_length_clock.set_is_duration (true, pos);
-	_length_clock.set_duration (offset, true);
+	_length_clock.set_duration (timecnt_t ((*_events.begin())->note()->length()), true);
 
 	/* Set up `set all notes...' buttons' sensitivity */
 
@@ -208,14 +201,12 @@ EditNoteDialog::done (int r)
 		}
 	}
 
-	timepos_t source_start = _region_view->region()->position().earlier (_region_view->region()->start());
+	std::shared_ptr<ARDOUR::Region> region (_region_view->region ());
 
 	/* convert current clock time into an offset from the start of the source */
-
-	timepos_t time_clock_source_relative = _time_clock.current_time().earlier (source_start);
+	timecnt_t const time_clock_source_relative = region->source_position ().distance (_time_clock.last_when ());
 
 	/* convert that into a position in Beats - this will be the new note time (as an offset inside the source) */
-
 	Beats const new_note_time_source_relative_beats = time_clock_source_relative.beats ();
 
 	if (!_time_all.get_sensitive() || _time_all.get_active ()) {
@@ -226,17 +217,10 @@ EditNoteDialog::done (int r)
 			}
 		}
 	}
+
 	if (!_length_all.get_sensitive() || _length_all.get_active ()) {
-
-
-		/* get current note duration, interpreted as beats at the time indicated by the _time_clock (the new note position) */
-		Beats const duration = _length_clock.current_duration (_time_clock.current_time()).beats ();
-
-		/* compute end of note */
-		Beats const new_note_end_source_relative_beats = new_note_time_source_relative_beats + duration;
-
+		Beats const new_note_length_beats = _length_clock.current_duration ().beats ();
 		for (set<NoteBase*>::iterator i = _events.begin(); i != _events.end(); ++i) {
-			Beats const new_note_length_beats = new_note_end_source_relative_beats - (*i)->note()->time();
 			if (new_note_length_beats != (*i)->note()->length()) {
 				_region_view->change_note_length (*i, new_note_length_beats);
 				had_change = true;
@@ -245,11 +229,11 @@ EditNoteDialog::done (int r)
 
 	}
 
-	if (!had_change) {
-		_region_view->abort_command ();
+	if (had_change) {
+		_region_view->apply_note_diff ();
+	} else {
+		_region_view->abort_note_diff ();
 	}
-
-	_region_view->apply_diff ();
 
 	list<Evoral::event_id_t> notes;
 	for (set<NoteBase*>::iterator i = _events.begin(); i != _events.end(); ++i) {

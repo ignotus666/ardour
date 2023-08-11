@@ -20,15 +20,15 @@
 #ifndef __libbackend_alsa_audiobackend_h__
 #define __libbackend_alsa_audiobackend_h__
 
+#include <cstdint>
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
 #include <pthread.h>
-#include <stdint.h>
 
-#include <boost/shared_ptr.hpp>
 
 #include "pbd/natsort.h"
 #include "pbd/rcu.h"
@@ -106,7 +106,7 @@ class AlsaDeviceReservation
 		AlsaDeviceReservation (const char* device_name);
 		~AlsaDeviceReservation ();
 
-		bool acquire_device (const char* device_name);
+		bool acquire_device (const char* device_name, bool silent = false);
 		void release_device ();
 
 	private:

@@ -20,9 +20,9 @@
 #ifndef PBD_ATOMIC_COUNTER_H
 #define PBD_ATOMIC_COUNTER_H
 
-#include <glib.h>
+#include <atomic>
 
-#include "pbd/g_atomic_compat.h"
+#include <glib.h>
 
 namespace PBD {
 
@@ -38,22 +38,22 @@ public:
 
 	atomic_counter (gint value = 0)
 	{
-		g_atomic_int_set (&m_value, value);
+		m_value.store (value);
 	}
 
 	gint get() const
 	{
-		return g_atomic_int_get (&m_value);
+		return m_value.load ();
 	}
 
 	void set (gint new_value)
 	{
-		g_atomic_int_set (&m_value, new_value);
+		m_value.store (new_value);
 	}
 
 	void increment ()
 	{
-		g_atomic_int_inc (&m_value);
+		m_value.fetch_add (1);
 	}
 
 	void operator++ ()
@@ -63,7 +63,7 @@ public:
 
 	bool decrement_and_test ()
 	{
-		return g_atomic_int_dec_and_test (&m_value);
+		return PBD::atomic_dec_and_test (m_value);
 	}
 
 	bool operator-- ()
@@ -73,12 +73,7 @@ public:
 
 	bool compare_and_exchange (gint old_value, gint new_value)
 	{
-		return g_atomic_int_compare_and_exchange
-			(
-			 &m_value,
-			 old_value,
-			 new_value
-			);
+		return m_value.compare_exchange_strong (old_value, new_value);
 	}
 
 	/**
@@ -90,7 +85,7 @@ public:
 	}
 
 private:
-	mutable GATOMIC_QUAL gint m_value;
+	mutable std::atomic<int> m_value;
 };
 
 } // namespace PBD

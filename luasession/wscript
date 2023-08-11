@@ -17,19 +17,17 @@ def options(opt):
 
 def configure(conf):
     conf.load('misc')
-    conf.load('compiler_cxx')
     conf.check_cc(
             header_name='stdio.h readline/readline.h',
             lib='readline',
             uselib_store='READLINE',
             define_name='HAVE_READLINE',
             mandatory=False)
-    autowaf.configure(conf)
 
 def build(bld):
     VERSION = "%s.%s" % (bld.env['MAJOR'], bld.env['MINOR'])
     if not bld.is_defined('HAVE_READLINE'):
-            return;
+        return
 
     # commandline luasession wrapper script
     if bld.env['build_target'] != 'mingw':
@@ -47,7 +45,7 @@ def build(bld):
     obj.source       = 'luasession.cc'
     obj.target       = 'luasession'
     obj.includes     = ['../libs']
-    obj.use          = ['liblua'
+    obj.use          = ['liblua',
                         'libpbd',
                         'libardour',
                         'libardour_cp',
@@ -69,6 +67,9 @@ def build(bld):
 
     if bld.is_defined('HAVE_SUIL'):
         obj.uselib += ' SUIL'
+
+    if bld.is_defined('HAVE_USB'):
+        obj.uselib += ' USB'
 
     if sys.platform == 'darwin':
         obj.uselib += ' AUDIOUNITS OSX'

@@ -64,7 +64,7 @@ class Maschine2: public ARDOUR::ControlProtocol, public AbstractUI<Maschine2Requ
 		Maschine2 (ARDOUR::Session&);
 		~Maschine2 ();
 
-		static void* request_factory (uint32_t);
+		static bool available ();
 
 #if 0
 		bool has_editor () const { return false; }
@@ -73,7 +73,7 @@ class Maschine2: public ARDOUR::ControlProtocol, public AbstractUI<Maschine2Requ
 #endif
 
 		int set_active (bool yn);
-		XMLNode& get_state ();
+	XMLNode& get_state () const;
 		int set_state (const XMLNode & node, int version);
 
 		Maschine2Canvas* canvas () const { return _canvas; }
@@ -84,6 +84,8 @@ class Maschine2: public ARDOUR::ControlProtocol, public AbstractUI<Maschine2Requ
 			Maschine,
 			Studio
 		} Maschine2Type;
+
+	CONTROL_PROTOCOL_THREADS_NEED_TEMPO_MAP_DECL();
 
 	private:
 		void do_request (Maschine2Request*);
@@ -126,7 +128,7 @@ class Maschine2: public ARDOUR::ControlProtocol, public AbstractUI<Maschine2Requ
 		void notify_master_change ();
 
 		/* PAD Port */
-		boost::shared_ptr<ARDOUR::Port> _midi_out;
+		std::shared_ptr<ARDOUR::Port> _midi_out;
 		MIDI::Port* _output_port;
 
 		/* callbacks */

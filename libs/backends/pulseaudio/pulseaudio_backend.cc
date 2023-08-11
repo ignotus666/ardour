@@ -70,7 +70,7 @@ PulseAudioBackend::~PulseAudioBackend ()
 	clear_ports ();
 }
 
-/* Pulseaudio */
+/* PulseAudio */
 void
 PulseAudioBackend::close_pulse (bool unlock)
 {
@@ -211,20 +211,12 @@ int
 PulseAudioBackend::init_pulse ()
 {
 	pa_sample_spec ss;
-	pa_buffer_attr ba;
-
 	ss.channels = N_CHANNELS;
 	ss.rate     = _samplerate;
 	ss.format   = PA_SAMPLE_FLOAT32LE;
 
-	/* https://freedesktop.org/software/pulseaudio/doxygen/structpa__buffer__attr.html */
-	ba.minreq    = _samples_per_period * N_CHANNELS * sizeof (float);
-	ba.maxlength = 2 * ba.minreq;
-	ba.prebuf    = (uint32_t)-1;
-	ba.tlength   = (uint32_t)-1;
-	ba.fragsize  = 0; // capture only
-
 	if (!pa_sample_spec_valid (&ss)) {
+		PBD::error << _("PulseAudioBackend: Default sample spec not valid") << endmsg;
 		return AudioDeviceInvalidError;
 	}
 
@@ -273,7 +265,6 @@ PulseAudioBackend::init_pulse ()
 		close_pulse (true);
 		return AudioDeviceOpenError;
 	}
-
 	/* Wait until the context is ready, context_state_cb will trigger this */
 	pa_threaded_mainloop_wait (p_mainloop);
 	if (pa_context_get_state (p_context) != PA_CONTEXT_READY) {
@@ -294,22 +285,26 @@ PulseAudioBackend::init_pulse ()
 	pa_stream_set_underflow_callback (p_stream, PulseAudioBackend::stream_xrun_cb, this);
 	pa_stream_set_overflow_callback (p_stream, PulseAudioBackend::stream_xrun_cb, this);
 
+	/* PulseAudio buffer strategy: Be explicit for small latency and avoid using PA auto tuning.
+	 * The user specified a buffer size (_samples_per_period).
+	 * Specify the PA buffer to be twice as big so it can use double buffering (maxlength).
+	 * Aim for keeping the buffer full (tlength).
+	 * Fill up the buffer before starting playback (prebuf).
+	 * Immediately ask for more data when there is room for the buffer size (minreq because PA_STREAM_EARLY_REQUESTS).
+	 */
+	pa_buffer_attr ba;
+	/* https://freedesktop.org/software/pulseaudio/doxygen/structpa__buffer__attr.html */
+	ba.minreq    = _samples_per_period * N_CHANNELS * sizeof (float);
+	ba.maxlength = 2 * ba.minreq;
+	ba.tlength   = ba.maxlength;
+	ba.prebuf    = ba.tlength;
+	ba.fragsize  = 0; // capture only
+
 	/* https://freedesktop.org/software/pulseaudio/doxygen/def_8h.html#a6966d809483170bc6d2e6c16188850fc */
 	pa_stream_flags_t sf = (pa_stream_flags_t) (
-			  (int)PA_STREAM_START_CORKED
-#if 0 /* may happen during freewheel export */
-			| (int)PA_STREAM_FAIL_ON_SUSPEND
-#endif
-			| (int)PA_STREAM_NO_REMAP_CHANNELS
+			  (int)PA_STREAM_NO_REMAP_CHANNELS
 			| (int)PA_STREAM_NO_REMIX_CHANNELS
-			| (int)PA_STREAM_EARLY_REQUESTS
-
-			/*
-			| (int)PA_STREAM_DONT_MOVE
-			| (int)PA_STREAM_ADJUST_LATENCY
-			| (int)PA_STREAM_AUTO_TIMING_UPDATE
-			| (int)PA_STREAM_INTERPOLATE_TIMING
-			*/
+			| (int)PA_STREAM_EARLY_REQUESTS  // request more data as soon as minreq is reached
 			);
 
 	if (pa_stream_connect_playback (p_stream, NULL, &ba, sf, NULL, NULL) < 0) {
@@ -317,10 +312,8 @@ PulseAudioBackend::init_pulse ()
 		close_pulse (true);
 		return AudioDeviceOpenError;
 	}
-
 	/* Wait until the stream is ready */
 	pa_threaded_mainloop_wait (p_mainloop);
-
 	if (pa_stream_get_state (p_stream) != PA_STREAM_READY) {
 		PBD::error << _("PulseAudioBackend: Failed to start stream") << endmsg;
 		close_pulse (true);
@@ -336,7 +329,7 @@ PulseAudioBackend::init_pulse ()
 std::string
 PulseAudioBackend::name () const
 {
-	return X_("Pulseaudio");
+	return X_("PulseAudio");
 }
 
 bool
@@ -582,7 +575,7 @@ int
 PulseAudioBackend::_start (bool /*for_latency_measurement*/)
 {
 	if (!_active && _run) {
-		PBD::error << _("PulseAudioBackend: already active.") << endmsg;
+		PBD::error << _("PulseAudioBackend: restarting.") << endmsg;
 		/* recover from 'halted', reap threads */
 		stop ();
 	}
@@ -625,14 +618,13 @@ PulseAudioBackend::_start (bool /*for_latency_measurement*/)
 	engine.reconnect_ports ();
 
 	_run = true;
-	g_atomic_int_set (&_port_change_flag, 0);
+	_port_change_flag.store (0);
 
 	if (pbd_realtime_pthread_create (PBD_SCHED_FIFO, PBD_RT_PRI_MAIN, PBD_RT_STACKSIZE_PROC,
 	                                 &_main_thread, pthread_process, this)) {
 		if (pbd_pthread_create (PBD_RT_STACKSIZE_PROC, &_main_thread, pthread_process, this)) {
 			PBD::error << _("PulseAudioBackend: failed to create process thread.") << endmsg;
 			stop ();
-			_run = false;
 			return ProcessThreadStartError;
 		} else {
 			PBD::warning << _("PulseAudioBackend: cannot acquire realtime permissions.") << endmsg;
@@ -850,7 +842,7 @@ PulseAudioBackend::port_factory (std::string const & name, ARDOUR::DataType type
 			port = new PulseMidiPort (*this, name, flags);
 			break;
 		default:
-			PBD::error << string_compose (_("%1::register_port: Invalid Data Type."), _instance_name) << endmsg;
+			PBD::error << string_compose (_("%1::port_factory: Invalid Data Type."), _instance_name) << endmsg;
 			return 0;
 	}
 
@@ -886,7 +878,7 @@ PulseAudioBackend::midi_event_put (
 {
 	assert (buffer && port_buffer);
 	PulseMidiBuffer& dst = *static_cast<PulseMidiBuffer*> (port_buffer);
-	dst.push_back (boost::shared_ptr<PulseMidiEvent> (new PulseMidiEvent (timestamp, buffer, size)));
+	dst.push_back (std::shared_ptr<PulseMidiEvent> (new PulseMidiEvent (timestamp, buffer, size)));
 	return 0;
 }
 
@@ -937,7 +929,7 @@ bool
 void
 PulseAudioBackend::set_latency_range (PortEngine::PortHandle port_handle, bool for_playback, LatencyRange latency_range)
 {
-	BackendPortPtr port = boost::dynamic_pointer_cast<BackendPort> (port_handle);
+	BackendPortPtr port = std::dynamic_pointer_cast<BackendPort> (port_handle);
 	if (!valid_port (port)) {
 		PBD::error << _("PulsePort::set_latency_range (): invalid port.") << endmsg;
 	}
@@ -947,7 +939,7 @@ PulseAudioBackend::set_latency_range (PortEngine::PortHandle port_handle, bool f
 LatencyRange
 PulseAudioBackend::get_latency_range (PortEngine::PortHandle port_handle, bool for_playback)
 {
-	BackendPortPtr port = boost::dynamic_pointer_cast<BackendPort> (port_handle);
+	BackendPortPtr port = std::dynamic_pointer_cast<BackendPort> (port_handle);
 	LatencyRange r;
 
 	if (!valid_port (port)) {
@@ -978,11 +970,8 @@ PulseAudioBackend::get_latency_range (PortEngine::PortHandle port_handle, bool f
 void*
 PulseAudioBackend::get_buffer (PortEngine::PortHandle port_handle, pframes_t nframes)
 {
-	BackendPortPtr port = boost::dynamic_pointer_cast<BackendPort> (port_handle);
-
+	BackendPortPtr port = std::dynamic_pointer_cast<BackendPort> (port_handle);
 	assert (port);
-	assert (valid_port (port));
-
 	return port->get_buffer (nframes);
 }
 
@@ -997,23 +986,6 @@ PulseAudioBackend::main_process_thread ()
 	manager.registration_callback ();
 	manager.graph_order_callback ();
 
-#if 0
-	/* flush stream */
-	pa_threaded_mainloop_lock (p_mainloop);
-	sync_pulse (pa_stream_flush (p_stream, stream_operation_cb, this));
-#endif
-
-	/* begin streaming */
-	if (!cork_pulse (false)) {
-		_active = false;
-		if (_run) {
-			engine.halted_callback ("PulseAudio: cannot uncork stream");
-		}
-	}
-
-	pa_threaded_mainloop_lock (p_mainloop);
-	sync_pulse (pa_stream_drain (p_stream, stream_operation_cb, this));
-
 	_dsp_load_calc.reset ();
 	stream_latency_update_cb (p_stream, this);
 
@@ -1023,31 +995,30 @@ PulseAudioBackend::main_process_thread ()
 			engine.freewheel_callback (_freewheel);
 
 			if (_freewheel) {
+				/* when transitioning to freewheeling, cork it and stop writing */
 				assert (!pa_stream_is_corked (p_stream));
 				if (!cork_pulse (true)) {
+					PBD::error << _("PulseAudioBackend::main_process_thread failed to cork for freewheeling.") << endmsg;
 					break;
 				}
 			}
 
-			/* flush stream before and after freewheeling */
+			/* flush corked stream before and after freewheeling */
 			assert (pa_stream_is_corked (p_stream));
 			pa_threaded_mainloop_lock (p_mainloop);
 			_operation_succeeded = false;
 			if (!sync_pulse (pa_stream_flush (p_stream, stream_operation_cb, this)) || !_operation_succeeded) {
+				PBD::error << _("PulseAudioBackend::main_process_thread failed to flush.") << endmsg;
 				break;
 			}
 
 			if (!_freewheel) {
+				/* when transitioning from freewheeling, uncork after flushing and start writing */
 				if (!cork_pulse (false)) {
+					PBD::error << _("PulseAudioBackend::main_process_thread failed to uncork after freewheeling.") << endmsg;
 					break;
 				}
-#if 0
-				pa_threaded_mainloop_lock (p_mainloop);
-				_operation_succeeded = false;
-				if (!sync_pulse (pa_stream_drain (p_stream, stream_operation_cb, this)) || !_operation_succeeded) {
-					break;
-				}
-#endif
+
 				_dsp_load_calc.reset ();
 			}
 		}
@@ -1056,13 +1027,14 @@ PulseAudioBackend::main_process_thread ()
 			pa_threaded_mainloop_lock (p_mainloop);
 
 			size_t bytes_to_write = sizeof (float) * _samples_per_period * N_CHANNELS;
-			if (pa_stream_writable_size (p_stream) < bytes_to_write) {
+			while (pa_stream_writable_size (p_stream) < bytes_to_write) {
 				/* wait until stream_request_cb triggers */
 				pa_threaded_mainloop_wait (p_mainloop);
 			}
 
 			if (pa_stream_get_state (p_stream) != PA_STREAM_READY) {
 				pa_threaded_mainloop_unlock (p_mainloop);
+				PBD::error << _("PulseAudioBackend::main_process_thread not ready when writing.") << endmsg;
 				break;
 			}
 
@@ -1072,6 +1044,7 @@ PulseAudioBackend::main_process_thread ()
 			if (engine.process_callback (_samples_per_period)) {
 				pa_threaded_mainloop_unlock (p_mainloop);
 				_active = false;
+				PBD::error << _("PulseAudioBackend::main_process_thread engine.process_callback failed.") << endmsg;
 				return 0;
 			}
 
@@ -1082,8 +1055,7 @@ PulseAudioBackend::main_process_thread ()
 
 			/* interleave */
 			for (std::vector<BackendPortPtr>::const_iterator it = _system_outputs.begin (); it != _system_outputs.end (); ++it, ++i) {
-				BackendPortPtr port = boost::dynamic_pointer_cast<BackendPort> (*it);
-				const float* src = (const float*) port->get_buffer (_samples_per_period);
+				const float* src = (const float*) (*it)->get_buffer (_samples_per_period);
 				for (size_t n = 0; n < _samples_per_period; ++n) {
 					buf[N_CHANNELS * n + i] = src[n];
 				}
@@ -1091,8 +1063,10 @@ PulseAudioBackend::main_process_thread ()
 
 			if (pa_stream_write (p_stream, buf, bytes_to_write, NULL, 0, PA_SEEK_RELATIVE) < 0) {
 				pa_threaded_mainloop_unlock (p_mainloop);
+				PBD::error << _("PulseAudioBackend::main_process_thread pa_stream_write failed.") << endmsg;
 				break;
 			}
+
 			pa_threaded_mainloop_unlock (p_mainloop);
 
 			_processed_samples += _samples_per_period;
@@ -1106,6 +1080,7 @@ PulseAudioBackend::main_process_thread ()
 			_last_process_start = 0;
 			if (engine.process_callback (_samples_per_period)) {
 				_active = false;
+				PBD::error << _("PulseAudioBackend::main_process_thread freewheeling engine.process_callback failed.") << endmsg;
 				return 0;
 			}
 
@@ -1116,7 +1091,8 @@ PulseAudioBackend::main_process_thread ()
 		bool connections_changed = false;
 		bool ports_changed       = false;
 		if (!pthread_mutex_trylock (&_port_callback_mutex)) {
-			if (g_atomic_int_compare_and_exchange (&_port_change_flag, 1, 0)) {
+			int canderef (1);
+			if (_port_change_flag.compare_exchange_strong (canderef, 0)) {
 				ports_changed = true;
 			}
 			if (!_port_connection_queue.empty ()) {
@@ -1152,16 +1128,16 @@ PulseAudioBackend::main_process_thread ()
 
 /******************************************************************************/
 
-static boost::shared_ptr<PulseAudioBackend> _instance;
+static std::shared_ptr<PulseAudioBackend> _instance;
 
-static boost::shared_ptr<AudioBackend> backend_factory (AudioEngine& e);
+static std::shared_ptr<AudioBackend> backend_factory (AudioEngine& e);
 static int instantiate (const std::string& arg1, const std::string& /* arg2 */);
 static int  deinstantiate ();
 static bool already_configured ();
 static bool available ();
 
 static ARDOUR::AudioBackendInfo _descriptor = {
-	_("Pulseaudio"),
+	_("PulseAudio"),
 	instantiate,
 	deinstantiate,
 	backend_factory,
@@ -1169,7 +1145,7 @@ static ARDOUR::AudioBackendInfo _descriptor = {
 	available
 };
 
-static boost::shared_ptr<AudioBackend>
+static std::shared_ptr<AudioBackend>
 backend_factory (AudioEngine& e)
 {
 	if (!_instance) {
@@ -1234,13 +1210,13 @@ PulseAudioPort::get_buffer (pframes_t n_samples)
 		if (it == connections.end ()) {
 			memset (_buffer, 0, n_samples * sizeof (Sample));
 		} else {
-			boost::shared_ptr<PulseAudioPort> source = boost::dynamic_pointer_cast<PulseAudioPort> (*it);
+			std::shared_ptr<PulseAudioPort> source = std::dynamic_pointer_cast<PulseAudioPort> (*it);
 			assert (source && source->is_output ());
 			memcpy (_buffer, source->const_buffer (), n_samples * sizeof (Sample));
 			while (++it != connections.end ()) {
-				source = boost::dynamic_pointer_cast<PulseAudioPort> (*it);
+				source = std::dynamic_pointer_cast<PulseAudioPort> (*it);
 				assert (source && source->is_output ());
-				Sample*       dst = buffer ();
+				Sample*       dst = _buffer;
 				const Sample* src = source->const_buffer ();
 				for (uint32_t s = 0; s < n_samples; ++s, ++dst, ++src) {
 					*dst += *src;
@@ -1264,7 +1240,7 @@ PulseMidiPort::~PulseMidiPort ()
 
 struct MidiEventSorter {
 	bool
-	operator() (const boost::shared_ptr<PulseMidiEvent>& a, const boost::shared_ptr<PulseMidiEvent>& b)
+	operator() (const std::shared_ptr<PulseMidiEvent>& a, const std::shared_ptr<PulseMidiEvent>& b)
 	{
 		return *a < *b;
 	}
@@ -1278,7 +1254,7 @@ void* PulseMidiPort::get_buffer (pframes_t /*n_samples*/)
 		for (std::set<BackendPortPtr>::const_iterator i = connections.begin ();
 		     i != connections.end ();
 		     ++i) {
-			const PulseMidiBuffer* src = boost::dynamic_pointer_cast<PulseMidiPort> (*i)->const_buffer ();
+			const PulseMidiBuffer* src = std::dynamic_pointer_cast<PulseMidiPort> (*i)->const_buffer ();
 			for (PulseMidiBuffer::const_iterator it = src->begin (); it != src->end (); ++it) {
 				_buffer.push_back (*it);
 			}

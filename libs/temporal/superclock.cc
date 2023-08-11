@@ -19,13 +19,22 @@
 #include "temporal/superclock.h"
 
 #ifndef COMPILER_MSVC
-Temporal::superclock_t Temporal::superclock_ticks_per_second = 508032000; // 2^10 * 3^4 * 5^3 * 7^2
+Temporal::superclock_t Temporal::_superclock_ticks_per_second = 282240000 ; /* 2^10 * 3^2 * 5^4 * 7^2 */
 #endif
 
-int (*Temporal::sample_rate_callback)() = 0;
+int Temporal::most_recent_engine_sample_rate = 48000; /* have to pick something as a default */
+
+bool Temporal::scts_set = false;
 
 void
-Temporal::set_sample_rate_callback (int (*func)())
+Temporal::set_sample_rate (int sr)
 {
-	sample_rate_callback = func;
+	most_recent_engine_sample_rate = sr;
+}
+
+void
+Temporal::set_superclock_ticks_per_second (Temporal::superclock_t sc)
+{
+	_superclock_ticks_per_second = sc;
+	scts_set = true;
 }

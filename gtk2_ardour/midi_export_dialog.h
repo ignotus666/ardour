@@ -20,7 +20,7 @@
 #ifndef __gtk2_ardour_midi_export_dialog_h__
 #define __gtk2_ardour_midi_export_dialog_h__
 
-#include <boost/shared_ptr.hpp>
+#include <memory>
 
 #include <gtkmm/filechooserwidget.h>
 
@@ -30,7 +30,7 @@
 class MidiExportDialog : public ArdourDialog
 {
 public:
-	MidiExportDialog (PublicEditor& editor, boost::shared_ptr<ARDOUR::MidiRegion>);
+	MidiExportDialog (PublicEditor& editor, std::shared_ptr<ARDOUR::MidiRegion>);
 	~MidiExportDialog ();
 
 	void set_session (ARDOUR::Session*);

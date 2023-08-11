@@ -59,19 +59,19 @@ public:
 
 	virtual bool find_next_event(double start, double end, ControlEvent& ev, bool only_active) const { return false; }
 
-	boost::shared_ptr<Control> control_factory(const Parameter& param) {
+	std::shared_ptr<Control> control_factory(const Parameter& param) {
 		Evoral::ParameterDescriptor desc;
 		desc.upper = 127;
 		desc.rangesteps = 128;
-		boost::shared_ptr<ControlList> list(new ControlList(param, desc));
-		return boost::shared_ptr<Control>(new Control(param, desc, list));
+		std::shared_ptr<ControlList> list(new ControlList(param, desc, Temporal::TimeDomainProvider (Temporal::BeatTime)));
+		return std::shared_ptr<Control>(new Control(param, desc, list));
 	}
 };
 
 template<typename Time>
 class TestSink : public EventSink<Time> {
 public:
-	TestSink() : _last_event_time(-1) {}
+	TestSink() : _last_event_time(Time::from_double (-1)) {}
 
 	/// return value, time, type, size, buffer
 	sigc::signal<uint32_t, Time, EventType, uint32_t, const uint8_t*> writing;
@@ -125,7 +125,7 @@ class SequenceTest : public CppUnit::TestFixture
 
 public:
 	typedef Temporal::Beats Time;
-	typedef std::vector< boost::shared_ptr< Note<Time> > > Notes;
+	typedef std::vector< std::shared_ptr< Note<Time> > > Notes;
 
 	void setUp () {
 		type_map = new DummyTypeMap();
@@ -135,8 +135,8 @@ public:
 
 		for (int i = 0; i < 12; i++) {
 			test_notes.push_back(
-				boost::shared_ptr<Note<Time> >(
-					new Note<Time>(0, Time(i * 100), Time(100), 64 + i, 64)));
+				std::shared_ptr<Note<Time> >(
+					new Note<Time>(0, Time::from_double(i * 100), Time::from_double(100), 64 + i, 64)));
 		}
 	}
 

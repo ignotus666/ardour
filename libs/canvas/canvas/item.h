@@ -197,6 +197,9 @@ public:
 	virtual void hide ();
 	virtual void show ();
 
+	void block_change_notifications ();
+	void unblock_change_notifications ();
+
 	/** @return true if this item is visible (ie it will be rendered),
 	 *  otherwise false
 	 */
@@ -269,10 +272,6 @@ public:
 	std::string whoami() const { return whatami(); }
 #endif
 
-#ifdef CANVAS_COMPATIBILITY
-	void grab_focus ();
-#endif
-
 	const std::string& tooltip () const { return _tooltip; }
 	void set_tooltip (const std::string&);
 
@@ -284,6 +283,9 @@ public:
 
         bool resize_queued() const { return _resize_queued; }
         void queue_resize();
+
+	bool scroll_translation() const { return _scroll_translation; }
+	void disable_scroll_translation ();
 
         /* only derived containers need to implement this, but this
            is where they compute the sizes and position and their
@@ -330,11 +332,11 @@ public:
 
 	/** our bounding box; may be out of date if _bounding_box_dirty is true */
 	mutable Rect _bounding_box;
-	/** true if _bounding_box might be out of date, false if its definitely not */
-	mutable bool _bounding_box_dirty;
 	PackOptions _pack_options;
 
-	void bb_clean () const;
+	void set_bbox_clean () const;
+	void set_bbox_dirty () const;
+	bool bbox_dirty() const { return _bounding_box_dirty; }
 
 	Rect _allocation;
 	bool _layout_sensitive;
@@ -369,12 +371,28 @@ private:
 
 	std::string _tooltip;
 	bool _ignore_events;
+	bool _scroll_translation;
+	/** true if _bounding_box might be out of date, false if its definitely not */
+	mutable bool _bounding_box_dirty;
 
 	void find_scroll_parent ();
 	void propagate_show_hide ();
+
+	int change_blocked;
 };
 
 extern LIBCANVAS_API std::ostream& operator<< (std::ostream&, const ArdourCanvas::Item&);
+
+/* RAII wrapper for blocking item change notifications */
+
+class LIBCANVAS_API ItemChangeBlocker
+{
+  public:
+	ItemChangeBlocker (Item& i) : item (i) { item.block_change_notifications (); }
+	~ItemChangeBlocker() { item.block_change_notifications (); }
+  private:
+	Item& item;
+};
 
 }
 

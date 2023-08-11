@@ -19,12 +19,12 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+#include "pbd/progress.h"
 #include "pbd/property_list.h"
 
 #include "ardour/strip_silence.h"
 #include "ardour/audioregion.h"
 #include "ardour/region_factory.h"
-#include "ardour/progress.h"
 
 using namespace ARDOUR;
 
@@ -43,14 +43,14 @@ StripSilence::StripSilence (Session & s, const AudioIntervalMap& sm, samplecnt_t
 }
 
 int
-StripSilence::run (boost::shared_ptr<Region> r, Progress* progress)
+StripSilence::run (std::shared_ptr<Region> r, PBD::Progress* progress)
 {
 	results.clear ();
 
 	/* we only operate on AudioRegions, for now, though this could be adapted to MIDI
 	   as well I guess
         */
-	boost::shared_ptr<AudioRegion> region = boost::dynamic_pointer_cast<AudioRegion> (r);
+	std::shared_ptr<AudioRegion> region = std::dynamic_pointer_cast<AudioRegion> (r);
         InterThreadInfo itt;
         AudioIntervalMap::const_iterator sm;
 
@@ -112,11 +112,11 @@ StripSilence::run (boost::shared_ptr<Region> r, Progress* progress)
 	for (AudioIntervalResult::const_iterator i = audible.begin(); i != audible.end(); ++i, ++n) {
 
 		PBD::PropertyList plist;
-		boost::shared_ptr<AudioRegion> copy;
+		std::shared_ptr<AudioRegion> copy;
 
 		plist.add (Properties::length, timecnt_t (i->second - i->first, timepos_t (r->position_sample() + (i->first - r->start_sample()))));
 
-		copy = boost::dynamic_pointer_cast<AudioRegion> (
+		copy = std::dynamic_pointer_cast<AudioRegion> (
 			RegionFactory::create (region, timecnt_t (i->first - r->start_sample(), timepos_t::zero (false)), plist)
 			);
 

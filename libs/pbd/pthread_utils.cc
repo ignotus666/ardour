@@ -28,6 +28,7 @@
 #include <dlfcn.h>
 #endif
 
+#include "pbd/failed_constructor.h"
 #include "pbd/pthread_utils.h"
 
 #ifdef COMPILER_MSVC
@@ -116,14 +117,16 @@ fake_thread_start (void* arg)
 }
 
 int
-pthread_create_and_store (string name, pthread_t* thread, void* (*start_routine) (void*), void* arg)
+pthread_create_and_store (string name, pthread_t* thread, void* (*start_routine) (void*), void* arg, uint32_t stacklimit)
 {
 	pthread_attr_t default_attr;
 	int            ret;
 
 	/* set default stack size to sensible default for memlocking */
 	pthread_attr_init (&default_attr);
-	pthread_attr_setstacksize (&default_attr, 0x80000); // 512kB
+	if (stacklimit > 0) {
+		pthread_attr_setstacksize (&default_attr, stacklimit);
+	}
 
 	ThreadStartWithName* ts = new ThreadStartWithName (start_routine, arg, name);
 
@@ -144,7 +147,7 @@ pthread_set_name (const char* str)
 	/* copy string and delete it when exiting */
 	thread_name.set (strdup (str)); // leaks
 
-#if !defined PLATFORM_WINDOWS && defined _GNU_SOURCE
+#if !defined PTW32_VERSION && defined _GNU_SOURCE
 	/* set public thread name, up to 16 chars */
 	char ptn[16];
 	memset (ptn, 0, 16);
@@ -399,7 +402,7 @@ pbd_mach_set_realtime_policy (pthread_t thread_id, double period_ns, bool main)
 	double ticks_per_ns = 1.;
 	mach_timebase_info_data_t timebase;
 	if (KERN_SUCCESS == mach_timebase_info (&timebase)) {
-		ticks_per_ns = timebase.denom / timebase.numer;
+		ticks_per_ns = (double)timebase.denom / (double)timebase.numer;
 	}
 
 	thread_time_constraint_policy_data_t tcp;
@@ -414,14 +417,17 @@ pbd_mach_set_realtime_policy (pthread_t thread_id, double period_ns, bool main)
 	printf ("Mach Thread(%p) get: period=%d comp=%d constraint=%d preemt=%d OK: %d\n", thread_id, tcp.period, tcp.computation, tcp.constraint, tcp.preemptible, rv == KERN_SUCCESS);
 #endif
 
-	mach_timebase_info_data_t timebase_info;
-	mach_timebase_info (&timebase_info);
-	const double period_clk = period_ns * (double)timebase_info.denom / (double)timebase_info.numer;
+	const double period_clk = period_ns * ticks_per_ns;
 
-	tcp.period      = ticks_per_ns * period_clk;
-	tcp.computation = ticks_per_ns * period_clk * .9;
-	tcp.constraint  = ticks_per_ns * period_clk * .95;
+	tcp.period      = period_clk;
+	tcp.computation = period_clk * .9;
+	tcp.constraint  = period_clk * .95;
 	tcp.preemptible = true;
+
+#ifndef NDEBUG
+	printf ("period_ns=%f period_clk=%f timebase.num=%d timebase_den=%d ticks_per_ns=%f\n", period_ns, period_clk, timebase.numer, timebase.denom, ticks_per_ns);
+	printf ("Mach Thread(%p) request: period=%d comp=%d constraint=%d preemt=%d\n", thread_id, tcp.period, tcp.computation, tcp.constraint, tcp.preemptible);
+#endif
 
 	res = thread_policy_set (pthread_mach_thread_np (thread_id),
 	                         THREAD_TIME_CONSTRAINT_POLICY,
@@ -435,4 +441,66 @@ pbd_mach_set_realtime_policy (pthread_t thread_id, double period_ns, bool main)
 	return res != KERN_SUCCESS;
 #endif
 	return false; // OK
+}
+
+PBD::Thread*
+PBD::Thread::create (boost::function<void ()> const& slot, std::string const& name)
+{
+	try {
+		return new PBD::Thread (slot, name);
+	} catch (...) {
+		return 0;
+	}
+}
+
+PBD::Thread*
+PBD::Thread::self ()
+{
+	return new PBD::Thread ();
+}
+
+PBD::Thread::Thread ()
+	: _name ("Main")
+	, _joinable (false)
+{
+	_t = pthread_self ();
+}
+
+PBD::Thread::Thread (boost::function<void ()> const& slot, std::string const& name)
+	: _name (name)
+	, _slot (slot)
+	, _joinable (true)
+{
+	pthread_attr_t thread_attributes;
+	pthread_attr_init (&thread_attributes);
+
+	if (pthread_create (&_t, &thread_attributes, _run, this)) {
+		throw failed_constructor ();
+	}
+}
+
+void*
+PBD::Thread::_run (void* arg) {
+	PBD::Thread* self = static_cast<PBD::Thread *>(arg);
+	if (!self->_name.empty ()) {
+		pthread_set_name (self->_name.c_str ());
+	}
+	self->_slot ();
+
+	pthread_exit (0);
+	return 0;
+}
+
+void
+PBD::Thread::join ()
+{
+	if (_joinable) {
+		pthread_join (_t, NULL);
+	}
+}
+
+bool
+PBD::Thread::caller_is_self () const
+{
+	return pthread_equal (_t, pthread_self ()) != 0;
 }

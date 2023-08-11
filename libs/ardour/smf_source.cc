@@ -88,12 +88,15 @@ SMFSource::SMFSource (Session& s, const string& path, Source::Flag flags)
 		}
 		/* no fd left open here */
 	} else {
-		if (open (_path)) {
+		if (open (_path, 1, false)) {
 			throw failed_constructor ();
 		}
 		_open = true;
 	}
 
+	/* there's no data to load into the model but create it anyway */
+
+	_model = std::shared_ptr<MidiModel> (new MidiModel (*this));
 }
 
 /** Constructor used for external-to-session files.  File must exist. */
@@ -114,11 +117,14 @@ SMFSource::SMFSource (Session& s, const string& path)
         assert (Glib::file_test (_path, Glib::FILE_TEST_EXISTS));
 	existence_check ();
 
-	if (open (_path)) {
+	if (open (_path, 1, false)) {
 		throw failed_constructor ();
 	}
 
 	_open = true;
+
+	/* no lock required since we do not actually exist yet */
+	load_model_unlocked (true);
 }
 
 /** Constructor used for existing internal-to-session files. */
@@ -168,7 +174,7 @@ SMFSource::SMFSource (Session& s, const XMLNode& node, bool must_exist)
 	if (!(_flags & Source::Empty)) {
 		assert (Glib::file_test (_path, Glib::FILE_TEST_EXISTS));
 		existence_check ();
-		if (open (_path)) {
+		if (open (_path, 1, false)) {
 			throw failed_constructor ();
 		}
 		_open = true;
@@ -180,6 +186,8 @@ SMFSource::SMFSource (Session& s, const XMLNode& node, bool must_exist)
 		/* no fd left open here */
 	}
 
+	/* no lock required since we do not actually exist yet */
+	load_model_unlocked (true);
 }
 
 SMFSource::~SMFSource ()
@@ -210,13 +218,13 @@ SMFSource::close ()
 extern PBD::Timing minsert;
 
 timecnt_t
-SMFSource::read_unlocked (const Lock&                     lock,
+SMFSource::read_unlocked (const ReaderLock&               lock,
                           Evoral::EventSink<samplepos_t>& destination,
                           timepos_t const &               source_start,
                           timepos_t const &               start,
                           timecnt_t const &               duration,
                           Temporal::Range*                loop_range,
-                          MidiStateTracker*               tracker,
+                          MidiNoteTracker*                tracker,
                           MidiChannelFilter*              filter) const
 {
 	int      ret  = 0;
@@ -312,7 +320,7 @@ SMFSource::read_unlocked (const Lock&                     lock,
 }
 
 timecnt_t
-SMFSource::write_unlocked (const Lock&                  lock,
+SMFSource::write_unlocked (const WriterLock&            lock,
                            MidiRingBuffer<samplepos_t>& source,
                            timepos_t const &            position,
                            timecnt_t const &            cnt)
@@ -395,14 +403,15 @@ SMFSource::write_unlocked (const Lock&                  lock,
 }
 
 void
-SMFSource::update_length (timecnt_t const & cnt)
+SMFSource::update_length (timepos_t const & dur)
 {
-	_length = cnt;
+	assert (!_length || (_length.time_domain() == dur.time_domain()));
+	_length = dur;
 }
 
 /** Append an event with a timestamp in beats */
 void
-SMFSource::append_event_beats (const Glib::Threads::Mutex::Lock&   lock,
+SMFSource::append_event_beats (const WriterLock&   lock,
                                const Evoral::Event<Temporal::Beats>& ev)
 {
 	if (!_writing || ev.size() == 0)  {
@@ -445,7 +454,8 @@ SMFSource::append_event_beats (const Glib::Threads::Mutex::Lock&   lock,
 		_model->append (ev, event_id);
 	}
 
-	_length  = max (_length, timecnt_t (time));
+	assert (!_length || (_length.time_domain() == Temporal::BeatTime));
+	_length  = timepos_t (max (_length.beats(), time));
 
 	const Temporal::Beats delta_time_beats = time - _last_ev_time_beats;
 	const uint32_t      delta_time_ticks = delta_time_beats.to_ticks(ppqn());
@@ -458,7 +468,7 @@ SMFSource::append_event_beats (const Glib::Threads::Mutex::Lock&   lock,
 
 /** Append an event with a timestamp in samples (samplepos_t) */
 void
-SMFSource::append_event_samples (const Glib::Threads::Mutex::Lock& lock,
+SMFSource::append_event_samples (const WriterLock& lock,
                                 const Evoral::Event<samplepos_t>&  ev,
                                 samplepos_t                        position)
 {
@@ -477,7 +487,7 @@ SMFSource::append_event_samples (const Glib::Threads::Mutex::Lock& lock,
 		return;
 	}
 
-	/* a distance measure that starts at @param position (audio time) and
+	/* a distance measure that starts at @p position (audio time) and
 	   extends for ev.time() (audio time)
 	*/
 	const timecnt_t distance (timepos_t (ev.time()), timepos_t (position));
@@ -498,9 +508,10 @@ SMFSource::append_event_samples (const Glib::Threads::Mutex::Lock& lock,
 		_model->append (beat_ev, event_id);
 	}
 
-	_length = max (_length, timecnt_t (ev_time_beats, timepos_t (position)));
+	assert (!_length || (_length.time_domain() == Temporal::BeatTime));
+	_length = timepos_t (max (_length.beats(), ev_time_beats));
 
-	/* a distance measure that starts at @param _last_ev_time_samples (audio time) and
+	/* a distance measure that starts at @p _last_ev_time_samples (audio time) and
 	   extends for ev.time() (audio time)
 	*/
 	const timecnt_t       delta_distance (timepos_t (ev.time()), timepos_t (_last_ev_time_samples));
@@ -514,7 +525,7 @@ SMFSource::append_event_samples (const Glib::Threads::Mutex::Lock& lock,
 }
 
 XMLNode&
-SMFSource::get_state ()
+SMFSource::get_state () const
 {
 	XMLNode& node = MidiSource::get_state();
 	node.set_property (X_("origin"), _origin);
@@ -540,7 +551,7 @@ SMFSource::set_state (const XMLNode& node, int version)
 }
 
 void
-SMFSource::mark_streaming_midi_write_started (const Lock& lock, NoteMode mode)
+SMFSource::mark_streaming_midi_write_started (const WriterLock& lock, NoteMode mode)
 {
 	if (!_open && open_for_write()) {
 		error << string_compose (_("cannot open MIDI file %1 for write"), _path) << endmsg;
@@ -555,13 +566,13 @@ SMFSource::mark_streaming_midi_write_started (const Lock& lock, NoteMode mode)
 }
 
 void
-SMFSource::mark_streaming_write_completed (const Lock& lock)
+SMFSource::mark_streaming_write_completed (const WriterLock& lock)
 {
 	mark_midi_streaming_write_completed (lock, Evoral::Sequence<Temporal::Beats>::DeleteStuckNotes);
 }
 
 void
-SMFSource::mark_midi_streaming_write_completed (const Lock& lm, Evoral::Sequence<Temporal::Beats>::StuckNoteOption stuck_notes_option, Temporal::Beats when)
+SMFSource::mark_midi_streaming_write_completed (const WriterLock& lm, Evoral::Sequence<Temporal::Beats>::StuckNoteOption stuck_notes_option, Temporal::Beats when)
 {
 	MidiSource::mark_midi_streaming_write_completed (lm, stuck_notes_option, when);
 
@@ -629,27 +640,22 @@ static bool compare_eventlist (
 }
 
 void
-SMFSource::load_model (const Glib::Threads::Mutex::Lock& lock, bool force_reload)
+SMFSource::load_model (const WriterLock& lock, bool force_reload)
 {
-	if (_writing) {
-		return;
-	}
+	invalidate (lock);
+	load_model_unlocked (force_reload);
+	invalidate (lock);
+}
 
-	if (_model && !force_reload) {
-		return;
-	}
+void
+SMFSource::load_model_unlocked (bool force_reload)
+{
+	assert (!_writing);
 
 	if (!_model) {
-		boost::shared_ptr<SMFSource> smf = boost::dynamic_pointer_cast<SMFSource> ( shared_from_this () );
-		_model = boost::shared_ptr<MidiModel> (new MidiModel (smf));
+		_model = std::shared_ptr<MidiModel> (new MidiModel (*this));
 	} else {
 		_model->clear();
-	}
-
-	invalidate(lock);
-
-	if (writable() && !_open) {
-		return;
 	}
 
 	_model->start_write();
@@ -666,6 +672,11 @@ SMFSource::load_model (const Glib::Threads::Mutex::Lock& lock, bool force_reload
 	int ret;
 	Evoral::event_id_t event_id;
 	bool have_event_id;
+
+	_num_channels     = 0;
+	_n_note_on_events = 0;
+	_has_pgm_change   = false;
+	_used_channels.reset ();
 
 	// TODO simplify event allocation
 	std::list< std::pair< Evoral::Event<Temporal::Beats>*, gint > > eventlist;
@@ -686,6 +697,23 @@ SMFSource::load_model (const Glib::Threads::Mutex::Lock& lock, bool force_reload
 					have_event_id = true;
 				}
 				continue;
+			}
+
+			/* aggregate information about channels and pgm-changes */
+			uint8_t type = buf[0] & 0xf0;
+			uint8_t chan = buf[0] & 0x0f;
+			if (type >= 0x80 && type <= 0xE0) {
+				_used_channels.set(chan);
+				switch (type) {
+					case MIDI_CMD_NOTE_ON:
+						++_n_note_on_events;
+						break;
+					case MIDI_CMD_PGM_CHANGE:
+						_has_pgm_change = true;
+						break;
+					default:
+						break;
+				}
 			}
 
 			if (ret > 0) {
@@ -718,13 +746,16 @@ SMFSource::load_model (const Glib::Threads::Mutex::Lock& lock, bool force_reload
 				scratch_size = std::max(size, scratch_size);
 				size = scratch_size;
 
-				_length = max (_length, timecnt_t (event_time));
+				assert (!_length || (_length.time_domain() == Temporal::BeatTime));
+				_length = max (_length, timepos_t (event_time));
 			}
 
 			/* event ID's must immediately precede the event they are for */
 			have_event_id = false;
 		}
 	}
+
+	_num_channels = _used_channels.size();
 
 	eventlist.sort(compare_eventlist);
 
@@ -740,13 +771,18 @@ SMFSource::load_model (const Glib::Threads::Mutex::Lock& lock, bool force_reload
 
 	_model->end_write (Evoral::Sequence<Temporal::Beats>::ResolveStuckNotes, _length.beats());
 	_model->set_edited (false);
-	invalidate(lock);
 
-	free(buf);
+	free (buf);
+}
+
+Evoral::SMF::UsedChannels
+SMFSource::used_midi_channels()
+{
+	return _used_channels;
 }
 
 void
-SMFSource::destroy_model (const Glib::Threads::Mutex::Lock& lock)
+SMFSource::destroy_model (const WriterLock& lock)
 {
 	//cerr << _name << " destroying model " << _model.get() << endl;
 	_model.reset();
@@ -754,7 +790,7 @@ SMFSource::destroy_model (const Glib::Threads::Mutex::Lock& lock)
 }
 
 void
-SMFSource::flush_midi (const Lock& lock)
+SMFSource::flush_midi (const WriterLock& lock)
 {
 	if (!writable() || _length.is_zero()) {
 		return;
@@ -777,7 +813,7 @@ SMFSource::set_path (const string& p)
 
 /** Ensure that this source has some file on disk, even if it's just a SMF header */
 void
-SMFSource::ensure_disk_file (const Lock& lock)
+SMFSource::ensure_disk_file (const WriterLock& lock)
 {
 	if (!writable()) {
 		return;
@@ -787,7 +823,7 @@ SMFSource::ensure_disk_file (const Lock& lock)
 		/* We have a model, so write it to disk; see MidiSource::session_saved
 		   for an explanation of what we are doing here.
 		*/
-		boost::shared_ptr<MidiModel> mm = _model;
+		std::shared_ptr<MidiModel> mm = _model;
 		_model.reset ();
 		mm->sync_to_source (lock);
 		_model = mm;

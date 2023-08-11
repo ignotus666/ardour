@@ -24,9 +24,9 @@
 
 #include <string>
 #include <list>
+#include <memory>
 #include <utility>
 
-#include <boost/shared_ptr.hpp>
 
 #include <gtkmm/box.h>
 #include <gtkmm/button.h>
@@ -50,10 +50,10 @@ namespace ARDOUR {
 class SessionImportDialog : public ArdourDialog
 {
 private:
-	typedef boost::shared_ptr<ARDOUR::ElementImportHandler> HandlerPtr;
+	typedef std::shared_ptr<ARDOUR::ElementImportHandler> HandlerPtr;
 	typedef std::list<HandlerPtr> HandlerList;
 
-	typedef boost::shared_ptr<ARDOUR::ElementImporter> ElementPtr;
+	typedef std::shared_ptr<ARDOUR::ElementImporter> ElementPtr;
 	typedef std::list<ElementPtr> ElementList;
 
 public:

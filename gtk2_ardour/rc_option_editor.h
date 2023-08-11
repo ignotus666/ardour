@@ -44,7 +44,7 @@ public:
 	void set_session (ARDOUR::Session*);
 
 	Gtk::Window* use_own_window (bool and_fill_it);
-	XMLNode& get_state ();
+	XMLNode& get_state () const;
 
 	bool on_key_release_event (GdkEventKey*);
 
@@ -60,6 +60,7 @@ private:
 	Gtk::Adjustment* _ltc_volume_adjustment;
 	BoolOption* _ltc_send_continuously;
 	BoolOption* _plugin_prefer_inline;
+	BoolOption* _cairo_image_surface;
 	TransportMastersWidget _transport_masters_widget;
 
 	PBD::ScopedConnection parameter_change_connection;
@@ -67,6 +68,15 @@ private:
 
 	void show_audio_setup ();
 	void show_transport_masters ();
+
+	void reset_clip_library_dir ();
+
+	EntryOption* mrl_option;
+	EntryOption* mru_option;
+	std::string get_default_lower_midi_note ();
+	bool set_default_lower_midi_note (std::string);
+	std::string get_default_upper_midi_note ();
+	bool set_default_upper_midi_note (std::string);
 
 	/* plugin actions */
 	void plugin_scan_refresh ();
@@ -81,3 +91,4 @@ private:
 };
 
 #endif /* __gtk_ardour_rc_option_editor_h__ */
+

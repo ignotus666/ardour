@@ -10,7 +10,7 @@ def options(opt):
     autowaf.set_options(opt)
 
 def configure(conf):
-    autowaf.configure(conf)
+    pass
 
 def build(bld):
     obj = bld(features = 'cxx cxxshlib')
@@ -32,7 +32,6 @@ def build(bld):
             wheel.cc
             wheel_modes.cc
     '''
-    obj.export_includes = ['./tranzport']
     obj.defines      = [ 'PACKAGE="ardour_tranzport"' ]
     obj.defines     += [ 'ARDOURSURFACE_DLL_EXPORTS' ]
     obj.includes     = ['.', './tranzport']

@@ -88,7 +88,7 @@ Grid::compute_bounding_box () const
 	_bounding_box = Rect();
 
 	if (_items.empty()) {
-		bb_clean ();
+		set_bbox_clean ();
 		return;
 	}
 
@@ -103,7 +103,7 @@ Grid::compute_bounding_box () const
 		                          outline_width() + left_margin + left_padding);
 	}
 
-	bb_clean ();
+	set_bbox_clean ();
 }
 
 void
@@ -161,7 +161,7 @@ Grid::set_margin (double t, double r, double b, double l)
 void
 Grid::reset_bg ()
 {
-	if (_bounding_box_dirty) {
+	if (bbox_dirty()) {
 		(void) bounding_box ();
 	}
 
@@ -331,7 +331,7 @@ Grid::reposition_children ()
 		(*i)->set_position (Duple (col_dimens[c->second.x], row_dimens[c->second.y]));
 	}
 
-	_bounding_box_dirty = true;
+	set_bbox_dirty ();
 	reset_bg ();
 }
 

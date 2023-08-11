@@ -20,17 +20,16 @@
 #ifndef __libbackend_dummy_audiobackend_h__
 #define __libbackend_dummy_audiobackend_h__
 
+#include <cstdint>
 #include <string>
 #include <vector>
 #include <map>
+#include <memory>
 #include <set>
 
-#include <stdint.h>
 #include <pthread.h>
 
 #include <ltc.h>
-
-#include <boost/shared_ptr.hpp>
 
 #include "pbd/natsort.h"
 #include "pbd/ringbuffer.h"
@@ -66,7 +65,7 @@ class DummyMidiEvent : public BackendMIDIEvent {
 		uint8_t *_data;
 };
 
-typedef std::vector<boost::shared_ptr<DummyMidiEvent> > DummyMidiBuffer;
+typedef std::vector<std::shared_ptr<DummyMidiEvent> > DummyMidiBuffer;
 
 class DummyPort : public BackendPort {
 	protected:
@@ -184,9 +183,10 @@ class DummyMidiPort : public DummyPort {
 		DummyMidiData::MIDISequence const * _midi_seq_dat;
 }; // class DummyMidiPort
 
-class DummyAudioBackend : public AudioBackend, public PortEngineSharedImpl {
+class DummyAudioBackend : public AudioBackend, public PortEngineSharedImpl
+{
 	public:
-	         DummyAudioBackend (AudioEngine& e, AudioBackendInfo& info);
+		DummyAudioBackend (AudioEngine& e, AudioBackendInfo& info);
 		~DummyAudioBackend ();
 
 		bool is_running () const { return _running; }
@@ -351,7 +351,8 @@ class DummyAudioBackend : public AudioBackend, public PortEngineSharedImpl {
 		struct DriverSpeed {
 			std::string name;
 			float speedup;
-			DriverSpeed (const std::string& n, float s) : name (n), speedup (s) {}
+			bool realtime;
+			DriverSpeed (const std::string& n, float s, bool r = false) : name (n), speedup (s), realtime (r) {}
 		};
 
 		std::string _instance_name;
@@ -362,6 +363,7 @@ class DummyAudioBackend : public AudioBackend, public PortEngineSharedImpl {
 		bool  _running;
 		bool  _freewheel;
 		bool  _freewheeling;
+		bool  _realtime;
 		float _speedup;
 
 		std::string _device;

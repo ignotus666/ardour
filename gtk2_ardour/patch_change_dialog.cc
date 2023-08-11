@@ -48,7 +48,7 @@ PatchChangeDialog::PatchChangeDialog (
 	const Gtk::BuiltinStockID&                  ok,
 	bool                                        allow_delete,
 	bool                                        modal,
-	boost::shared_ptr<ARDOUR::Region>           region)
+	std::shared_ptr<ARDOUR::Region>           region)
 	: ArdourDialog (_("Patch Change"), modal)
 	, _region (region)
 	, _info (info)
@@ -176,7 +176,7 @@ PatchChangeDialog::patch () const
 	Temporal::Beats t = Temporal::Beats();
 
 	if (_region) {
-		t = _region->absolute_time_to_source_beats (_time.current_time ());
+		t = _region->absolute_time_to_source_beats (_time.last_when ());
 	}
 
 	return Evoral::PatchChange<Temporal::Beats> (
@@ -193,7 +193,7 @@ PatchChangeDialog::fill_bank_combo ()
 {
 	_bank_combo.clear ();
 
-	boost::shared_ptr<MIDI::Name::ChannelNameSet> cns = _info.get_patches (_channel.get_value_as_int() - 1);
+	std::shared_ptr<MIDI::Name::ChannelNameSet> cns = _info.get_patches (_channel.get_value_as_int() - 1);
 
 	if (!cns) {
 		return;
@@ -202,7 +202,7 @@ PatchChangeDialog::fill_bank_combo ()
 	for (MIDI::Name::ChannelNameSet::PatchBanks::const_iterator i = cns->patch_banks().begin(); i != cns->patch_banks().end(); ++i) {
 		string n = (*i)->name ();
 		boost::replace_all (n, "_", " ");
-		_bank_combo.append_text (n);
+		_bank_combo.append (n);
 	}
 }
 
@@ -212,7 +212,7 @@ PatchChangeDialog::set_active_bank_combo ()
 {
 	_current_patch_bank.reset ();
 
-	boost::shared_ptr<MIDI::Name::ChannelNameSet> cns = _info.get_patches (_channel.get_value_as_int() - 1);
+	std::shared_ptr<MIDI::Name::ChannelNameSet> cns = _info.get_patches (_channel.get_value_as_int() - 1);
 
 	if (!cns) {
 		return;
@@ -249,7 +249,7 @@ PatchChangeDialog::bank_combo_changed ()
 
 	_current_patch_bank.reset ();
 
-	boost::shared_ptr<MIDI::Name::ChannelNameSet> cns = _info.get_patches (_channel.get_value_as_int() - 1);
+	std::shared_ptr<MIDI::Name::ChannelNameSet> cns = _info.get_patches (_channel.get_value_as_int() - 1);
 
 	if (!cns) {
 		return;
@@ -294,7 +294,7 @@ PatchChangeDialog::fill_patch_combo ()
 	for (MIDI::Name::PatchNameList::const_iterator j = patches.begin(); j != patches.end(); ++j) {
 		string n = (*j)->name ();
 		boost::replace_all (n, "_", " ");
-		_patch_combo.append_text (n);
+		_patch_combo.append (n);
 	}
 }
 

@@ -205,7 +205,7 @@ Editor::select_all_visible_lanes ()
  *  tracks, in which case nothing will happen unless `force' is true.
  */
 void
-Editor::set_selected_track_as_side_effect (Selection::Operation op)
+Editor::set_selected_track_as_side_effect (Selection::Operation op, Controllable::GroupControlDisposition gcd)
 {
 	if (!clicked_axisview) {
 		return;
@@ -223,7 +223,7 @@ Editor::set_selected_track_as_side_effect (Selection::Operation op)
 		if (selection->selected (clicked_axisview)) {
 			if (group && group->is_active() && group->enabled_property(ARDOUR::Properties::group_select.property_id)) {
 				for (TrackViewList::iterator i = track_views.begin(); i != track_views.end (); ++i) {
-					if ((*i)->route_group() == group) {
+					if ((*i)->route_group() == group && gcd != Controllable::NoGroup) {
 						selection->remove(*i);
 					}
 				}
@@ -233,7 +233,7 @@ Editor::set_selected_track_as_side_effect (Selection::Operation op)
 		} else {
 			if (group && group->is_active() && group->enabled_property(ARDOUR::Properties::group_select.property_id)) {
 				for (TrackViewList::iterator i = track_views.begin(); i != track_views.end (); ++i) {
-					if ((*i)->route_group() == group) {
+					if ((*i)->route_group() == group && gcd != Controllable::NoGroup) {
 						selection->add(*i);
 					}
 				}
@@ -246,7 +246,7 @@ Editor::set_selected_track_as_side_effect (Selection::Operation op)
 	case Selection::Add:
 		if (group && group->is_active() && group->enabled_property(ARDOUR::Properties::group_select.property_id)) {
 			for (TrackViewList::iterator i  = track_views.begin(); i != track_views.end (); ++i) {
-				if ((*i)->route_group() == group) {
+				if ((*i)->route_group() == group && gcd != Controllable::NoGroup) {
 					selection->add(*i);
 				}
 			}
@@ -259,7 +259,7 @@ Editor::set_selected_track_as_side_effect (Selection::Operation op)
 		selection->clear();
 		if (group && group->is_active() && group->enabled_property(ARDOUR::Properties::group_select.property_id)) {
 			for (TrackViewList::iterator i  = track_views.begin(); i != track_views.end (); ++i) {
-				if ((*i)->route_group() == group) {
+				if ((*i)->route_group() == group && gcd != Controllable::NoGroup) {
 					selection->add(*i);
 				}
 			}
@@ -492,7 +492,7 @@ void
 Editor::mapover_tracks_with_unique_playlists (sigc::slot<void, RouteTimeAxisView&, uint32_t> sl, TimeAxisView* basis, PBD::PropertyID prop) const
 {
 	RouteTimeAxisView* route_basis = dynamic_cast<RouteTimeAxisView*> (basis);
-	set<boost::shared_ptr<Playlist> > playlists;
+	PlaylistSet playlists;
 
 	if (route_basis == 0) {
 		return;
@@ -513,7 +513,7 @@ Editor::mapover_tracks_with_unique_playlists (sigc::slot<void, RouteTimeAxisView
 
 			if (v && v->route()->route_group() == group) {
 
-				boost::shared_ptr<Track> t = v->track();
+				std::shared_ptr<Track> t = v->track();
 				if (t) {
 					if (playlists.insert (t->playlist()).second) {
 						/* haven't seen this playlist yet */
@@ -540,14 +540,19 @@ Editor::mapover_tracks_with_unique_playlists (sigc::slot<void, RouteTimeAxisView
 void
 Editor::mapover_all_tracks_with_unique_playlists (sigc::slot<void, RouteTimeAxisView&, uint32_t> sl) const
 {
-	set<boost::shared_ptr<Playlist> > playlists;
+	PlaylistSet playlists;
 
 	set<RouteTimeAxisView*> tracks;
 
 	for (TrackViewList::const_iterator i = track_views.begin(); i != track_views.end(); ++i) {
 		RouteTimeAxisView* v = dynamic_cast<RouteTimeAxisView*> (*i);
 
-		boost::shared_ptr<Track> t = v->track();
+		if (!v) {
+			/* Ignore VCAs */
+			continue;
+		}
+
+		std::shared_ptr<Track> t = v->track();
 		if (t) {
 			if (playlists.insert (t->playlist()).second) {
 				/* haven't seen this playlist yet */
@@ -572,18 +577,23 @@ Editor::mapover_all_tracks_with_unique_playlists (sigc::slot<void, RouteTimeAxis
 void
 Editor::mapped_get_equivalent_regions (RouteTimeAxisView& tv, uint32_t, RegionView * basis, vector<RegionView*>* all_equivs) const
 {
-	boost::shared_ptr<Playlist> pl;
-	vector<boost::shared_ptr<Region> > results;
+	std::shared_ptr<Playlist> pl;
+	vector<std::shared_ptr<Region> > results;
 	RegionView* marv;
-	boost::shared_ptr<Track> tr;
+	std::shared_ptr<Track> tr;
 
 	if ((tr = tv.track()) == 0) {
 		/* bus */
 		return;
 	}
 
-	if (&tv == &basis->get_time_axis_view()) {
-		/* looking in same track as the original */
+	if (basis->region()->is_explicitly_ungrouped ()) {
+		/* this region is explicitly ungrouped; no need to check further */
+		return;
+	}
+
+	if (&tv == &basis->get_time_axis_view () && basis->region()->is_implicitly_ungrouped ()) {
+		/* fallback to region-equivalence: we do not check for equivalent regions in the same track as the basis */
 		return;
 	}
 
@@ -591,7 +601,7 @@ Editor::mapped_get_equivalent_regions (RouteTimeAxisView& tv, uint32_t, RegionVi
 		pl->get_equivalent_regions (basis->region(), results);
 	}
 
-	for (vector<boost::shared_ptr<Region> >::iterator ir = results.begin(); ir != results.end(); ++ir) {
+	for (vector<std::shared_ptr<Region> >::iterator ir = results.begin(); ir != results.end(); ++ir) {
 		if ((marv = tv.view()->find_view (*ir)) != 0) {
 			all_equivs->push_back (marv);
 		}
@@ -601,8 +611,12 @@ Editor::mapped_get_equivalent_regions (RouteTimeAxisView& tv, uint32_t, RegionVi
 void
 Editor::get_equivalent_regions (RegionView* basis, vector<RegionView*>& equivalent_regions, PBD::PropertyID property) const
 {
-	mapover_tracks_with_unique_playlists (sigc::bind (sigc::mem_fun (*this, &Editor::mapped_get_equivalent_regions), basis, &equivalent_regions), &basis->get_time_axis_view(), property);
-
+	if (basis->region()->is_explicitly_grouped ()) {
+		/* if the user made an explicit region group, it can span tracks outside of the track-group */
+		mapover_all_tracks_with_unique_playlists (sigc::bind (sigc::mem_fun (*this, &Editor::mapped_get_equivalent_regions), basis, &equivalent_regions));
+	} else {
+		mapover_tracks_with_unique_playlists (sigc::bind (sigc::mem_fun (*this, &Editor::mapped_get_equivalent_regions), basis, &equivalent_regions), &basis->get_time_axis_view(), property);
+	}
 	/* add clicked regionview since we skipped all other regions in the same track as the one it was in */
 
 	equivalent_regions.push_back (basis);
@@ -677,7 +691,7 @@ Editor::set_selected_regionview_from_click (bool press, Selection::Operation op)
 						 * permitted button release
 						 */
 
-						if (Config->get_edit_mode() == RippleAll) {
+						if (should_ripple_all()) {
 							get_all_equivalent_regions (clicked_regionview, all_equivalent_regions);
 							selection->remove (all_equivalent_regions);
 						} else {
@@ -697,7 +711,7 @@ Editor::set_selected_regionview_from_click (bool press, Selection::Operation op)
 
 				if (press) {
 
-					if (Config->get_edit_mode() == RippleAll) {
+					if (should_ripple_all()) {
 						get_all_equivalent_regions (clicked_regionview, all_equivalent_regions);
 					} else {
 						if (selection->selected (clicked_routeview)) {
@@ -720,7 +734,7 @@ Editor::set_selected_regionview_from_click (bool press, Selection::Operation op)
 
 		case Selection::Set:
 			if (!selection->selected (clicked_regionview)) {
-				if (Config->get_edit_mode() == RippleAll) {
+				if (should_ripple_all()) {
 					get_all_equivalent_regions (clicked_regionview, all_equivalent_regions);
 				} else {
 					get_equivalent_regions (clicked_regionview, all_equivalent_regions, ARDOUR::Properties::group_select.property_id);
@@ -734,7 +748,7 @@ Editor::set_selected_regionview_from_click (bool press, Selection::Operation op)
 				else {
 					if (selection->regions.size() > 1) {
 						/* collapse region selection down to just this one region (and its equivalents) */
-						if (Config->get_edit_mode() == RippleAll) {
+						if (should_ripple_all()) {
 							get_all_equivalent_regions (clicked_regionview, all_equivalent_regions);
 						} else {
 							get_equivalent_regions(clicked_regionview, all_equivalent_regions, ARDOUR::Properties::group_select.property_id);
@@ -847,7 +861,7 @@ Editor::set_selected_regionview_from_click (bool press, Selection::Operation op)
 
 		set<RouteTimeAxisView*> relevant_tracks;
 
-		if (Config->get_edit_mode() == RippleAll) {
+		if (should_ripple_all()) {
 			for (TrackSelection::iterator i = track_views.begin(); i != track_views.end(); ++i) {
 				RouteTimeAxisView* r = dynamic_cast<RouteTimeAxisView*> (*i);
 				if (r) {
@@ -1030,7 +1044,7 @@ Editor::set_selection (std::list<Selectable*> s, Selection::Operation op)
 }
 
 void
-Editor::set_selected_regionview_from_region_list (boost::shared_ptr<Region> region, Selection::Operation op)
+Editor::set_selected_regionview_from_region_list (std::shared_ptr<Region> region, Selection::Operation op)
 {
 	vector<RegionView*> regionviews;
 
@@ -1062,10 +1076,10 @@ Editor::set_selected_regionview_from_region_list (boost::shared_ptr<Region> regi
 }
 
 bool
-Editor::set_selected_regionview_from_map_event (GdkEventAny* /*ev*/, StreamView* sv, boost::weak_ptr<Region> weak_r)
+Editor::set_selected_regionview_from_map_event (GdkEventAny* /*ev*/, StreamView* sv, std::weak_ptr<Region> weak_r)
 {
 	RegionView* rv;
-	boost::shared_ptr<Region> r (weak_r.lock());
+	std::shared_ptr<Region> r (weak_r.lock());
 
 	if (!r) {
 		return true;
@@ -1150,13 +1164,13 @@ Editor::presentation_info_changed (PropertyChange const & what_changed)
 
 			n_stripables++;
 
-			if (boost::dynamic_pointer_cast<Track> ((*i).stripable)) {
+			if (std::dynamic_pointer_cast<Track> ((*i).stripable)) {
 				n_tracks++;
 				n_routes++;
-			} else if (boost::dynamic_pointer_cast<Route> ((*i).stripable)) {
+			} else if (std::dynamic_pointer_cast<Route> ((*i).stripable)) {
 				n_busses++;
 				n_routes++;
-			} else if (boost::dynamic_pointer_cast<VCA> ((*i).stripable)) {
+			} else if (std::dynamic_pointer_cast<VCA> ((*i).stripable)) {
 				n_vcas++;
 			}
 
@@ -1181,7 +1195,7 @@ Editor::presentation_info_changed (PropertyChange const & what_changed)
 
 				for (TimeAxisView::Children::iterator j = c.begin(); j != c.end(); ++j) {
 
-					boost::shared_ptr<AutomationControl> control = (*j)->control ();
+					std::shared_ptr<AutomationControl> control = (*j)->control ();
 
 					if (control != (*i).controllable) {
 						continue;
@@ -1234,16 +1248,15 @@ Editor::presentation_info_changed (PropertyChange const & what_changed)
 		}
 	}
 
-	/* STEP 4: update EditorRoutes treeview */
+	/* STEP 4: update Editor::track_views */
 
 	PropertyChange soh;
 
-	soh.add (Properties::selected);
 	soh.add (Properties::order);
 	soh.add (Properties::hidden);
 
 	if (what_changed.contains (soh)) {
-		_routes->sync_treeview_from_presentation_info (what_changed);
+		queue_redisplay_track_views ();
 	}
 }
 
@@ -1296,6 +1309,8 @@ Editor::time_selection_changed ()
 			_session->clear_range_selection ();
 		}
 	}
+
+	update_selection_markers ();
 }
 
 /** Set all region actions to have a given sensitivity */
@@ -1424,11 +1439,13 @@ Editor::sensitize_the_right_region_actions (bool because_canvas_crossing)
 	bool have_active_fade_in = false;
 	bool have_active_fade_out = false;
 	bool have_transients = false;
+	bool have_inverted_polarity = false;
+	bool have_non_inverted_polarity = false;
 
 	for (list<RegionView*>::const_iterator i = rs.begin(); i != rs.end(); ++i) {
 
-		boost::shared_ptr<Region> r = (*i)->region ();
-		boost::shared_ptr<AudioRegion> ar = boost::dynamic_pointer_cast<AudioRegion> (r);
+		std::shared_ptr<Region> r = (*i)->region ();
+		std::shared_ptr<AudioRegion> ar = std::dynamic_pointer_cast<AudioRegion> (r);
 
 		if (ar) {
 			have_audio = true;
@@ -1437,7 +1454,7 @@ Editor::sensitize_the_right_region_actions (bool because_canvas_crossing)
 			}
 		}
 
-		if (boost::dynamic_pointer_cast<MidiRegion> (r)) {
+		if (std::dynamic_pointer_cast<MidiRegion> (r)) {
 			have_midi = true;
 		}
 
@@ -1505,6 +1522,12 @@ Editor::sensitize_the_right_region_actions (bool because_canvas_crossing)
 			} else {
 				have_inactive_fade_out = true;
 			}
+
+			if (ar->scale_amplitude () < 0) {
+				have_inverted_polarity = true;
+			} else {
+				have_non_inverted_polarity = true;
+			}
 		}
 	}
 
@@ -1514,14 +1537,10 @@ Editor::sensitize_the_right_region_actions (bool because_canvas_crossing)
 		_region_actions->get_action("show-region-list-editor")->set_sensitive (false);
 		_region_actions->get_action("show-region-properties")->set_sensitive (false);
 		_region_actions->get_action("rename-region")->set_sensitive (false);
-		if (have_audio) {
-			/* XXX need to check whether there is than 1 per
-			   playlist, because otherwise this makes no sense.
-			*/
-			_region_actions->get_action("combine-regions")->set_sensitive (true);
-		} else {
-			_region_actions->get_action("combine-regions")->set_sensitive (false);
-		}
+		/* XXX need to check whether there is than 1 per
+		   playlist, because otherwise this makes no sense.
+		*/
+		_region_actions->get_action("combine-regions")->set_sensitive (true);
 	} else if (rs.size() == 1) {
 		_region_actions->get_action("add-range-markers-from-region")->set_sensitive (false);
 		_region_actions->get_action("close-region-gaps")->set_sensitive (false);
@@ -1540,6 +1559,7 @@ Editor::sensitize_the_right_region_actions (bool because_canvas_crossing)
 		_region_actions->get_action("remove-overlap")->set_sensitive (false);
 		_region_actions->get_action("transform-region")->set_sensitive (false);
 		_region_actions->get_action("fork-region")->set_sensitive (false);
+		_region_actions->get_action("fork-regions-from-unselected")->set_sensitive (false);
 		_region_actions->get_action("insert-patch-change-context")->set_sensitive (false);
 		_region_actions->get_action("insert-patch-change")->set_sensitive (false);
 		_region_actions->get_action("transpose-region")->set_sensitive (false);
@@ -1558,10 +1578,18 @@ Editor::sensitize_the_right_region_actions (bool because_canvas_crossing)
 
 	if (have_audio) {
 
-		if (have_envelope_active && !have_envelope_inactive) {
-			Glib::RefPtr<ToggleAction>::cast_dynamic (_region_actions->get_action("toggle-region-gain-envelope-active"))->set_active ();
+		if (have_envelope_active != have_envelope_inactive) {
+			Glib::RefPtr<ToggleAction>::cast_dynamic (_region_actions->get_action("toggle-region-gain-envelope-active"))->set_active (have_envelope_active);
 		} else if (have_envelope_active && have_envelope_inactive) {
-			// Glib::RefPtr<ToggleAction>::cast_dynamic (_region_actions->get_action("toggle-region-gain-envelope-active"))->set_inconsistent ();
+			// Glib::RefPtr<ToggleAction>::cast_dynamic (_region_actions->get_action("toggle-region-gain-envelope-active"))->set_inconsistent (); // N/A
+			Glib::RefPtr<ToggleAction>::cast_dynamic (_region_actions->get_action("toggle-region-gain-envelope-active"))->set_sensitive (false);
+		}
+
+		if (have_inverted_polarity != have_non_inverted_polarity) {
+			Glib::RefPtr<ToggleAction>::cast_dynamic (_region_actions->get_action("toggle-region-polarity"))->set_active (have_inverted_polarity);
+		} else if (have_inverted_polarity && have_non_inverted_polarity) {
+			// Glib::RefPtr<ToggleAction>::cast_dynamic (_region_actions->get_action("toggle-region-polarity"))->set_inconsistent (); // N/A
+			Glib::RefPtr<ToggleAction>::cast_dynamic (_region_actions->get_action("toggle-region-polarity"))->set_sensitive (false);
 		}
 
 	} else {
@@ -1573,11 +1601,12 @@ Editor::sensitize_the_right_region_actions (bool because_canvas_crossing)
 		_region_actions->get_action("pitch-shift-region")->set_sensitive (false);
 		_region_actions->get_action("strip-region-silence")->set_sensitive (false);
 		_region_actions->get_action("show-rhythm-ferret")->set_sensitive (false);
+		_region_actions->get_action("toggle-region-polarity")->set_sensitive (false);
 
 	}
 
 	if (!have_non_unity_scale_amplitude || !have_audio) {
-		_region_actions->get_action("reset-region-scale-amplitude")->set_sensitive (false);
+		_region_actions->get_action("reset-region-gain")->set_sensitive (false);
 	}
 
 	Glib::RefPtr<ToggleAction> a = Glib::RefPtr<ToggleAction>::cast_dynamic (_region_actions->get_action("toggle-region-lock"));
@@ -1711,12 +1740,15 @@ Editor::region_selection_changed ()
 
 		/* if in MouseAudition and there's just 1 region selected
 		 * (i.e. we just clicked on it), leave things as they are
+		 *
+		 * Ditto for TimeFX mode
 		 */
 
-		if (selection->regions.size() > 1 || mouse_mode != Editing::MouseAudition) {
+		if (selection->regions.size() > 1 || (mouse_mode != Editing::MouseAudition && mouse_mode != Editing::MouseTimeFX)) {
 			set_mouse_mode (MouseObject, false);
 		}
 	}
+	update_selection_markers ();
 }
 
 void
@@ -2347,5 +2379,120 @@ Editor::catch_up_on_midi_selection ()
 
 	if (!regions.empty()) {
 		selection->set (regions);
+	}
+}
+
+struct ViewStripable {
+	TimeAxisView* tav;
+	std::shared_ptr<Stripable> stripable;
+
+	ViewStripable (TimeAxisView* t, std::shared_ptr<Stripable> s)
+		: tav (t), stripable (s) {}
+};
+
+void
+Editor::move_selected_tracks (bool up)
+{
+	TimeAxisView* scroll_to = 0;
+	StripableList sl;
+	_session->get_stripables (sl);
+
+	if (sl.size() < 2) {
+		/* nope */
+		return;
+	}
+
+	sl.sort (Stripable::Sorter());
+
+	std::list<ViewStripable> view_stripables;
+
+	/* build a list that includes time axis view information */
+
+	for (StripableList::const_iterator sli = sl.begin(); sli != sl.end(); ++sli) {
+		TimeAxisView* tv = time_axis_view_from_stripable (*sli);
+		view_stripables.push_back (ViewStripable (tv, *sli));
+	}
+
+	/* for each selected stripable, move it above or below the adjacent
+	 * stripable that has a time-axis view representation here. If there's
+	 * no such representation, then
+	 */
+
+	list<ViewStripable>::iterator unselected_neighbour;
+	list<ViewStripable>::iterator vsi;
+
+	{
+		PresentationInfo::ChangeSuspender cs;
+
+		if (up) {
+			unselected_neighbour = view_stripables.end ();
+			vsi = view_stripables.begin();
+
+			while (vsi != view_stripables.end()) {
+
+				if (vsi->stripable->is_selected()) {
+
+					if (unselected_neighbour != view_stripables.end()) {
+
+						PresentationInfo::order_t unselected_neighbour_order = unselected_neighbour->stripable->presentation_info().order();
+						PresentationInfo::order_t my_order = vsi->stripable->presentation_info().order();
+
+						unselected_neighbour->stripable->set_presentation_order (my_order);
+						vsi->stripable->set_presentation_order (unselected_neighbour_order);
+
+						if (!scroll_to) {
+							scroll_to = vsi->tav;
+						}
+					}
+
+				} else {
+
+					if (vsi->tav) {
+						unselected_neighbour = vsi;
+					}
+
+				}
+
+				++vsi;
+			}
+
+		} else {
+
+			unselected_neighbour = view_stripables.end();
+			vsi = unselected_neighbour;
+
+			do {
+
+				--vsi;
+
+				if (vsi->stripable->is_selected()) {
+
+					if (unselected_neighbour != view_stripables.end()) {
+
+						PresentationInfo::order_t unselected_neighbour_order = unselected_neighbour->stripable->presentation_info().order();
+						PresentationInfo::order_t my_order = vsi->stripable->presentation_info().order();
+
+						unselected_neighbour->stripable->set_presentation_order (my_order);
+						vsi->stripable->set_presentation_order (unselected_neighbour_order);
+
+						if (!scroll_to) {
+							scroll_to = vsi->tav;
+						}
+					}
+
+				} else {
+
+					if (vsi->tav) {
+						unselected_neighbour = vsi;
+					}
+
+				}
+
+			} while (vsi != view_stripables.begin());
+		}
+	}
+
+	if (scroll_to) {
+		ensure_time_axis_view_is_visible (*scroll_to, false);
 	}
 }

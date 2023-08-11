@@ -40,19 +40,20 @@ SoloMuteRelease::set_exclusive (bool e)
 }
 
 void
-SoloMuteRelease::set (boost::shared_ptr<Route> r)
+SoloMuteRelease::set (std::shared_ptr<Stripable> r)
 {
+	std::shared_ptr<StripableList> sl (new StripableList);
 	if (active) {
-		routes_on.reset (new RouteList);
-		routes_on->push_back (r);
+		sl->push_back (r);
+		routes_on = sl;
 	} else {
-		routes_off.reset (new RouteList);
-		routes_off->push_back (r);
+		sl->push_back (r);
+		routes_off = sl;
 	}
 }
 
 void
-SoloMuteRelease::set (boost::shared_ptr<RouteList> rl)
+SoloMuteRelease::set (std::shared_ptr<StripableList const> rl)
 {
 	if (active) {
 		routes_on = rl;
@@ -62,14 +63,14 @@ SoloMuteRelease::set (boost::shared_ptr<RouteList> rl)
 }
 
 void
-SoloMuteRelease::set (boost::shared_ptr<RouteList> on, boost::shared_ptr<RouteList> off)
+SoloMuteRelease::set (std::shared_ptr<StripableList const> on, std::shared_ptr<StripableList const> off)
 {
 	routes_on = on;
 	routes_off = off;
 }
 
 void
-SoloMuteRelease::set (boost::shared_ptr<std::list<std::string> > pml)
+SoloMuteRelease::set (std::shared_ptr<std::list<std::string> > pml)
 {
 	port_monitors = pml;
 }
@@ -78,11 +79,11 @@ void
 SoloMuteRelease::release (Session* s, bool mute) const
 {
 	if (mute) {
-		s->set_controls (route_list_to_control_list (routes_off, &Stripable::mute_control), 0.0, exclusive ? Controllable::NoGroup : Controllable::UseGroup);
-		s->set_controls (route_list_to_control_list (routes_on,  &Stripable::mute_control), 1.0, exclusive ? Controllable::NoGroup : Controllable::UseGroup);
+		s->set_controls (stripable_list_to_control_list (routes_off, &Stripable::mute_control), 0.0, exclusive ? Controllable::NoGroup : Controllable::NoGroup);
+		s->set_controls (stripable_list_to_control_list (routes_on,  &Stripable::mute_control), 1.0, exclusive ? Controllable::NoGroup : Controllable::NoGroup);
 	} else {
-		s->set_controls (route_list_to_control_list (routes_off, &Stripable::solo_control), 0.0, exclusive ? Controllable::NoGroup : Controllable::UseGroup);
-		s->set_controls (route_list_to_control_list (routes_on,  &Stripable::solo_control), 1.0, exclusive ? Controllable::NoGroup : Controllable::UseGroup);
+		s->set_controls (stripable_list_to_control_list (routes_off, &Stripable::solo_control), 0.0, exclusive ? Controllable::NoGroup : Controllable::NoGroup);
+		s->set_controls (stripable_list_to_control_list (routes_on,  &Stripable::solo_control), 1.0, exclusive ? Controllable::NoGroup : Controllable::NoGroup);
 
 		if (port_monitors && s->monitor_out ()) {
 			s->engine().monitor_port().set_active_monitors (*port_monitors);

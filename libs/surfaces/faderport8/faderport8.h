@@ -67,15 +67,11 @@ public:
 	FaderPort8 (ARDOUR::Session&);
 	virtual ~FaderPort8();
 
+	static bool probe (std::string&, std::string&);
+
 	int set_active (bool yn);
 
-	/* we probe for a device when our ports are connected. Before that,
-	 * there's no way to know if the device exists or not.
-	 */
-	static bool  probe() { return true; }
-	static void* request_factory (uint32_t);
-
-	XMLNode& get_state ();
+	XMLNode& get_state () const;
 	int set_state (const XMLNode&, int version);
 
 	/* configuration GUI */
@@ -102,11 +98,13 @@ public:
 	void do_request (FaderPort8Request*);
 	void thread_init ();
 
-	boost::shared_ptr<ARDOUR::Port> input_port() const { return _input_port; }
-	boost::shared_ptr<ARDOUR::Port> output_port() const { return _output_port; }
-	std::list<boost::shared_ptr<ARDOUR::Bundle> > bundles ();
+	std::shared_ptr<ARDOUR::Port> input_port() const { return _input_port; }
+	std::shared_ptr<ARDOUR::Port> output_port() const { return _output_port; }
+	std::list<std::shared_ptr<ARDOUR::Bundle> > bundles ();
 
 	size_t tx_midi (std::vector<uint8_t> const&) const;
+
+	CONTROL_PROTOCOL_THREADS_NEED_TEMPO_MAP_DECL();
 
 private:
 	void close ();
@@ -116,12 +114,12 @@ private:
 
 	/* I/O Ports */
 	PBD::ScopedConnectionList port_connections;
-	boost::shared_ptr<ARDOUR::AsyncMIDIPort> _input_port;
-	boost::shared_ptr<ARDOUR::AsyncMIDIPort> _output_port;
-	boost::shared_ptr<ARDOUR::Bundle>        _input_bundle;
-	boost::shared_ptr<ARDOUR::Bundle>        _output_bundle;
+	std::shared_ptr<ARDOUR::AsyncMIDIPort> _input_port;
+	std::shared_ptr<ARDOUR::AsyncMIDIPort> _output_port;
+	std::shared_ptr<ARDOUR::Bundle>        _input_bundle;
+	std::shared_ptr<ARDOUR::Bundle>        _output_bundle;
 
-	bool midi_input_handler (Glib::IOCondition ioc, boost::weak_ptr<ARDOUR::AsyncMIDIPort> port);
+	bool midi_input_handler (Glib::IOCondition ioc, std::weak_ptr<ARDOUR::AsyncMIDIPort> port);
 
 	bool connection_handler (std::string name1, std::string name2);
 	void engine_reset ();
@@ -163,8 +161,8 @@ private:
 	void assign_sends ();
 	void spill_plugins ();
 	void assign_processor_ctrls ();
-	bool assign_plugin_presets (boost::shared_ptr<ARDOUR::PluginInsert>);
-	void build_well_known_processor_ctrls (boost::shared_ptr<ARDOUR::Stripable>, bool);
+	bool assign_plugin_presets (std::shared_ptr<ARDOUR::PluginInsert>);
+	void build_well_known_processor_ctrls (std::shared_ptr<ARDOUR::Stripable>, int);
 	void preset_changed ();
 	void select_plugin (int num);
 	void select_plugin_preset (size_t num);
@@ -190,15 +188,15 @@ private:
 	PBD::ScopedConnectionList processor_connections;
 
 	PBD::ScopedConnectionList assigned_stripable_connections;
-	typedef std::map<boost::shared_ptr<ARDOUR::Stripable>, uint8_t> StripAssignmentMap;
+	typedef std::map<std::shared_ptr<ARDOUR::Stripable>, uint8_t> StripAssignmentMap;
 	StripAssignmentMap _assigned_strips;
 
 	void drop_ctrl_connections ();
 
-	void select_strip (boost::weak_ptr<ARDOUR::Stripable>);
+	void select_strip (std::weak_ptr<ARDOUR::Stripable>);
 
 	void notify_pi_property_changed (const PBD::PropertyChange&);
-	void notify_stripable_property_changed (boost::weak_ptr<ARDOUR::Stripable>, const PBD::PropertyChange&);
+	void notify_stripable_property_changed (std::weak_ptr<ARDOUR::Stripable>, const PBD::PropertyChange&);
 	void stripable_selection_changed ();
 	void subscribe_to_strip_signals ();
 
@@ -207,18 +205,18 @@ private:
 	PBD::ScopedConnectionList modechange_connections;
 	/* **************************************************************************/
 	struct ProcessorCtrl {
-		ProcessorCtrl (std::string const &n, boost::shared_ptr<ARDOUR::AutomationControl> c)
+		ProcessorCtrl (std::string const &n, std::shared_ptr<ARDOUR::AutomationControl> c)
 		 : name (n)
 		 , ac (c)
 		{}
 		std::string name;
-		boost::shared_ptr<ARDOUR::AutomationControl> ac;
+		std::shared_ptr<ARDOUR::AutomationControl> ac;
 
 		inline bool operator< (const ProcessorCtrl& other) const;
 	};
 
 	std::list <ProcessorCtrl> _proc_params;
-	boost::weak_ptr<ARDOUR::PluginInsert> _plugin_insert;
+	std::weak_ptr<ARDOUR::PluginInsert> _plugin_insert;
 	bool _show_presets;
 	int _showing_well_known;
 	/* **************************************************************************/
@@ -303,8 +301,8 @@ private:
 
 	/* mute undo history */
 #ifdef FP8_MUTESOLO_UNDO
-	std::vector <boost::weak_ptr<ARDOUR::AutomationControl> > _mute_state;
-	std::vector <boost::weak_ptr<ARDOUR::AutomationControl> > _solo_state;
+	std::vector <std::weak_ptr<ARDOUR::AutomationControl> > _mute_state;
+	std::vector <std::weak_ptr<ARDOUR::AutomationControl> > _solo_state;
 #endif
 
 	/* Encoder handlers */
@@ -316,10 +314,10 @@ private:
 	void start_link ();
 	void lock_link ();
 	void unlock_link (bool drop = false);
-	void nofity_focus_control (boost::weak_ptr<PBD::Controllable>);
+	void nofity_focus_control (std::weak_ptr<PBD::Controllable>);
 	PBD::ScopedConnection link_connection;
 	PBD::ScopedConnection link_locked_connection;
-	boost::weak_ptr<PBD::Controllable> _link_control;
+	std::weak_ptr<PBD::Controllable> _link_control;
 	bool _link_enabled;
 	bool _link_locked; // can only be true if _link_enabled
 

@@ -18,8 +18,9 @@
 #ifndef _dsp_filter_h_
 #define _dsp_filter_h_
 
-#include <stdint.h>
-#include <string.h>
+#include <atomic>
+#include <cstdint>
+#include <cstring>
 #include <assert.h>
 #include <glib.h>
 #include <glibmm.h>
@@ -112,7 +113,11 @@ namespace ARDOUR { namespace DSP {
 			 * @param val value to set
 			 */
 			void atomic_set_int (size_t off, int32_t val) {
-				g_atomic_int_set (&(((int32_t*)_data)[off]), val);
+				/* no read or write that precedes the write we are
+				   about to do can be reordered past this fence.
+				*/
+				std::atomic_thread_fence (std::memory_order_release);
+				((int32_t*)_data)[off] = val;
 			}
 
 			/** atomically read integer at offset
@@ -125,7 +130,11 @@ namespace ARDOUR { namespace DSP {
 			 * @returns value at offset
 			 */
 			int32_t atomic_get_int (size_t off) {
-				return g_atomic_int_get (&(((int32_t*)_data)[off]));
+				/* no read that precedes the read we are
+				   about to do can be reordered past this fence.
+				*/
+				std::atomic_thread_fence (std::memory_order_acquire);
+				return (((int32_t*)_data)[off]);
 			}
 
 		private:
@@ -220,7 +229,11 @@ namespace ARDOUR { namespace DSP {
 				AllPass,
 				Peaking,
 				LowShelf,
-				HighShelf
+				HighShelf,
+				MatchedLowPass,
+				MatchedHighPass,
+				MatchedBandPass0dB,
+				MatchedPeaking
 			};
 
 			/** Instantiate Biquad Filter
@@ -248,6 +261,9 @@ namespace ARDOUR { namespace DSP {
 			/** setup filter, set coefficients directly */
 			void configure (double a1, double a2, double b0, double b1, double b2);
 
+			/* copy coefficients from other instance, retain state */
+			void configure (Biquad const&);
+
 			/** filter transfer function (filter response for spectrum visualization)
 			 * @param freq frequency
 			 * @return gain at given frequency in dB (clamped to -120..+120)
@@ -257,6 +273,9 @@ namespace ARDOUR { namespace DSP {
 			/** reset filter state */
 			void reset () { _z1 = _z2 = 0.0; }
 		private:
+			void set_vicanek_poles (const double W0, const double Q, const double A = 1.0);
+			void calc_vicanek (const double W0, double& A0, double& A1, double& A2, double& phi0, double& phi1, double& phi2);
+
 			double _rate;
 			float  _z1, _z2;
 			double _a1, _a2;

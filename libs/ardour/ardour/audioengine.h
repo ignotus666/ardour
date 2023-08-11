@@ -27,6 +27,7 @@
 #include "libardour-config.h"
 #endif
 
+#include <atomic>
 #include <iostream>
 #include <list>
 #include <set>
@@ -38,7 +39,6 @@
 
 #include "pbd/signals.h"
 #include "pbd/pthread_utils.h"
-#include "pbd/g_atomic_compat.h"
 
 #include "ardour/ardour.h"
 #include "ardour/data_type.h"
@@ -72,8 +72,8 @@ class LIBARDOUR_API AudioEngine : public PortManager, public SessionHandlePtr
 	int discover_backends();
 	std::vector<const AudioBackendInfo*> available_backends() const;
 	std::string current_backend_name () const;
-	boost::shared_ptr<AudioBackend> set_backend (const std::string&, const std::string& arg1, const std::string& arg2);
-	boost::shared_ptr<AudioBackend> current_backend() const { return _backend; }
+	std::shared_ptr<AudioBackend> set_backend (const std::string&, const std::string& arg1, const std::string& arg2);
+	std::shared_ptr<AudioBackend> current_backend() const { return _backend; }
 	bool setup_required () const;
 
 	ProcessThread* main_thread() const { return _main_thread; }
@@ -118,7 +118,7 @@ class LIBARDOUR_API AudioEngine : public PortManager, public SessionHandlePtr
 	bool           is_realtime() const;
 
 	// for the user which hold state_lock to check if reset operation is pending
-	bool           is_reset_requested() const { return g_atomic_int_get (const_cast<GATOMIC_QUAL gint*> (&_hw_reset_request_count)); }
+	bool           is_reset_requested() const { return _hw_reset_request_count.load(); }
 
 	int set_device_name (const std::string&);
 	int set_sample_rate (float);
@@ -134,8 +134,10 @@ class LIBARDOUR_API AudioEngine : public PortManager, public SessionHandlePtr
 	bool freewheeling() const { return _freewheeling; }
 	bool running() const { return _running; }
 
+	std::string backend_id (bool for_input);
+
 	Glib::Threads::Mutex& process_lock() { return _process_lock; }
-	Glib::Threads::RecMutex& state_lock() { return _state_lock; }
+	Glib::Threads::Mutex& latency_lock() { return _latency_lock; }
 
 	int request_buffer_size (pframes_t samples) {
 		return set_buffer_size (samples);
@@ -198,9 +200,6 @@ class LIBARDOUR_API AudioEngine : public PortManager, public SessionHandlePtr
 
 	static AudioEngine* instance() { return _instance; }
 	static void destroy();
-
-	/* this method is intended only to be used as a "fast" callback from libtemporal */
-	static int static_sample_rate () { return _instance->sample_rate(); }
 
 	void died ();
 
@@ -268,10 +267,12 @@ class LIBARDOUR_API AudioEngine : public PortManager, public SessionHandlePtr
 	static AudioEngine*       _instance;
 
 	Glib::Threads::Mutex       _process_lock;
+	Glib::Threads::Mutex       _latency_lock;
 	Glib::Threads::RecMutex    _state_lock;
 	Glib::Threads::Cond        session_removed;
 	bool                       session_remove_pending;
 	sampleoffset_t             session_removal_countdown;
+	bool                       session_deleted;
 	gain_t                     session_removal_gain;
 	gain_t                     session_removal_gain_step;
 	bool                      _running;
@@ -282,7 +283,6 @@ class LIBARDOUR_API AudioEngine : public PortManager, public SessionHandlePtr
 	samplecnt_t                last_monitor_check;
 	/// the number of samples processed since start() was called
 	samplecnt_t               _processed_samples;
-	Glib::Threads::Thread*     m_meter_thread;
 	ProcessThread*            _main_thread;
 	MTDM*                     _mtdm;
 	MIDIDM*                   _mididm;
@@ -299,20 +299,20 @@ class LIBARDOUR_API AudioEngine : public PortManager, public SessionHandlePtr
 
 	std::string               _last_backend_error_string;
 
-	Glib::Threads::Thread*    _hw_reset_event_thread;
-	GATOMIC_QUAL gint         _hw_reset_request_count;
+	PBD::Thread*              _hw_reset_event_thread;
+	std::atomic<int>         _hw_reset_request_count;
 	Glib::Threads::Cond       _hw_reset_condition;
 	Glib::Threads::Mutex      _reset_request_lock;
-	GATOMIC_QUAL gint         _stop_hw_reset_processing;
-	Glib::Threads::Thread*    _hw_devicelist_update_thread;
-	GATOMIC_QUAL gint         _hw_devicelist_update_count;
+	std::atomic<int>         _stop_hw_reset_processing;
+	PBD::Thread*              _hw_devicelist_update_thread;
+	std::atomic<int>         _hw_devicelist_update_count;
 	Glib::Threads::Cond       _hw_devicelist_update_condition;
 	Glib::Threads::Mutex      _devicelist_update_lock;
-	GATOMIC_QUAL gint         _stop_hw_devicelist_processing;
+	std::atomic<int>         _stop_hw_devicelist_processing;
 	uint32_t                  _start_cnt;
 	uint32_t                  _init_countdown;
-	GATOMIC_QUAL gint         _pending_playback_latency_callback;
-	GATOMIC_QUAL gint         _pending_capture_latency_callback;
+	std::atomic<int>         _pending_playback_latency_callback;
+	std::atomic<int>         _pending_capture_latency_callback;
 
 	void start_hw_event_processing();
 	void stop_hw_event_processing();

@@ -46,6 +46,7 @@ using namespace PBD;
 
 list<Bindings*> Bindings::bindings; /* global. Gulp */
 PBD::Signal1<void,Bindings*> Bindings::BindingsChanged;
+int Bindings::_drag_active = 0;
 
 template <typename IteratorValueType>
 struct ActionNameRegistered
@@ -64,7 +65,7 @@ MouseButton::MouseButton (uint32_t state, uint32_t keycode)
 {
 	uint32_t ignore = ~Keyboard::RelevantModifierKeyMask;
 
-	/* this is a slightly wierd test that relies on
+	/* this is a slightly weird test that relies on
 	 * gdk_keyval_is_{upper,lower}() returning true for keys that have no
 	 * case-sensitivity. This covers mostly non-alphanumeric keys.
 	 */
@@ -492,6 +493,17 @@ Bindings::activate (KeyboardKey kb, Operation op)
 		action = ActionManager::get_action (k->second.action_name, false);
 	}
 
+	/* bindings cannot be used during drags */
+
+	if (_drag_active) {
+		/* sadly we need to special case one possible action, because
+		   Escape is used to break drags.
+		*/
+		if (!action || action->get_name() != _("Escape")) {
+			return true;
+		}
+	}
+
 	if (action) {
 		/* lets do it ... */
 		if (action->get_sensitive()) {
@@ -899,21 +911,24 @@ Bindings::save_as_html (ostream& ostr, bool categorize) const
 
 				string::size_type pos;
 
-				char const *targets[] = { X_("Separator"), X_("Add"), X_("Subtract"), X_("Decimal"), X_("Divide"),
-				                          X_("grave"), X_("comma"), X_("period"), X_("asterisk"), X_("backslash"),
-				                          X_("apostrophe"), X_("minus"), X_("plus"), X_("slash"), X_("semicolon"),
-				                          X_("colon"), X_("equal"), X_("bracketleft"), X_("bracketright"),
-				                          X_("ampersand"), X_("numbersign"), X_("parenleft"), X_("parenright"),
-				                          X_("quoteright"), X_("quoteleft"), X_("exclam"), X_("quotedbl"),
+				char const *targets[] = { X_("Separator"),  X_("Add"),        X_("Subtract"),    X_("Decimal"),      X_("Divide"),
+				                          X_("grave"),      X_("comma"),      X_("period"),      X_("asterisk"),     X_("backslash"),
+				                          X_("apostrophe"), X_("minus"),      X_("plus"),        X_("slash"),        X_("semicolon"),
+				                          X_("colon"),      X_("equal"),      X_("bracketleft"), X_("bracketright"),
+				                          X_("ampersand"),  X_("numbersign"), X_("parenleft"),   X_("parenright"),
+				                          X_("quoteright"), X_("quoteleft"),  X_("exclam"),      X_("quotedbl"),
+				                          X_("braceleft"),  X_("braceright"),
 				                          0
 				};
 
 				char const *replacements[] = { X_("-"), X_("+"), X_("-"), X_("."), X_("/"),
 				                               X_("`"), X_(","), X_("."), X_("*"), X_("\\"),
 				                               X_("'"), X_("-"), X_("+"), X_("/"), X_(";"),
-				                               X_(":"), X_("="), X_("{"), X_("{"),
+				                               X_(":"), X_("="), X_("["), X_("]"),
 				                               X_("&"), X_("#"), X_("("), X_(")"),
 				                               X_("`"), X_("'"), X_("!"), X_("\""),
+				                               X_("{"), X_("}"),
+				                               0
 				};
 
 				for (size_t n = 0; targets[n]; ++n) {

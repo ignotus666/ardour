@@ -25,6 +25,9 @@
 
 #include <gdk/gdkquartz.h>
 
+//#define NSVIEW_PROFILE
+//#define DEBUG_NSVIEW_EXPOSURE
+
 #include <OpenGL/gl.h>
 #import  <Cocoa/Cocoa.h>
 
@@ -40,6 +43,7 @@
  * Gdk events propagate.
  */
 #ifndef ARDOUR_CANVAS_NSVIEW_TAG
+#error NO TAG
 #define ARDOUR_CANVAS_NSVIEW_TAG 0x0
 #endif
 
@@ -47,24 +51,31 @@ __attribute__ ((visibility ("hidden")))
 @interface ArdourCanvasOpenGLView : NSOpenGLView
 {
 @private
+	Cairo::RefPtr<Cairo::ImageSurface> _surf;
+	Gtkmm2ext::CairoCanvas*            _cairo_canvas;
+
+	NSInteger    _tag;
 	unsigned int _texture_id;
-	int _width;
-	int _height;
-	Cairo::RefPtr<Cairo::ImageSurface> surf;
-	Gtkmm2ext::CairoCanvas *cairo_canvas;
-	NSInteger _tag;
+	int          _width;
+	int          _height;
+	float        _scale;
+	bool         _use_backing_scale;
+	GdkRectangle _expose_area;
 }
 
 @property (readwrite) NSInteger tag;
 
+- (instancetype)initWithScale:(BOOL)use_backing_scale;
 - (id) initWithFrame:(NSRect)frame;
 - (void) dealloc;
-- (void) setCairoCanvas:(Gtkmm2ext::CairoCanvas*)c;
+- (void) setCairoCanvas:(Gtkmm2ext::CairoCanvas*)canvas;
 - (void) reshape;
 - (void) setNeedsDisplayInRect:(NSRect)rect;
+- (void) setNeedsDisplay:(BOOL)yn;
 - (void) drawRect:(NSRect)rect;
 - (BOOL) canBecomeKeyWindow:(id)sender;
 - (BOOL) acceptsFirstResponder:(id)sender;
+- (void) reallocateTexture;
 
 @end
 
@@ -96,8 +107,11 @@ __attribute__ ((visibility ("hidden")))
 	}
 
 	_texture_id = 0;
-	_width = 0;
-	_height = 0;
+	_width      = 0;
+	_height     = 0;
+	_scale      = 1.;
+
+	_expose_area.x = _expose_area.y = _expose_area.width = _expose_area.height = 0;
 
 	if (self) {
 		self.tag = ARDOUR_CANVAS_NSVIEW_TAG;
@@ -109,11 +123,26 @@ __attribute__ ((visibility ("hidden")))
 		glEnable (GL_TEXTURE_RECTANGLE_ARB);
 		[NSOpenGLContext clearCurrentContext];
 
+		if (_use_backing_scale) {
+			[self setWantsBestResolutionOpenGLSurface:YES];
+			[self setWantsLayer:YES];
+		} else {
+			[self setWantsBestResolutionOpenGLSurface:NO];
+		}
+
 		[self reshape];
 	}
 
 	return self;
 }
+
+- (instancetype)initWithScale:(BOOL)use_backing_scale
+{
+  _use_backing_scale = use_backing_scale;
+	[super init];
+	return self;
+}
+
 
 - (void) dealloc {
 	[[self openGLContext] makeCurrentContext];
@@ -123,9 +152,9 @@ __attribute__ ((visibility ("hidden")))
 	[super dealloc];
 }
 
-- (void) setCairoCanvas:(Gtkmm2ext::CairoCanvas*)c
+- (void) setCairoCanvas:(Gtkmm2ext::CairoCanvas*)canvas
 {
-	cairo_canvas = c;
+	_cairo_canvas = canvas;
 }
 
 - (BOOL) canBecomeKeyWindow:(id)sender{
@@ -136,21 +165,13 @@ __attribute__ ((visibility ("hidden")))
 	return NO;
 }
 
-- (void) reshape
+- (void) reallocateTexture
 {
-	[[self openGLContext] update];
+	/* must be called withing GLContext */
+	int const w = _width * _scale;
+	int const h = _height * _scale;
 
-	NSRect bounds = [self bounds];
-	int    width  = bounds.size.width;
-	int    height = bounds.size.height;
-
-	if (_width == width && _height == height) {
-		return;
-	}
-
-	[[self openGLContext] makeCurrentContext];
-
-	glViewport (0, 0, width, height);
+	glViewport (0, 0, w, h);
 	glMatrixMode (GL_PROJECTION);
 	glLoadIdentity ();
 	glOrtho (-1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f);
@@ -161,31 +182,103 @@ __attribute__ ((visibility ("hidden")))
 	glGenTextures (1, &_texture_id);
 	glBindTexture (GL_TEXTURE_RECTANGLE_ARB, _texture_id);
 	glTexImage2D (GL_TEXTURE_RECTANGLE_ARB, 0, GL_RGBA8,
-			width, height, 0,
+			w, h, 0,
 			GL_BGRA, GL_UNSIGNED_BYTE, NULL);
 	glTexEnvi (GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_DECAL);
 
 	glMatrixMode(GL_MODELVIEW);
 	glLoadIdentity();
 
-	[NSOpenGLContext clearCurrentContext];
+
+	_expose_area.x = _expose_area.y = 0;
+	_expose_area.width  = _width;
+	_expose_area.height = _height;
+}
+
+- (void) reshape
+{
+	[super reshape];
+	[[self openGLContext] update];
+
+	NSRect bounds = [self bounds];
+	int    width  = bounds.size.width;
+	int    height = bounds.size.height;
+	float  scale = 1.0;
+
+	if (_use_backing_scale && [self window]) {
+		scale = [[self window] backingScaleFactor];
+	}
+
+	if (_width == width && _height == height && _scale == scale) {
+		return;
+	}
 
 	_width  = width;
 	_height = height;
+	_scale  = scale;
+
+	[[self openGLContext] makeCurrentContext];
+	[self reallocateTexture];
+	[NSOpenGLContext clearCurrentContext];
+}
+
+- (void) setNeedsDisplay:(BOOL)yn
+{
+	if (yn) {
+		_expose_area.x      = 0;
+		_expose_area.y      = 0;
+		_expose_area.width  = _width;
+		_expose_area.height = _height;
+#ifdef DEBUG_NSVIEW_EXPOSURE
+		printf ("setNeedsDisplay:       %4d x %4d\n", _width, _height);
+#endif
+	}
+	[super setNeedsDisplay:yn];
 }
 
 - (void) setNeedsDisplayInRect:(NSRect)rect
 {
-	[super setNeedsDisplayInRect:rect];
 #ifdef DEBUG_NSVIEW_EXPOSURE
-	printf ("needsDisplay: %5.1f %5.1f   %5.1f %5.1f\n",
-			rect.origin.x, rect.origin.y, rect.size.width, rect.size.height);
+	printf ("setNeedsDisplayInRect: %4.0f x %4.0f   @ %.0f + %.0f\n",
+			rect.size.width, rect.size.height, rect.origin.x, rect.origin.y);
 #endif
+
+	if (_expose_area.width == 0 && _expose_area.height == 0) {
+		_expose_area.x      = rect.origin.x;
+		_expose_area.y      = rect.origin.y;
+		_expose_area.width  = rect.size.width;
+		_expose_area.height = rect.size.height;
+	} else {
+		GdkRectangle r1 = {(int)rect.origin.x, (int)rect.origin.y, (int)rect.size.width, (int)rect.size.height};
+		gdk_rectangle_union (&r1, &_expose_area, &_expose_area);
+	}
+
+	GdkRectangle rw = {0, 0, _width, _height};
+	gdk_rectangle_intersect (&rw, &_expose_area, &_expose_area);
+
+	[super setNeedsDisplayInRect:rect];
 }
 
 - (void) drawRect:(NSRect)rect
 {
-	[[self openGLContext] makeCurrentContext];
+#ifdef NSVIEW_PROFILE
+	const int64_t start = g_get_monotonic_time ();
+#endif
+
+	float  scale = 1.0;
+
+	if (_use_backing_scale && [self window]) {
+		scale = [[self window] backingScaleFactor];
+	}
+
+	if ( _scale != scale) {
+		_scale = scale;
+		[[self openGLContext] update];
+		[[self openGLContext] makeCurrentContext];
+		[self reallocateTexture];
+	} else {
+		[[self openGLContext] makeCurrentContext];
+	}
 
 	glMatrixMode(GL_MODELVIEW);
 	glLoadIdentity();
@@ -194,45 +287,48 @@ __attribute__ ((visibility ("hidden")))
 	/* call back into CairoCanvas */
 	cairo_rectangle_t cairo_rect;
 
-	cairo_rect.x = rect.origin.x;
-	cairo_rect.y = rect.origin.y;
-	cairo_rect.width = rect.size.width;
-	cairo_rect.height = rect.size.height;
+	cairo_rect.x      = _expose_area.x;
+	cairo_rect.y      = _expose_area.y;
+	cairo_rect.width  = _expose_area.width;
+	cairo_rect.height = _expose_area.height;
+	_expose_area.x = _expose_area.y = _expose_area.width = _expose_area.height = 0;
 
-	if (!surf || surf->get_width () != _width || surf->get_height() != _height) {
-		surf = Cairo::ImageSurface::create (Cairo::FORMAT_ARGB32, _width, _height);
+	int const w = _width * _scale;
+	int const h = _height * _scale;
+
+	if (!_surf || _surf->get_width () != w || _surf->get_height() != h) {
+		_surf = Cairo::ImageSurface::create (Cairo::FORMAT_ARGB32, w, h);
 
 		cairo_rect.x = 0;
 		cairo_rect.y = 0;
-		cairo_rect.width = _width;
+		cairo_rect.width  = _width;
 		cairo_rect.height = _height;
 	}
 
-	Cairo::RefPtr<Cairo::Context> ctx = Cairo::Context::create (surf);
+#ifdef DEBUG_NSVIEW_EXPOSURE
+	printf ("NSGL::drawRect: ...... %4.0f x %4.0f   @ %.0f + %.0f\n",
+			cairo_rect.width, cairo_rect.height, cairo_rect.x, cairo_rect.y);
+#endif
 
-	// TODO: check retina screen, scaling factor.
-	// cairo_surface_get_device_scale () or explicit scale
+
+	Cairo::RefPtr<Cairo::Context> ctx = Cairo::Context::create (_surf);
+	ctx->scale (_scale, _scale);
 
 	ctx->rectangle (cairo_rect.x, cairo_rect.y, cairo_rect.width, cairo_rect.height);
-	ctx->clip_preserve ();
+	ctx->clip ();
 	{
 		/* draw background color */
-		uint32_t col = cairo_canvas->background_color ();
+		uint32_t col = _cairo_canvas->background_color ();
 		int r, g, b, a;
 		UINT_TO_RGBA (col, &r, &g, &b, &a);
 		ctx->set_source_rgba (r/255.0, g/255.0, b/255.0, a/255.0);
+		ctx->paint ();
 	}
-	ctx->fill ();
 
-#ifdef DEBUG_NSVIEW_EXPOSURE
-	printf ("drawRect:     %.1f %.1f  %.1f %1.f\n",
-			cairo_rect.x, cairo_rect.y, cairo_rect.width, cairo_rect.height);
-#endif
+	_cairo_canvas->render (ctx, &cairo_rect);
 
-	cairo_canvas->render (ctx, &cairo_rect);
-
-	surf->flush ();
-	uint8_t* imgdata = surf->get_data ();
+	_surf->flush ();
+	uint8_t* imgdata = _surf->get_data ();
 
 	/* NOTE for big-endian (PPC), we'd need to flip byte-order
 	 * RGBA <> RGBA for the texture.
@@ -245,38 +341,41 @@ __attribute__ ((visibility ("hidden")))
 	glEnable(GL_TEXTURE_2D);
 	glBindTexture(GL_TEXTURE_RECTANGLE_ARB, _texture_id);
 	glTexImage2D(GL_TEXTURE_RECTANGLE_ARB, 0, GL_RGBA8,
-			_width, _height, /*border*/ 0,
+			w, h, /*border*/ 0,
 			GL_BGRA, GL_UNSIGNED_BYTE, imgdata);
 
 	glBegin(GL_QUADS);
-	glTexCoord2f(           0.0f, (GLfloat) _height);
+	glTexCoord2f(0.0f, (GLfloat) h);
 	glVertex2f(-1.0f, -1.0f);
 
-	glTexCoord2f((GLfloat) _width, (GLfloat) _height);
-	glVertex2f( 1.0f, -1.0f);
+	glTexCoord2f((GLfloat) w, (GLfloat) h);
+	glVertex2f(1.0f, -1.0f);
 
-	glTexCoord2f((GLfloat) _width, 0.0f);
-	glVertex2f( 1.0f,  1.0f);
+	glTexCoord2f((GLfloat) w, 0.0f);
+	glVertex2f(1.0f,  1.0f);
 
-	glTexCoord2f(            0.0f, 0.0f);
+	glTexCoord2f(0.0f, 0.0f);
 	glVertex2f(-1.0f,  1.0f);
 	glEnd();
 
 	glDisable(GL_TEXTURE_2D);
 	glPopMatrix();
 
-	///
-
 	glFlush();
 	glSwapAPPLE();
 	[NSOpenGLContext clearCurrentContext];
 	[super setNeedsDisplay:NO];
+
+#ifdef NSVIEW_PROFILE
+	const int64_t end = g_get_monotonic_time ();
+	const int64_t elapsed = end - start;
+	printf ("NSGL::drawRect (%d x %d) * %.1f in %f ms\n", _width, _height, _scale, elapsed / 1000.f);
+#endif
 }
 @end
 
-
 void*
-Gtkmm2ext::nsglview_create (Gtkmm2ext::CairoCanvas* canvas)
+Gtkmm2ext::nsglview_create (Gtkmm2ext::CairoCanvas* canvas, bool use_backing_scale)
 {
 	if (g_getenv ("ARDOUR_NSGL") && (0 == atoi (g_getenv ("ARDOUR_NSGL")))) {
 		return 0;
@@ -288,7 +387,7 @@ Gtkmm2ext::nsglview_create (Gtkmm2ext::CairoCanvas* canvas)
 #ifdef __ppc__
 	return 0;
 #endif
-	ArdourCanvasOpenGLView* gl_view = [ArdourCanvasOpenGLView new];
+	ArdourCanvasOpenGLView* gl_view = [[ArdourCanvasOpenGLView alloc] initWithScale:use_backing_scale];
 	if (!gl_view) {
 		return 0;
 	}
@@ -317,9 +416,6 @@ Gtkmm2ext::nsglview_queue_draw (void* glv, int x, int y, int w, int h)
 {
 	ArdourCanvasOpenGLView* gl_view = (ArdourCanvasOpenGLView*) glv;
 	[gl_view setNeedsDisplayInRect:NSMakeRect(x, y, w, h)];
-#ifdef DEBUG_NSVIEW_EXPOSURE
-	printf ("Queue Draw    %5d %5d  %5d %5d\n", x, y, w, h);
-#endif
 }
 
 void

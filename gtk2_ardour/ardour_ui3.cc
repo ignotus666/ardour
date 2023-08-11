@@ -80,7 +80,7 @@ ARDOUR_UI::reset_focus (Gtk::Widget* w)
 
 	Gtk::Widget* top = w->get_toplevel();
 
-	if (!top || !top->is_toplevel()) {
+	if (!top || !top->get_is_toplevel()) {
 		return;
 	}
 
@@ -88,7 +88,7 @@ ARDOUR_UI::reset_focus (Gtk::Widget* w)
 
 	while (w) {
 
-		if (w->is_toplevel()) {
+		if (w->get_is_toplevel()) {
 			/* Setting the focus widget to a Gtk::Window causes all
 			 * subsequent calls to ::has_focus() on the nominal
 			 * focus widget in that window to return
@@ -121,11 +121,11 @@ ARDOUR_UI::reset_focus (Gtk::Widget* w)
 void
 ARDOUR_UI::monitor_dim_all ()
 {
-	boost::shared_ptr<Route> mon = _session->monitor_out ();
+	std::shared_ptr<Route> mon = _session->monitor_out ();
 	if (!mon) {
 		return;
 	}
-	boost::shared_ptr<ARDOUR::MonitorProcessor> _monitor = mon->monitor_control ();
+	std::shared_ptr<ARDOUR::MonitorProcessor> _monitor = mon->monitor_control ();
 
 	Glib::RefPtr<ToggleAction> tact = ActionManager::get_toggle_action (X_("Monitor"), "monitor-dim-all");
 	_monitor->set_dim_all (tact->get_active());
@@ -134,11 +134,11 @@ ARDOUR_UI::monitor_dim_all ()
 void
 ARDOUR_UI::monitor_cut_all ()
 {
-	boost::shared_ptr<Route> mon = _session->monitor_out ();
+	std::shared_ptr<Route> mon = _session->monitor_out ();
 	if (!mon) {
 		return;
 	}
-	boost::shared_ptr<ARDOUR::MonitorProcessor> _monitor = mon->monitor_control ();
+	std::shared_ptr<ARDOUR::MonitorProcessor> _monitor = mon->monitor_control ();
 
 	Glib::RefPtr<ToggleAction> tact = ActionManager::get_toggle_action (X_("Monitor"), "monitor-cut-all");
 	_monitor->set_cut_all (tact->get_active());
@@ -147,11 +147,11 @@ ARDOUR_UI::monitor_cut_all ()
 void
 ARDOUR_UI::monitor_mono ()
 {
-	boost::shared_ptr<Route> mon = _session->monitor_out ();
+	std::shared_ptr<Route> mon = _session->monitor_out ();
 	if (!mon) {
 		return;
 	}
-	boost::shared_ptr<ARDOUR::MonitorProcessor> _monitor = mon->monitor_control ();
+	std::shared_ptr<ARDOUR::MonitorProcessor> _monitor = mon->monitor_control ();
 
 	Glib::RefPtr<ToggleAction> tact = ActionManager::get_toggle_action (X_("Monitor"), "monitor-mono");
 	_monitor->set_mono (tact->get_active());
@@ -162,7 +162,7 @@ ARDOUR_UI::shared_popup_menu ()
 {
 	ENSURE_GUI_THREAD (*this, &ARDOUR_UI::shared_popup_menu, ignored);
 
-	assert (!_shared_popup_menu || !_shared_popup_menu->is_visible());
+	assert (!_shared_popup_menu || !_shared_popup_menu->get_visible());
 	delete _shared_popup_menu;
 	_shared_popup_menu = new Gtk::Menu;
 	return _shared_popup_menu;
@@ -180,35 +180,8 @@ ARDOUR_UI::update_transport_clocks (samplepos_t p)
 {
 	timepos_t pos (p);
 
-	switch (UIConfiguration::instance().get_primary_clock_delta_mode()) {
-		case NoDelta:
-			primary_clock->set (pos);
-			break;
-		case DeltaEditPoint:
-			primary_clock->set (pos, false, timecnt_t (editor->get_preferred_edit_position (EDIT_IGNORE_PHEAD)));
-			break;
-		case DeltaOriginMarker:
-			{
-				Location* loc = _session->locations()->clock_origin_location ();
-				primary_clock->set (pos, false, timecnt_t (loc ? loc->start_sample() : 0));
-			}
-			break;
-	}
-
-	switch (UIConfiguration::instance().get_secondary_clock_delta_mode()) {
-		case NoDelta:
-			secondary_clock->set (pos);
-			break;
-		case DeltaEditPoint:
-			secondary_clock->set (pos, false, timecnt_t (editor->get_preferred_edit_position (EDIT_IGNORE_PHEAD)));
-			break;
-		case DeltaOriginMarker:
-			{
-				Location* loc = _session->locations()->clock_origin_location ();
-				secondary_clock->set (pos, false, timecnt_t (loc ? loc->start_sample() : 0));
-			}
-			break;
-	}
+	primary_clock->set (pos);
+	secondary_clock->set (pos);
 
 	if (big_clock_window) {
 		big_clock->set (pos);
@@ -238,3 +211,4 @@ ARDOUR_UI::record_state_changed ()
 		big_clock->set_active (false);
 	}
 }
+

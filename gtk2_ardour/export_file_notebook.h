@@ -46,19 +46,19 @@ public:
 
 	ExportFileNotebook ();
 
-	void set_session_and_manager (ARDOUR::Session * s, boost::shared_ptr<ARDOUR::ExportProfileManager> manager);
+	void set_session_and_manager (ARDOUR::Session * s, std::shared_ptr<ARDOUR::ExportProfileManager> manager);
 	void sync_with_manager ();
 	void update_example_filenames();
 
-	boost::shared_ptr<SoundcloudExportSelector> soundcloud_export_selector;
+	std::shared_ptr<SoundcloudExportSelector> soundcloud_export_selector;
 
 	sigc::signal<void> CriticalSelectionChanged;
 
 private:
 
-	typedef boost::shared_ptr<ARDOUR::ExportProfileManager> ManagerPtr;
-	typedef boost::shared_ptr<ARDOUR::ExportFormatSpecification> FormatPtr;
-	typedef boost::shared_ptr<ARDOUR::ExportFilename> FilenamePtr;
+	typedef std::shared_ptr<ARDOUR::ExportProfileManager> ManagerPtr;
+	typedef std::shared_ptr<ARDOUR::ExportFormatSpecification> FormatPtr;
+	typedef std::shared_ptr<ARDOUR::ExportFilename> FilenamePtr;
 	class FilePage;
 
 	ManagerPtr        profile_manager;
@@ -96,6 +96,7 @@ private:
 		void update_example_filename();
 
 		void update_analysis_button ();
+		void update_reimport_button ();
 		void update_soundcloud_upload_button ();
 
 		ARDOUR::ExportProfileManager::FormatStatePtr   get_format_state () const { return format_state; }
@@ -108,6 +109,7 @@ private:
 		void update_tab_label ();
 		void critical_selection_changed ();
 		void analysis_changed ();
+		void reimport_changed ();
 		void soundcloud_upload_changed ();
 
 		ARDOUR::ExportProfileManager::FormatStatePtr   format_state;
@@ -127,6 +129,7 @@ private:
 
 		Gtk::CheckButton        soundcloud_upload_button;
 		Gtk::CheckButton        analysis_button;
+		Gtk::CheckButton        reimport_button;
 		Gtk::HBox               tab_widget;
 		Gtk::Label              tab_label;
 		Gtk::Alignment          tab_close_alignment;
@@ -136,6 +139,7 @@ private:
 
 		sigc::connection        soundcloud_button_connection;
 		sigc::connection        analysis_button_connection;
+		sigc::connection        reimport_button_connection;
 	};
 };
 

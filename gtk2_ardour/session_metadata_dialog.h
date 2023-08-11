@@ -23,6 +23,8 @@
 #ifndef __session_metadata_dialog_h__
 #define __session_metadata_dialog_h__
 
+#include <memory>
+
 #include "ardour_dialog.h"
 
 #ifdef interface
@@ -41,15 +43,13 @@
 #include <gtkmm/treemodel.h>
 #include <gtkmm/treeview.h>
 
-#include <boost/shared_ptr.hpp>
-
 #include <string>
 #include <list>
 
 #include "ardour/session_metadata.h"
 
 class MetadataField;
-typedef boost::shared_ptr<MetadataField> MetadataPtr;
+typedef std::shared_ptr<MetadataField> MetadataPtr;
 
 /// Wraps a metadata field to be used in a GUI
 class MetadataField
@@ -270,7 +270,7 @@ private:
 
 /// Metadata dialog interface
 /**
- * The DataSets are initalized in this class so that all
+ * The DataSets are initialized in this class so that all
  * Dialogs have the same sets of data in the same order.
  */
 template <typename DataSet>
@@ -291,7 +291,7 @@ protected:
 	void warn_user (std::string const & string);
 
 	typedef std::list<Gtk::Widget *> WidgetList;
-	typedef boost::shared_ptr<WidgetList> WidgetListPtr;
+	typedef std::shared_ptr<WidgetList> WidgetListPtr;
 	typedef Gtk::Widget & (DataSet::*WidgetFunc) ();
 
 	/// Returns list of widgets gathered by calling f for each data set
@@ -310,7 +310,7 @@ private:
 	void init_people_data ();
 	void init_school_data ();
 
-	typedef boost::shared_ptr<SessionMetadataSet> DataSetPtr;
+	typedef std::shared_ptr<SessionMetadataSet> DataSetPtr;
 	typedef std::list<DataSetPtr> DataSetList;
 	DataSetList data_list;
 

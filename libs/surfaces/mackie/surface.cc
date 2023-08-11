@@ -30,6 +30,8 @@
 
 #include <glibmm/convert.h>
 
+#include "pbd/debug.h"
+
 #include "midi++/port.h"
 
 #include "ardour/audioengine.h"
@@ -204,7 +206,7 @@ Surface::~Surface ()
 }
 
 bool
-Surface::connection_handler (boost::weak_ptr<ARDOUR::Port>, std::string name1, boost::weak_ptr<ARDOUR::Port>, std::string name2, bool yn)
+Surface::connection_handler (std::weak_ptr<ARDOUR::Port>, std::string name1, std::weak_ptr<ARDOUR::Port>, std::string name2, bool yn)
 {
 	if (!_port) {
 		return false;
@@ -273,7 +275,7 @@ Surface::connection_handler (boost::weak_ptr<ARDOUR::Port>, std::string name1, b
 }
 
 XMLNode&
-Surface::get_state()
+Surface::get_state() const
 {
 	XMLNode* node = new XMLNode (X_("Surface"));
 	node->set_property (X_("name"), _name);
@@ -410,6 +412,33 @@ Surface::master_monitor_may_have_changed ()
 	}
 }
 
+bool
+Surface::master_stripable_is_master_monitor ()
+{
+	if (_master_stripable == _mcp.get_session().monitor_out())
+	{
+		return true;
+	}
+	return false;
+}
+
+void
+Surface::toggle_master_monitor ()
+{
+	if(master_stripable_is_master_monitor())
+	{
+		_master_stripable = _mcp.get_session().master_out();
+	} else if (_mcp.get_session().monitor_out() != 0)
+	{
+		_master_stripable = _mcp.get_session().monitor_out();
+	} else { return; }
+
+	_master_fader->set_control (_master_stripable->gain_control());
+	_master_stripable->gain_control()->Changed.connect (master_connection, MISSING_INVALIDATOR, boost::bind (&Surface::master_gain_changed, this), ui_context());
+	_last_master_gain_written = FLT_MAX;
+	master_gain_changed ();
+}
+
 void
 Surface::setup_master ()
 {
@@ -419,7 +448,7 @@ Surface::setup_master ()
 
 	if (!_master_stripable) {
 		if (_master_fader) {
-			_master_fader->set_control (boost::shared_ptr<AutomationControl>());
+			_master_fader->set_control (std::shared_ptr<AutomationControl>());
 		}
 		master_connection.disconnect ();
 		return;
@@ -440,14 +469,13 @@ Surface::setup_master ()
 		_master_fader = dynamic_cast<Fader*> (Fader::factory (*this, device_info.strip_cnt(), "master", *master_group));
 
 		GlobalButtonInfo master_button = device_info.get_global_button(Button::MasterFaderTouch);
-		Button* bb = dynamic_cast<Button*> (Button::factory (
-			                                    *this,
-			                                    Button::MasterFaderTouch,
-			                                    master_button.id,
-			                                    master_button.label,
-			                                    *(group_it->second)
-			                                    ));
-
+		DEBUG_RESULT_CAST (Button*, bb, dynamic_cast<Button*>, (Button::factory (
+			                                                        *this,
+			                                                        Button::MasterFaderTouch,
+			                                                        master_button.id,
+			                                                        master_button.label,
+			                                                        *(group_it->second)
+			                                                        )));
 		DEBUG_TRACE (DEBUG::MackieControl, string_compose ("surface %1 Master Fader new button BID %2 id %3\n",
 		                                                   number(), Button::MasterFaderTouch, bb->id()));
 	} else {
@@ -472,7 +500,7 @@ Surface::master_gain_changed ()
 		return;
 	}
 
-	boost::shared_ptr<AutomationControl> ac = _master_fader->control();
+	std::shared_ptr<AutomationControl> ac = _master_fader->control();
 	if (!ac) {
 		return;
 	}
@@ -580,7 +608,7 @@ Surface::master_display (uint32_t line_number, const std::string& line)
 	// offset (0 to 0x37 first line, 0x38 to 0x6f for second line)
 	retval << (49 + (line_number * 0x38));	// 9th position
 
-	// ascii data to display. @param line is UTF-8
+	// ascii data to display. `line` is UTF-8
 	string ascii = Glib::convert_with_fallback (line, "UTF-8", "ISO-8859-1", "_");
 	string::size_type len = ascii.length();
 	if (len > 6) {
@@ -1155,12 +1183,17 @@ Surface::update_strip_selection ()
 }
 
 void
-Surface::map_stripables (const vector<boost::shared_ptr<Stripable> >& stripables)
+Surface::map_stripables (const vector<std::shared_ptr<Stripable> >& stripables)
 {
-	vector<boost::shared_ptr<Stripable> >::const_iterator r;
+	vector<std::shared_ptr<Stripable> >::const_iterator r;
 	Strips::iterator s = strips.begin();
 
 	DEBUG_TRACE (DEBUG::MackieControl, string_compose ("Mapping %1 stripables to %2 strips\n", stripables.size(), strips.size()));
+
+	
+	bool xtouch = _mcp.device_info().is_xtouch();
+	XTouchColors colors[] { Off, Off, Off, Off, Off, Off, Off, Off };
+	uint8_t i = 0;
 
 	for (r = stripables.begin(); r != stripables.end() && s != strips.end(); ++s) {
 
@@ -1170,14 +1203,20 @@ Surface::map_stripables (const vector<boost::shared_ptr<Stripable> >& stripables
 		*/
 
 		if (!(*s)->locked()) {
+			if(xtouch){
+				colors[i] = static_cast<XTouchColors> (convert_color_to_xtouch_value((*r)->presentation_info().color()));
+				++i;
+			}
 			(*s)->set_stripable (*r);
 			++r;
 		}
 	}
-
 	for (; s != strips.end(); ++s) {
 		DEBUG_TRACE (DEBUG::MackieControl, string_compose ("strip %1 being set to null stripable\n", (*s)->index()));
-		(*s)->set_stripable (boost::shared_ptr<Stripable>());
+		(*s)->set_stripable (std::shared_ptr<Stripable>());
+	}
+	if(xtouch){
+		_port->write (display_colors_on_xtouch(colors)); //write colors to strips for xtouch
 	}
 }
 
@@ -1302,11 +1341,6 @@ Surface::update_view_mode_display (bool with_helpful_text)
 		id = Button::MidiTracks;
 		text = _("MIDI Tracks");
 		break;
-	case MackieControlProtocol::Plugins:
-		show_two_char_display ("PL");
-		id = Button::Plugin;
-		text = _("Plugins");
-		break;
 	case MackieControlProtocol::Busses:
 		show_two_char_display ("BS");
 		id = Button::Busses;
@@ -1321,15 +1355,25 @@ Surface::update_view_mode_display (bool with_helpful_text)
 		id = Button::Aux;
 		text = _("Auxes");
 		break;
-	case MackieControlProtocol::Hidden:
-		show_two_char_display ("HI");
+	case MackieControlProtocol::Outputs:
+		show_two_char_display ("Fb");
 		id = Button::Outputs;
-		text = _("Hidden Tracks");
+		text = _("Foldback Busses");
 		break;
 	case MackieControlProtocol::Selected:
 		show_two_char_display ("SE");
 		id = Button::User;
 		text = _("Selected Tracks");
+		break;
+	case MackieControlProtocol::AudioInstr:
+		show_two_char_display ("IS");
+		id = Button::AudioInstruments;
+		text = _("VCAs");
+		break;
+	case MackieControlProtocol::Inputs:
+		show_two_char_display ("CU");
+		id = Button::Inputs;
+		text = _("Cue Tracks");
 		break;
 	default:
 		break;
@@ -1344,6 +1388,9 @@ Surface::update_view_mode_display (bool with_helpful_text)
 	view_mode_buttons.push_back (Button::Aux);
 	view_mode_buttons.push_back (Button::Outputs);
 	view_mode_buttons.push_back (Button::User);
+	view_mode_buttons.push_back (Button::Inputs);
+	view_mode_buttons.push_back (Button::AudioInstruments);
+	view_mode_buttons.push_back (Button::Outputs);
 
 	if (id >= 0) {
 
@@ -1402,7 +1449,7 @@ Surface::set_jog_mode (JogWheel::Mode m)
 }
 
 bool
-Surface::stripable_is_locked_to_strip (boost::shared_ptr<Stripable> stripable) const
+Surface::stripable_is_locked_to_strip (std::shared_ptr<Stripable> stripable) const
 {
 	for (Strips::const_iterator s = strips.begin(); s != strips.end(); ++s) {
 		if ((*s)->stripable() == stripable && (*s)->locked()) {
@@ -1413,7 +1460,7 @@ Surface::stripable_is_locked_to_strip (boost::shared_ptr<Stripable> stripable) c
 }
 
 bool
-Surface::stripable_is_mapped (boost::shared_ptr<Stripable> stripable) const
+Surface::stripable_is_mapped (std::shared_ptr<Stripable> stripable) const
 {
 	for (Strips::const_iterator s = strips.begin(); s != strips.end(); ++s) {
 		if ((*s)->stripable() == stripable) {
@@ -1538,7 +1585,7 @@ Surface::display_line (string const& msg, int line_num)
 
 	} else {
 
-		/* ascii data to display. @param msg is UTF-8 which is not legal. */
+		/* ascii data to display. @p msg is UTF-8 which is not legal. */
 		string ascii = Glib::convert_with_fallback (msg, "UTF-8", "ISO-8859-1", "_");
 		string::size_type len = ascii.length();
 
@@ -1558,7 +1605,7 @@ Surface::display_line (string const& msg, int line_num)
 	return midi_msg;
 }
 
-/** display @param msg on the 55x2 screen for @param msecs milliseconds
+/** display @p msg on the 55x2 screen for @p msecs milliseconds
  *
  *  @param msg is assumed to be UTF-8 encoded, and will be converted
  *  to ASCII with an underscore as fallback character before being
@@ -1590,5 +1637,81 @@ Surface::display_message_for (string const& msg, uint64_t msecs)
 
 	for (Strips::const_iterator s = strips.begin(); s != strips.end(); ++s) {
 		(*s)->block_screen_display_for (msecs);
+	}
+}
+ 
+/** display @p color_values on the 8 scribble strips of the X-Touch
+ *
+ *  @param color_values is assumed to be an array with a color value for each of the 8 scribble strips
+*/
+MidiByteArray
+Surface::display_colors_on_xtouch (const XTouchColors color_values[]) const
+{
+	MidiByteArray midi_msg;
+	midi_msg << sysex_hdr ();
+	midi_msg << 0x72;
+	
+	uint8_t displaycount = 8;
+	
+	for (uint8_t i = 0; i < displaycount; ++i) {
+		midi_msg << color_values[i];
+	}
+	
+	midi_msg << MIDI::eox;
+	
+	return midi_msg;
+}
+
+/** takes trackcolor in 0xRRGGBBAA (Red, Green, Blue, Alpha) and converts it to suitable xtouch colors
+ * return value can be casted to enum XTouchColor
+*/
+uint8_t
+Surface::convert_color_to_xtouch_value (uint32_t color) const
+{
+
+	uint8_t red = color >> 24;
+	uint8_t green = (color >> 16) & 0xff;
+	uint8_t blue = (color >> 8) & 0xff;
+	
+	uint8_t max = red;
+	if (max < green) {
+		max = green;
+	}
+	if (max < blue) {
+		max = blue;
+	}
+	
+	if (max != 0) {
+		
+		//set the highest value to 0xFF to be brightness independent
+		
+		float norm = 255.0/max;
+		red = static_cast<uint8_t> (red*norm);
+		green = static_cast<uint8_t> (green*norm);
+		blue = static_cast<uint8_t> (blue*norm);
+		
+		uint8_t xcolor = 0;
+		if (red > 0x7f) {
+		
+			xcolor = xcolor | 0b001;	//lowest bit is red
+			
+		}
+		if (green > 0x7f) {
+		
+			xcolor = xcolor | 0b010;	//second bit is green
+			
+		}
+		if (blue > 0x7f) {
+		
+			xcolor = xcolor | 0b100;	//third bit is blue
+			
+		}
+		
+		return xcolor;
+	
+	} else {
+	
+		return White;				//if it would be black (color = 0x000000) return white, because black means off
+		
 	}
 }

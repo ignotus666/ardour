@@ -30,6 +30,8 @@
 #include <vector>
 #include <boost/enable_shared_from_this.hpp>
 
+#include "temporal/tempo.h"
+
 #include "ardour/plugin.h"
 #include "ardour/plugin_scan_result.h"
 #include "ardour/uri_map.h"
@@ -105,7 +107,7 @@ class LIBARDOUR_API LV2Plugin : public ARDOUR::Plugin, public ARDOUR::Workee
 	const LV2_Feature* const* features () { return _features; }
 
 	std::set<Evoral::Parameter> automatable () const;
-	virtual void set_automation_control (uint32_t, boost::shared_ptr<AutomationControl>);
+	virtual void set_automation_control (uint32_t, std::shared_ptr<AutomationControl>);
 
 	void activate ();
 	void deactivate ();
@@ -131,7 +133,7 @@ class LIBARDOUR_API LV2Plugin : public ARDOUR::Plugin, public ARDOUR::Workee
 
 	uint32_t designated_bypass_port ();
 
-	boost::shared_ptr<ScalePoints>
+	std::shared_ptr<ScalePoints>
 	get_scale_points(uint32_t port_index) const;
 
 	void set_insert_id(PBD::ID id);
@@ -143,6 +145,9 @@ class LIBARDOUR_API LV2Plugin : public ARDOUR::Plugin, public ARDOUR::Workee
 
 	bool has_editor () const;
 	bool has_message_output () const;
+
+	void add_slave (std::shared_ptr<Plugin>, bool);
+	void remove_slave (std::shared_ptr<Plugin>);
 
 	bool write_from_ui(uint32_t       index,
 	                   uint32_t       protocol,
@@ -262,15 +267,15 @@ class LIBARDOUR_API LV2Plugin : public ARDOUR::Plugin, public ARDOUR::Workee
 			, guard (other.guard)
 		{ }
 
-		AutomationCtrl (boost::shared_ptr<ARDOUR::AutomationControl> c)
+		AutomationCtrl (std::shared_ptr<ARDOUR::AutomationControl> c)
 			: ac (c)
 			, guard (false)
 		{ }
-		boost::shared_ptr<ARDOUR::AutomationControl> ac;
+		std::shared_ptr<ARDOUR::AutomationControl> ac;
 		bool guard;
 	};
 
-	typedef boost::shared_ptr<AutomationCtrl> AutomationCtrlPtr;
+	typedef std::shared_ptr<AutomationCtrl> AutomationCtrlPtr;
 	typedef std::map<uint32_t, AutomationCtrlPtr> AutomationCtrlMap;
 	AutomationCtrlMap _ctrl_map;
 	AutomationCtrlPtr get_automation_control (uint32_t);
@@ -298,6 +303,9 @@ class LIBARDOUR_API LV2Plugin : public ARDOUR::Plugin, public ARDOUR::Workee
 	PBD::RingBuffer<uint8_t>* _from_ui;
 
 	Glib::Threads::Mutex _work_mutex;
+
+	Glib::Threads::Mutex                   _slave_lock;
+	std::set<std::shared_ptr<LV2Plugin>> _slaves;
 
 #ifdef LV2_EXTENDED
 	static void queue_draw (LV2_Inline_Display_Handle);
@@ -330,6 +338,7 @@ class LIBARDOUR_API LV2Plugin : public ARDOUR::Plugin, public ARDOUR::Workee
 	LV2_Feature    _work_schedule_feature;
 	LV2_Feature    _options_feature;
 	LV2_Feature    _def_state_feature;
+	LV2_Feature    _block_length_feature;
 #ifdef LV2_EXTENDED
 	LV2_Feature    _queue_draw_feature;
 	LV2_Feature    _midnam_feature;
@@ -382,10 +391,12 @@ class LIBARDOUR_API LV2Plugin : public ARDOUR::Plugin, public ARDOUR::Workee
 	void do_remove_preset (std::string);
 	void find_presets ();
 	void add_state (XMLNode *) const;
+
+	Temporal::GridIterator grid_iterator;
 };
 
 
-class LIBARDOUR_API LV2PluginInfo : public PluginInfo , public boost::enable_shared_from_this<ARDOUR::LV2PluginInfo> {
+class LIBARDOUR_API LV2PluginInfo : public PluginInfo , public std::enable_shared_from_this<ARDOUR::LV2PluginInfo> {
 public:
 	LV2PluginInfo (const char* plugin_uri);
 	~LV2PluginInfo ();
@@ -407,7 +418,7 @@ private:
 	bool _is_analyzer;
 };
 
-typedef boost::shared_ptr<LV2PluginInfo> LV2PluginInfoPtr;
+typedef std::shared_ptr<LV2PluginInfo> LV2PluginInfoPtr;
 
 } // namespace ARDOUR
 

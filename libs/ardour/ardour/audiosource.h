@@ -23,9 +23,9 @@
 #ifndef __ardour_audio_source_h__
 #define __ardour_audio_source_h__
 
-#include <boost/shared_ptr.hpp>
+#include <memory>
+
 #include <boost/shared_array.hpp>
-#include <boost/enable_shared_from_this.hpp>
 
 #include <time.h>
 
@@ -51,7 +51,7 @@ class LIBARDOUR_API AudioSource : virtual public Source, public ARDOUR::AudioRea
 	samplecnt_t readable_length_samples() const { return _length.samples(); }
 	virtual uint32_t n_channels()      const { return 1; }
 
-	void       update_length (timecnt_t const & cnt);
+	void       update_length (timepos_t const & dur);
 
 	virtual samplecnt_t available_peaks (double zoom) const;
 
@@ -60,7 +60,7 @@ class LIBARDOUR_API AudioSource : virtual public Source, public ARDOUR::AudioRea
 
 	virtual float sample_rate () const = 0;
 
-	virtual void mark_streaming_write_completed (const Lock& lock);
+	virtual void mark_streaming_write_completed (const WriterLock& lock);
 
 	virtual bool can_truncate_peaks() const { return true; }
 
@@ -73,7 +73,7 @@ class LIBARDOUR_API AudioSource : virtual public Source, public ARDOUR::AudioRea
 	mutable PBD::Signal0<void>  PeaksReady;
 	mutable PBD::Signal2<void,samplepos_t,samplepos_t>  PeakRangeReady;
 
-	XMLNode& get_state ();
+	XMLNode& get_state () const;
 	int set_state (const XMLNode&, int version);
 
 	int rename_peakfile (std::string newpath);

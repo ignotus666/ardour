@@ -224,7 +224,7 @@ VideoTimeLine::set_state (const XMLNode& node, int /*version*/)
 }
 
 XMLNode&
-VideoTimeLine::get_state ()
+VideoTimeLine::get_state () const
 {
 	XMLNode* node = new XMLNode (X_("Videotimeline"));
 	node->set_property (X_("VideoOffset"), video_offset_p);
@@ -329,7 +329,7 @@ VideoTimeLine::update_video_timeline()
 		/* high-zoom: need space between successive video-frames */
 		vtl_dist = rint(apv);
 	} else {
-		/* continous timeline: skip video-frames */
+		/* continuous timeline: skip video-frames */
 		vtl_dist = ceil(display_vframe_width * samples_per_pixel / apv) * apv;
 	}
 
@@ -723,7 +723,7 @@ VideoTimeLine::find_xjadeo () {
 	}
 
 	if (found_xjadeo ()) {
-		ARDOUR::SystemExec version_check(_xjadeo_bin, X_("--version"));
+		ARDOUR::SystemExec version_check (_xjadeo_bin, X_("--version"), true);
 		xjadeo_version = "";
 		version_check.ReadStdout.connect_same_thread (*this, boost::bind (&VideoTimeLine::xjadeo_readversion, this, _1 ,_2));
 		version_check.Terminated.connect_same_thread (*this, boost::bind (&VideoTimeLine::xjadeo_readversion, this, "\n" ,1));
@@ -756,6 +756,9 @@ VideoTimeLine::find_xjadeo () {
 				if (v_major >= 1) v_ok = true;
 				else if (v_major == 0 && v_minor >= 8) v_ok = true;
 				else if (v_major == 0 && v_minor >= 7 && v_micro >= 7) v_ok = true;
+			}
+			if (v_ok) {
+				info << string_compose ("xjadeo version: %1.%2.%3", v_major, v_minor, v_micro) << endmsg;
 			}
 		}
 		if (!v_ok) {
@@ -792,7 +795,7 @@ VideoTimeLine::find_harvid () {
 	if (harvid_bin.empty ()) {
 		return;
 	}
-	ARDOUR::SystemExec version_check(harvid_bin, X_("--version"));
+	ARDOUR::SystemExec version_check (harvid_bin, X_("--version"), true);
 	harvid_version = "";
 	version_check.ReadStdout.connect_same_thread (*this, boost::bind (&VideoTimeLine::harvid_readversion, this, _1 ,_2));
 	version_check.Terminated.connect_same_thread (*this, boost::bind (&VideoTimeLine::harvid_readversion, this, "\n" ,1));

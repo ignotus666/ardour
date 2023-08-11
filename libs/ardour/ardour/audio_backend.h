@@ -60,7 +60,7 @@ struct LIBARDOUR_API AudioBackendInfo {
 	 * Returns a valid shared_ptr to the object if successfull,
 	 * or a "null" shared_ptr otherwise.
 	 */
-	boost::shared_ptr<AudioBackend> (*factory) (AudioEngine&);
+	std::shared_ptr<AudioBackend> (*factory) (AudioEngine&);
 
 	/** Return true if the underlying mechanism/API has been
 	 * configured and does not need (re)configuration in order
@@ -561,10 +561,6 @@ public:
 	virtual uint32_t systemic_output_latency () const                       = 0;
 	virtual uint32_t systemic_midi_input_latency (std::string const) const  = 0;
 	virtual uint32_t systemic_midi_output_latency (std::string const) const = 0;
-
-	/* defaults as reported by device driver */
-	virtual uint32_t systemic_hw_input_latency () const { return 0; }
-	virtual uint32_t systemic_hw_output_latency () const { return 0; }
 
 	virtual uint32_t period_size () const { return 0; }
 

@@ -73,48 +73,38 @@ AutomationStreamView::~AutomationStreamView ()
 
 
 RegionView*
-AutomationStreamView::add_region_view_internal (boost::shared_ptr<Region> region, bool wait_for_data, bool /*recording*/)
+AutomationStreamView::add_region_view_internal (std::shared_ptr<Region> region, bool /*wait_for_data*/, bool /*recording*/)
 {
 	if (!region) {
 		return 0;
 	}
 
-	if (wait_for_data) {
-		boost::shared_ptr<MidiRegion> mr = boost::dynamic_pointer_cast<MidiRegion>(region);
-		if (mr) {
-			Source::Lock lock(mr->midi_source()->mutex());
-			mr->midi_source()->load_model(lock);
-		}
-	}
-
-	const boost::shared_ptr<AutomationControl> control = boost::dynamic_pointer_cast<AutomationControl> (
+	const std::shared_ptr<AutomationControl> control = std::dynamic_pointer_cast<AutomationControl> (
 		region->control (_automation_view.parameter(), true)
 		);
 
-	boost::shared_ptr<AutomationList> list;
+	std::shared_ptr<AutomationList> list;
 	if (control) {
-		list = boost::dynamic_pointer_cast<AutomationList>(control->list());
+		list = std::dynamic_pointer_cast<AutomationList>(control->list());
 		if (control->list() && !list) {
 			error << _("unable to display automation region for control without list") << endmsg;
 			return 0;
 		}
 	}
 
-	AutomationRegionView *region_view;
-	std::list<RegionView *>::iterator i;
+	RegionView *region_view;
 
-	for (i = region_views.begin(); i != region_views.end(); ++i) {
-		if ((*i)->region() == region) {
+	for (auto const & rv : region_views) {
+		if (rv->region() == region) {
 
 			/* great. we already have an AutomationRegionView for this Region. use it again. */
-			AutomationRegionView* arv = dynamic_cast<AutomationRegionView*>(*i);;
+			AutomationRegionView* arv = dynamic_cast<AutomationRegionView*>(rv);;
 
 			if (arv->line()) {
 				arv->line()->set_list (list);
 			}
-			(*i)->set_valid (true);
-			(*i)->enable_display (wait_for_data);
-			display_region(arv);
+			rv->set_valid (true);
+			display_region (arv);
 
 			return 0;
 		}
@@ -131,20 +121,17 @@ AutomationStreamView::add_region_view_internal (boost::shared_ptr<Region> region
 
 	/* follow global waveform setting */
 
-	if (wait_for_data) {
-		region_view->enable_display(true);
-		// region_view->midi_region()->midi_source(0)->load_model();
-	}
-
 	display_region (region_view);
 
 	/* catch regionview going away */
-	region->DropReferences.connect (*this, invalidator (*this), boost::bind (&AutomationStreamView::remove_region_view, this, boost::weak_ptr<Region>(region)), gui_context());
+	region->DropReferences.connect (*this, invalidator (*this), boost::bind (&AutomationStreamView::remove_region_view, this, std::weak_ptr<Region>(region)), gui_context());
 
 	/* setup automation state for this region */
-	boost::shared_ptr<AutomationLine> line = region_view->line ();
-	if (line && line->the_list()) {
-		line->the_list()->set_automation_state (automation_state ());
+	if (_automation_view.parameter().type() != MidiVelocityAutomation) {
+		std::shared_ptr<AutomationLine> line = dynamic_cast<AutomationRegionView*>(region_view)->line ();
+		if (line && line->the_list()) {
+			line->the_list()->set_automation_state (automation_state ());
+		}
 	}
 
 	RegionViewAdded (region_view);
@@ -153,9 +140,11 @@ AutomationStreamView::add_region_view_internal (boost::shared_ptr<Region> region
 }
 
 void
-AutomationStreamView::display_region(AutomationRegionView* region_view)
+AutomationStreamView::display_region (RegionView* region_view)
 {
-	region_view->line().reset();
+	if (_automation_view.parameter().type() != MidiVelocityAutomation) {
+		dynamic_cast<AutomationRegionView*>(region_view)->line().reset();
+	}
 }
 
 void
@@ -166,9 +155,9 @@ AutomationStreamView::set_automation_state (AutoState state)
 	if (region_views.empty()) {
 		_pending_automation_state = state;
 	} else {
-		list<boost::shared_ptr<AutomationLine> > lines = get_lines ();
+		list<std::shared_ptr<AutomationLine> > lines = get_lines ();
 
-		for (list<boost::shared_ptr<AutomationLine> >::iterator i = lines.begin(); i != lines.end(); ++i) {
+		for (list<std::shared_ptr<AutomationLine> >::iterator i = lines.begin(); i != lines.end(); ++i) {
 			if ((*i)->the_list()) {
 				(*i)->the_list()->set_automation_state (state);
 			}
@@ -179,10 +168,12 @@ AutomationStreamView::set_automation_state (AutoState state)
 void
 AutomationStreamView::redisplay_track ()
 {
+	vector<RegionView::DisplaySuspender> vds;
 	// Flag region views as invalid and disable drawing
 	for (list<RegionView*>::iterator i = region_views.begin(); i != region_views.end(); ++i) {
 		(*i)->set_valid (false);
-		(*i)->enable_display(false);
+		vds.push_back (RegionView::DisplaySuspender (**i));
+
 	}
 
 	// Add and display region views, and flag them as valid
@@ -219,7 +210,7 @@ AutomationStreamView::automation_state () const
 		return _pending_automation_state;
 	}
 
-	boost::shared_ptr<AutomationLine> line = ((AutomationRegionView*) region_views.front())->line ();
+	std::shared_ptr<AutomationLine> line = ((AutomationRegionView*) region_views.front())->line ();
 	if (!line || !line->the_list()) {
 		return Off;
 	}
@@ -230,9 +221,9 @@ AutomationStreamView::automation_state () const
 bool
 AutomationStreamView::has_automation () const
 {
-	list<boost::shared_ptr<AutomationLine> > lines = get_lines ();
+	list<std::shared_ptr<AutomationLine> > lines = get_lines ();
 
-	for (list<boost::shared_ptr<AutomationLine> >::iterator i = lines.begin(); i != lines.end(); ++i) {
+	for (list<std::shared_ptr<AutomationLine> >::iterator i = lines.begin(); i != lines.end(); ++i) {
 		if ((*i)->npoints() > 0) {
 			return true;
 		}
@@ -247,9 +238,9 @@ AutomationStreamView::has_automation () const
 void
 AutomationStreamView::set_interpolation (AutomationList::InterpolationStyle s)
 {
-	list<boost::shared_ptr<AutomationLine> > lines = get_lines ();
+	list<std::shared_ptr<AutomationLine> > lines = get_lines ();
 
-	for (list<boost::shared_ptr<AutomationLine> >::iterator i = lines.begin(); i != lines.end(); ++i) {
+	for (list<std::shared_ptr<AutomationLine> >::iterator i = lines.begin(); i != lines.end(); ++i) {
 		(*i)->the_list()->set_interpolation (s);
 	}
 }
@@ -272,9 +263,9 @@ AutomationStreamView::interpolation () const
 void
 AutomationStreamView::clear ()
 {
-	list<boost::shared_ptr<AutomationLine> > lines = get_lines ();
+	list<std::shared_ptr<AutomationLine> > lines = get_lines ();
 
-	for (list<boost::shared_ptr<AutomationLine> >::iterator i = lines.begin(); i != lines.end(); ++i) {
+	for (list<std::shared_ptr<AutomationLine> >::iterator i = lines.begin(); i != lines.end(); ++i) {
 		(*i)->clear ();
 	}
 }
@@ -300,17 +291,17 @@ AutomationStreamView::get_selectables (timepos_t const & start, timepos_t const 
 void
 AutomationStreamView::set_selected_points (PointSelection& ps)
 {
-	list<boost::shared_ptr<AutomationLine> > lines = get_lines ();
+	list<std::shared_ptr<AutomationLine> > lines = get_lines ();
 
-	for (list<boost::shared_ptr<AutomationLine> >::iterator i = lines.begin(); i != lines.end(); ++i) {
+	for (list<std::shared_ptr<AutomationLine> >::iterator i = lines.begin(); i != lines.end(); ++i) {
 		(*i)->set_selected_points (ps);
 	}
 }
 
-list<boost::shared_ptr<AutomationLine> >
+list<std::shared_ptr<AutomationLine> >
 AutomationStreamView::get_lines () const
 {
-	list<boost::shared_ptr<AutomationLine> > lines;
+	list<std::shared_ptr<AutomationLine> > lines;
 
 	for (list<RegionView*>::const_iterator i = region_views.begin(); i != region_views.end(); ++i) {
 		AutomationRegionView* arv = dynamic_cast<AutomationRegionView*> (*i);
@@ -326,7 +317,7 @@ bool
 AutomationStreamView::paste (timepos_t const &                         pos,
                              unsigned                                  paste_count,
                              float                                     times,
-                             boost::shared_ptr<ARDOUR::AutomationList> alist)
+                             std::shared_ptr<ARDOUR::AutomationList> alist)
 {
 	/* XXX: not sure how best to pick this; for now, just use the last region which starts before pos */
 
@@ -345,7 +336,7 @@ AutomationStreamView::paste (timepos_t const &                         pos,
 		prev = i;
 	}
 
-	boost::shared_ptr<Region> r = (*prev)->region ();
+	std::shared_ptr<Region> r = (*prev)->region ();
 
 	/* If *prev doesn't cover pos, it's no good */
 	if (r->position() > pos || ((r->position() + r->length()) < pos)) {

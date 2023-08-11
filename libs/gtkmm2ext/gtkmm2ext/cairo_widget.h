@@ -28,6 +28,7 @@
 #include "gtkmm2ext/visibility.h"
 #include "gtkmm2ext/cairo_canvas.h"
 #include "gtkmm2ext/cairo_theme.h"
+#include "gtkmm2ext/colors.h"
 #include "gtkmm2ext/widget_state.h"
 
 /** A parent class for widgets that are rendered using Cairo.
@@ -40,7 +41,7 @@ public:
 	virtual ~CairoWidget ();
 
 	void set_canvas_widget ();
-	void use_nsglview ();
+	void use_nsglview (bool retina = true);
 	void use_image_surface (bool yn = true);
 
 	/* swizzle Gtk::Widget methods for Canvas::Widget */
@@ -89,6 +90,7 @@ public:
 
 
 	static void set_source_rgb_a( cairo_t* cr, Gdk::Color, float a=1.0 );
+	static void set_source_rgb_a( cairo_t* cr, Gtkmm2ext::Color, float a=1.0 );
 
 	/* set_focus_handler() will cause all button-press events on any
 	   CairoWidget to invoke this slot/functor/function/method/callback.

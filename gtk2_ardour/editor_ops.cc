@@ -35,7 +35,6 @@
 #include <cstdlib>
 #include <cmath>
 #include <string>
-#include <limits>
 #include <map>
 #include <set>
 
@@ -61,6 +60,7 @@
 #include "ardour/audio_track.h"
 #include "ardour/audioregion.h"
 #include "ardour/boost_debug.h"
+#include "ardour/clip_library.h"
 #include "ardour/dB.h"
 #include "ardour/location.h"
 #include "ardour/midi_region.h"
@@ -83,15 +83,12 @@
 #include "ardour/triggerbox.h"
 #include "ardour/vca_manager.h"
 
-#include "canvas/canvas.h"
-
 #include "actions.h"
 #include "ardour_message.h"
 #include "ardour_ui.h"
 #include "audio_region_view.h"
 #include "audio_streamview.h"
 #include "audio_time_axis.h"
-#include "automation_region_view.h"
 #include "automation_time_axis.h"
 #include "control_point.h"
 #include "debug.h"
@@ -110,19 +107,18 @@
 #include "midi_region_view.h"
 #include "mixer_ui.h"
 #include "mixer_strip.h"
-#include "mouse_cursors.h"
 #include "normalize_dialog.h"
 #include "note.h"
 #include "paste_context.h"
 #include "patch_change_dialog.h"
 #include "quantize_dialog.h"
 #include "region_gain_line.h"
-#include "rgb_macros.h"
 #include "route_time_axis.h"
 #include "selection.h"
 #include "selection_templates.h"
 #include "streamview.h"
 #include "strip_silence_dialog.h"
+#include "tempo_map_change.h"
 #include "time_axis_view.h"
 #include "timers.h"
 #include "transpose_dialog.h"
@@ -166,10 +162,6 @@ Editor::undo (uint32_t n)
 
 	if (_session) {
 		_session->undo (n);
-		if (_session->undo_depth() == 0) {
-			undo_action->set_sensitive(false);
-		}
-		redo_action->set_sensitive(true);
 		begin_selection_op_history ();
 	}
 }
@@ -190,11 +182,7 @@ Editor::redo (uint32_t n)
 	paste_count = 0;
 
 	if (_session) {
-	_session->redo (n);
-		if (_session->redo_depth() == 0) {
-			redo_action->set_sensitive(false);
-		}
-		undo_action->set_sensitive(true);
+		_session->redo (n);
 		begin_selection_op_history ();
 	}
 }
@@ -204,19 +192,22 @@ Editor::split_regions_at (timepos_t const & where, RegionSelection& regions)
 {
 	bool frozen = false;
 
-	list<boost::shared_ptr<Playlist> > used_playlists;
+	list<std::shared_ptr<Playlist> > used_playlists;
 	list<RouteTimeAxisView*> used_trackviews;
 
 	if (regions.empty()) {
 		return;
 	}
 
+	/* the Split action will likely create new regions; we want them all assigned to the same region-group */
+	Region::RegionGroupRetainer rgr;
+
 	begin_reversible_command (_("split"));
 
 
 	if (regions.size() == 1) {
 		/* TODO:  if splitting a single region, and snap-to is using
-		 region boundaries, mabye we shouldn't pay attention to them? */
+		 region boundaries, maybe we shouldn't pay attention to them? */
 	} else {
 		frozen = true;
 		EditorFreeze(); /* Emit Signal */
@@ -238,7 +229,7 @@ Editor::split_regions_at (timepos_t const & where, RegionSelection& regions)
 		tmp = a;
 		++tmp;
 
-		boost::shared_ptr<Playlist> pl = (*a)->region()->playlist();
+		std::shared_ptr<Playlist> pl = (*a)->region()->playlist();
 
 		if (!pl) {
 			a = tmp;
@@ -278,7 +269,7 @@ Editor::split_regions_at (timepos_t const & where, RegionSelection& regions)
 	}
 
 	while (used_playlists.size() > 0) {
-		list <boost::shared_ptr<Playlist > >::iterator i = used_playlists.begin();
+		list <std::shared_ptr<Playlist > >::iterator i = used_playlists.begin();
 		(*i)->thaw();
 		used_playlists.pop_front();
 	}
@@ -354,12 +345,18 @@ Editor::move_range_selection_start_or_end_to_region_boundary (bool move_end, boo
 	int dir = next ? 1 : -1;
 
 	/* so we don't find the current region again */
-	if (dir > 0 || pos.is_positive()) {
-		pos.increment ();
+	if (dir > 0) {
+		pos = pos.increment ();
+	} else {
+		if (!pos.is_zero()) {
+			pos = pos.decrement ();
+		} else {
+			return;
+		}
 	}
 
 	timepos_t const target = get_region_boundary (pos, dir, true, false);
-	if (target.is_negative ()) {
+	if (target == timepos_t::max (target.time_domain())) {
 		return;
 	}
 
@@ -418,7 +415,7 @@ Editor::nudge_forward (bool next, bool force_playhead)
 		begin_reversible_command (_("nudge regions forward"));
 
 		for (RegionSelection::iterator i = rs.begin(); i != rs.end(); ++i) {
-			boost::shared_ptr<Region> r ((*i)->region());
+			std::shared_ptr<Region> r ((*i)->region());
 
 			distance = get_nudge_distance (r->position(), next_distance);
 
@@ -506,7 +503,7 @@ Editor::nudge_backward (bool next, bool force_playhead)
 		begin_reversible_command (_("nudge regions backward"));
 
 		for (RegionSelection::iterator i = rs.begin(); i != rs.end(); ++i) {
-			boost::shared_ptr<Region> r ((*i)->region());
+			std::shared_ptr<Region> r ((*i)->region());
 
 			distance = get_nudge_distance (r->position(), next_distance);
 
@@ -578,7 +575,7 @@ Editor::nudge_backward (bool next, bool force_playhead)
 		}
 
 	} else {
-
+		distance = get_nudge_distance (timepos_t (playhead_cursor()->current_sample ()), next_distance);
 		if (_playhead_cursor->current_sample () > distance.samples()) {
 			_session->request_locate ((timepos_t (_playhead_cursor->current_sample ()).earlier (distance)).samples());
 		} else {
@@ -601,7 +598,7 @@ Editor::nudge_forward_capture_offset ()
 	samplepos_t const distance = _session->worst_output_latency();
 
 	for (RegionSelection::iterator i = rs.begin(); i != rs.end(); ++i) {
-		boost::shared_ptr<Region> r ((*i)->region());
+		std::shared_ptr<Region> r ((*i)->region());
 
 		r->clear_changes ();
 		r->set_position (r->position() + timecnt_t (distance));
@@ -625,7 +622,7 @@ Editor::nudge_backward_capture_offset ()
 	timepos_t const distance (_session->worst_output_latency());
 
 	for (RegionSelection::iterator i = rs.begin(); i != rs.end(); ++i) {
-		boost::shared_ptr<Region> r ((*i)->region());
+		std::shared_ptr<Region> r ((*i)->region());
 
 		r->clear_changes ();
 
@@ -666,7 +663,7 @@ Editor::sequence_regions ()
 		bool in_command = false;
 
 		for (RegionSelection::iterator i = rs.begin(); i != rs.end(); ++i) {
-			boost::shared_ptr<Region> r ((*i)->region());
+			std::shared_ptr<Region> r ((*i)->region());
 
 			r->clear_changes();
 
@@ -729,7 +726,7 @@ Editor::build_region_boundary_cache ()
 
 	timepos_t pos;
 	vector<RegionPoint> interesting_points;
-	boost::shared_ptr<Region> r;
+	std::shared_ptr<Region> r;
 	TrackViewList tracks;
 	bool at_end = false;
 
@@ -768,7 +765,7 @@ Editor::build_region_boundary_cache ()
 	if (maybe_first_sample) {
 		TrackViewList::const_iterator i;
 		for (i = tlist.begin(); i != tlist.end(); ++i) {
-			boost::shared_ptr<Playlist> pl = (*i)->playlist();
+			std::shared_ptr<Playlist> pl = (*i)->playlist();
 			if (pl && pl->count_regions_at (timepos_t())) {
 				region_boundary_cache.push_back (timepos_t());
 				break;
@@ -850,12 +847,12 @@ Editor::build_region_boundary_cache ()
 	_region_boundary_cache_dirty = false;
 }
 
-boost::shared_ptr<Region>
+std::shared_ptr<Region>
 Editor::find_next_region (timepos_t const & pos, RegionPoint point, int32_t dir, TrackViewList& tracks, TimeAxisView **ontrack)
 {
 	TrackViewList::iterator i;
 	timecnt_t closest = timecnt_t::max (pos.time_domain());
-	boost::shared_ptr<Region> ret;
+	std::shared_ptr<Region> ret;
 	timepos_t rpos;
 
 	timepos_t track_pos;
@@ -863,7 +860,7 @@ Editor::find_next_region (timepos_t const & pos, RegionPoint point, int32_t dir,
 	for (i = tracks.begin(); i != tracks.end(); ++i) {
 
 		timecnt_t distance;
-		boost::shared_ptr<Region> r;
+		std::shared_ptr<Region> r;
 
 		track_pos = pos;
 
@@ -923,7 +920,7 @@ Editor::find_next_region_boundary (timepos_t const & pos, int32_t dir, const Tra
 			continue;
 		}
 
-		d = contender.distance (pos);
+		d = pos.distance (contender).abs();
 
 		if (d < distance) {
 			current_nearest = contender;
@@ -980,11 +977,17 @@ Editor::cursor_to_region_boundary (bool with_selection, int32_t dir)
 	}
 
 	// so we don't find the current region again..
-	if (dir > 0 || pos > 0) {
+	if (dir > 0) {
 		pos = pos.increment();
+	} else {
+		if (!pos.is_zero()) {
+			pos = pos.decrement ();
+		} else {
+			return;
+		}
 	}
 
-	if ((target = get_region_boundary (pos, dir, with_selection, false)) < 0) {
+	if ((target = get_region_boundary (pos, dir, with_selection, false)) == timepos_t::max (target.time_domain())) {
 		return;
 	}
 
@@ -1006,7 +1009,7 @@ Editor::cursor_to_previous_region_boundary (bool with_selection)
 void
 Editor::cursor_to_region_point (EditorCursor* cursor, RegionPoint point, int32_t dir)
 {
-	boost::shared_ptr<Region> r;
+	std::shared_ptr<Region> r;
 	timepos_t pos (cursor->current_sample ());
 
 	if (!_session) {
@@ -1016,8 +1019,15 @@ Editor::cursor_to_region_point (EditorCursor* cursor, RegionPoint point, int32_t
 	TimeAxisView *ontrack = 0;
 
 	// so we don't find the current region again..
-	if (dir > 0 || pos.is_positive())
+	if (dir > 0) {
 		pos = pos.increment();
+	} else {
+		if (!pos.is_zero ()) {
+			pos = pos.decrement ();
+		} else {
+			return;
+		}
+	}
 
 	if (!selection->tracks.empty()) {
 
@@ -1159,11 +1169,17 @@ Editor::selected_marker_to_region_boundary (bool with_selection, int32_t dir)
 	timepos_t pos = loc->start();
 
 	// so we don't find the current region again..
-	if (dir > 0 || pos.is_positive()) {
+	if (dir > 0) {
 		pos = pos.increment();
+	} else {
+		if (!pos.is_zero()) {
+			pos = pos.decrement ();
+		} else {
+			return;
+		}
 	}
 
-	if ((target = get_region_boundary (pos, dir, with_selection, false)) < 0) {
+	if ((target = get_region_boundary (pos, dir, with_selection, false)) == timepos_t::max (target.time_domain())) {
 		return;
 	}
 
@@ -1185,7 +1201,7 @@ Editor::selected_marker_to_previous_region_boundary (bool with_selection)
 void
 Editor::selected_marker_to_region_point (RegionPoint point, int32_t dir)
 {
-	boost::shared_ptr<Region> r;
+	std::shared_ptr<Region> r;
 	timepos_t pos;
 	Location* loc;
 	bool ignored;
@@ -1203,8 +1219,15 @@ Editor::selected_marker_to_region_point (RegionPoint point, int32_t dir)
 	pos = loc->start();
 
 	// so we don't find the current region again..
-	if (dir>0 || pos>0)
-		pos.increment();
+	if (dir > 0) {
+		pos = pos.increment();
+	} else {
+		if (!pos.is_zero()) {
+			pos = pos.decrement ();
+		} else {
+			return;
+		}
+	}
 
 	if (!selection->tracks.empty()) {
 
@@ -2162,7 +2185,7 @@ Editor::temporal_zoom_to_sample (bool coarser, samplepos_t sample)
 		return;
 	}
 
-	/* zoom focus is automatically taken as @param sample when this
+	/* zoom focus is automatically taken as @p sample when this
 	   method is used.
 	*/
 
@@ -2226,6 +2249,7 @@ Editor::add_location_from_selection ()
 	string rangename;
 
 	if (selection->time.empty()) {
+		add_location_from_region();
 		return;
 	}
 
@@ -2233,8 +2257,8 @@ Editor::add_location_from_selection ()
 		return;
 	}
 
-	timepos_t start = selection->time[clicked_selection].start();
-	timepos_t end = selection->time[clicked_selection].end();
+	timepos_t start = selection->time.start_time();
+	timepos_t end = selection->time.end_time();
 
 	_session->locations()->next_available_name(rangename,"selection");
 	if (!choose_new_marker_name(rangename, true)) {
@@ -2320,7 +2344,7 @@ Editor::set_session_end_from_playhead ()
 
 		XMLNode &after = loc->get_state();
 
-		begin_reversible_command (_("Set session start"));
+		begin_reversible_command (_("Set session end"));
 
 		_session->add_command (new MementoCommand<Location>(*loc, &before, &after));
 
@@ -2396,7 +2420,7 @@ Editor::add_locations_from_region ()
 
 	for (RegionSelection::iterator i = rs.begin (); i != rs.end (); ++i) {
 
-		boost::shared_ptr<Region> region = (*i)->region ();
+		std::shared_ptr<Region> region = (*i)->region ();
 
 		Location *location = new Location (*_session, region->position(), region->end(), region->name(), Location::IsRangeMarker);
 
@@ -2430,11 +2454,11 @@ Editor::add_location_from_region ()
 		_session->locations()->next_available_name(markername, "regions");
 	} else {
 		RegionView* rv = *(rs.begin());
-		boost::shared_ptr<Region> region = rv->region();
+		std::shared_ptr<Region> region = rv->region();
 		markername = region->name();
 	}
 
-	if (!choose_new_marker_name(markername)) {
+	if (!choose_new_marker_name(markername, true)) {
 		return;
 	}
 
@@ -2457,7 +2481,7 @@ Editor::jump_forward_to_mark ()
 		return;
 	}
 
-	timepos_t pos = _session->locations()->first_mark_after (timepos_t (_playhead_cursor->current_sample()));
+	timepos_t pos = _session->locations()->first_mark_after (timepos_t (_session->transport_sample()+1));
 
 	if (pos == timepos_t::max (Temporal::AudioTime)) {
 		return;
@@ -2508,15 +2532,17 @@ Editor::set_mark ()
 void
 Editor::clear_markers ()
 {
-	if (_session) {
-		begin_reversible_command (_("clear markers"));
+	if (!_session) {
+		return;
+	}
 
-		XMLNode &before = _session->locations()->get_state();
-		if (_session->locations()->clear_markers ()) {
-			XMLNode &after = _session->locations()->get_state();
-			_session->add_command(new MementoCommand<Locations>(*(_session->locations()), &before, &after));
-			commit_reversible_command ();
-		}
+	begin_reversible_command (_("clear markers"));
+
+	XMLNode &before = _session->locations()->get_state();
+	if (_session->locations()->clear_markers ()) {
+		XMLNode &after = _session->locations()->get_state();
+		_session->add_command(new MementoCommand<Locations>(*(_session->locations()), &before, &after));
+		commit_reversible_command ();
 	} else {
 		abort_reversible_command ();
 	}
@@ -2525,16 +2551,18 @@ Editor::clear_markers ()
 void
 Editor::clear_xrun_markers ()
 {
-	if (_session) {
-		begin_reversible_command (_("clear xrun markers"));
+	if (!_session) {
+		return;
+	}
 
-		XMLNode &before = _session->locations()->get_state();
-		if (_session->locations()->clear_xrun_markers ()) {
-			XMLNode &after = _session->locations()->get_state();
-			_session->add_command(new MementoCommand<Locations>(*(_session->locations()), &before, &after));
+	begin_reversible_command (_("clear xrun markers"));
 
-			commit_reversible_command ();
-		}
+	XMLNode &before = _session->locations()->get_state();
+	if (_session->locations()->clear_xrun_markers ()) {
+		XMLNode &after = _session->locations()->get_state();
+		_session->add_command(new MementoCommand<Locations>(*(_session->locations()), &before, &after));
+
+		commit_reversible_command ();
 	} else {
 		abort_reversible_command ();
 	}
@@ -2543,18 +2571,42 @@ Editor::clear_xrun_markers ()
 void
 Editor::clear_ranges ()
 {
-	if (_session) {
-		begin_reversible_command (_("clear ranges"));
+	if (!_session) {
+		return;
+	}
 
-		XMLNode &before = _session->locations()->get_state();
+	begin_reversible_command (_("clear ranges"));
 
-		if (_session->locations()->clear_ranges ()) {
+	XMLNode &before = _session->locations()->get_state();
 
-			XMLNode &after = _session->locations()->get_state();
-			_session->add_command(new MementoCommand<Locations>(*(_session->locations()), &before, &after));
+	if (_session->locations()->clear_ranges ()) {
 
-			commit_reversible_command ();
-		}
+		XMLNode &after = _session->locations()->get_state();
+		_session->add_command(new MementoCommand<Locations>(*(_session->locations()), &before, &after));
+
+		commit_reversible_command ();
+	} else {
+		abort_reversible_command ();
+	}
+}
+
+void
+Editor::clear_cues ()
+{
+	if (!_session) {
+		return;
+	}
+
+	begin_reversible_command (_("clear cues"));
+
+	XMLNode &before = _session->locations()->get_state();
+
+	if (_session->locations()->clear_cue_markers (0, max_samplepos)) {
+
+		XMLNode &after = _session->locations()->get_state();
+		_session->add_command(new MementoCommand<Locations>(*(_session->locations()), &before, &after));
+
+		commit_reversible_command ();
 	} else {
 		abort_reversible_command ();
 	}
@@ -2599,32 +2651,39 @@ Editor::unhide_ranges ()
 }
 
 /* INSERT/REPLACE */
-
-void
-Editor::insert_source_list_selection (float times)
+std::shared_ptr<Playlist>
+Editor::current_playlist () const
 {
+	std::shared_ptr<Playlist> playlist;
 	RouteTimeAxisView *tv = 0;
-	boost::shared_ptr<Playlist> playlist;
 
 	if (clicked_routeview != 0) {
 		tv = clicked_routeview;
 	} else if (!selection->tracks.empty()) {
 		if ((tv = dynamic_cast<RouteTimeAxisView*>(selection->tracks.front())) == 0) {
-			return;
+			return playlist;
 		}
 	} else if (entered_track != 0) {
 		if ((tv = dynamic_cast<RouteTimeAxisView*>(entered_track)) == 0) {
-			return;
+			return playlist;;
 		}
 	} else {
+		return playlist;
+	}
+
+	return tv->playlist ();
+}
+
+void
+Editor::insert_source_list_selection (float times)
+{
+	std::shared_ptr<Playlist> playlist = current_playlist ();
+
+	if (!playlist) {
 		return;
 	}
 
-	if ((playlist = tv->playlist()) == 0) {
-		return;
-	}
-
-	boost::shared_ptr<Region> region = _sources->get_single_selection ();
+	std::shared_ptr<Region> region = _sources->get_single_selection ();
 	if (region == 0) {
 		return;
 	}
@@ -2633,15 +2692,65 @@ Editor::insert_source_list_selection (float times)
 	playlist->clear_changes ();
 	playlist->clear_owned_changes ();
 
-	playlist->add_region ((RegionFactory::create (region, true)), get_preferred_edit_position(), times, _session->config.get_layered_record_mode());  //ToDo:  insert_mode ?
+	playlist->add_region ((RegionFactory::create (region, true)), get_preferred_edit_position(), times, RecNonLayered == _session->config.get_record_mode());  //ToDo:  insert_mode ?
 
 	if (should_ripple()) {
-		do_ripple (playlist, get_preferred_edit_position(), region->length() * times, boost::shared_ptr<Region>(), true);
+		do_ripple (playlist, get_preferred_edit_position(), region->length().scale (times), std::shared_ptr<Region>(), true);
 	} else {
 		playlist->rdiff_and_add_command (_session);
 	}
 
 	commit_reversible_command ();
+}
+
+void
+Editor::cut_copy_section (ARDOUR::SectionOperation const op)
+{
+	timepos_t start, end;
+	if (!get_selection_extents (start, end) || !_session) {
+		return;
+	}
+#if 1
+	TempoMap::SharedPtr tmap (TempoMap::use());
+	if ((tmap->tempos ().size () > 1 || tmap->meters ().size () > 1 || tmap->bartimes ().size () > 1) && UIConfiguration::instance().get_ask_cut_copy_section_tempo_map ()) {
+		ArdourMessageDialog msg (_("Cut/Copy Section does not yet include the Tempo Map\nDo you still want to proceed?"), false, MESSAGE_QUESTION, BUTTONS_YES_NO, true)  ;
+		msg.set_title (_("Cut/Copy without Tempo Map"));
+		Gtk::CheckButton cb (_("Do not show this dialog again."));
+		msg.get_vbox()->pack_start (cb);
+		cb.show ();
+		if (msg.run () != RESPONSE_YES) {
+			return;
+		}
+		if (cb.get_active ()) {
+			UIConfiguration::instance().set_ask_cut_copy_section_tempo_map (false);
+		}
+	}
+#endif
+	timepos_t to (get_preferred_edit_position ());
+	_session->cut_copy_section (start, end, to, op);
+
+	if (op == DeleteSection) {
+		selection->clear ();
+		return;
+	}
+
+	timepos_t to_end (to + start.distance (end));
+
+	switch (UIConfiguration::instance().get_after_section_op ()) {
+		case SectionSelectNoop:
+			return;
+		case SectionSelectClear:
+			selection->clear ();
+			break;
+		case SectionSelectRetainAndMovePlayhead:
+			_session->request_locate (op != CutPasteSection ? to_end.samples (): to.samples ());
+			/* fallthrough */
+		case SectionSelectRetain:
+			if (op == CutPasteSection || to < end) {
+				selection->set (to, to_end);
+			}
+			break;
+	}
 }
 
 /* BUILT-IN EFFECTS */
@@ -2690,13 +2799,13 @@ Editor::transition_to_rolling (bool fwd)
 void
 Editor::play_from_start ()
 {
-	_session->request_locate (_session->current_start_sample(), MustRoll);
+	_session->request_locate (_session->current_start_sample(), false, MustRoll);
 }
 
 void
 Editor::play_from_edit_point ()
 {
-	_session->request_locate (get_preferred_edit_position().samples(), MustRoll);
+	_session->request_locate (get_preferred_edit_position().samples(), false, MustRoll);
 }
 
 void
@@ -2708,7 +2817,7 @@ Editor::play_from_edit_point_and_return ()
 	start_sample = get_preferred_edit_position (EDIT_IGNORE_PHEAD).samples();
 
 	if (_session->transport_rolling()) {
-		_session->request_locate (start_sample, MustStop);
+		_session->request_locate (start_sample, false, MustStop);
 		return;
 	}
 
@@ -2794,7 +2903,7 @@ Editor::play_with_preroll ()
 		} else {
 			start = 0;
 		}
-		_session->request_locate (start, MustRoll);
+		_session->request_locate (start, false, MustRoll);
 		_session->set_requested_return_sample (ph);  //force auto-return to return to playhead location, without the preroll
 	}
 }
@@ -2836,7 +2945,7 @@ Editor::loop_location (Location& location)
 		tll->set (location.start(), location.end());
 
 		// enable looping, reposition and start rolling
-		_session->request_locate (tll->start().samples(), MustRoll);
+		_session->request_locate (tll->start().samples(), false, MustRoll);
 		_session->request_play_loop (true);
 	}
 }
@@ -2883,13 +2992,13 @@ Editor::do_layer_operation (LayerOperation op)
 		break;
 	}
 
-	set<boost::shared_ptr<Playlist> > playlists = selection->regions.playlists ();
-	for (set<boost::shared_ptr<Playlist> >::iterator i = playlists.begin(); i != playlists.end(); ++i) {
+	PlaylistSet playlists = selection->regions.playlists ();
+	for (PlaylistSet::iterator i = playlists.begin(); i != playlists.end(); ++i) {
 		(*i)->clear_owned_changes ();
 	}
 
 	for (RegionSelection::iterator i = selection->regions.begin(); i != selection->regions.end(); ++i) {
-		boost::shared_ptr<Region> r = (*i)->region ();
+		std::shared_ptr<Region> r = (*i)->region ();
 		switch (op) {
 		case Raise:
 			r->raise ();
@@ -2905,7 +3014,7 @@ Editor::do_layer_operation (LayerOperation op)
 		}
 	}
 
-	for (set<boost::shared_ptr<Playlist> >::iterator i = playlists.begin(); i != playlists.end(); ++i) {
+	for (PlaylistSet::iterator i = playlists.begin(); i != playlists.end(); ++i) {
 		vector<Command*> cmds;
 		(*i)->rdiff (cmds);
 		_session->add_commands (cmds);
@@ -3019,6 +3128,44 @@ Editor::play_edit_range ()
 }
 
 void
+Editor::group_selected_regions ()
+{
+	RegionSelection rs = get_regions_from_selection_and_entered ();
+
+	if (rs.empty ()) {
+		return;
+	}
+
+	Region::RegionGroupRetainer rgr;
+	begin_reversible_command (_("group regions"));
+	for (RegionSelection::iterator i = rs.begin (); i != rs.end (); ++i) {
+		(*i)->region ()->clear_changes ();
+		(*i)->region ()->set_region_group (true);
+		_session->add_command (new StatefulDiffCommand ((*i)->region ()));
+	}
+	commit_reversible_command ();
+}
+
+void
+Editor::ungroup_selected_regions ()
+{
+	RegionSelection rs = get_regions_from_selection_and_entered ();
+
+	if (rs.empty ()) {
+		return;
+	}
+
+	begin_reversible_command (_("ungroup regions"));
+	for (RegionSelection::iterator i = rs.begin (); i != rs.end (); ++i) {
+		(*i)->region ()->clear_changes ();
+		(*i)->region ()->unset_region_group ();
+		_session->add_command (new StatefulDiffCommand ((*i)->region ()));
+	}
+	selection->clear_regions ();
+	commit_reversible_command ();
+}
+
+void
 Editor::play_selected_region ()
 {
 	timepos_t start = timepos_t::max (Temporal::AudioTime);
@@ -3043,7 +3190,7 @@ Editor::play_selected_region ()
 }
 
 void
-Editor::audition_playlist_region_standalone (boost::shared_ptr<Region> region)
+Editor::audition_playlist_region_standalone (std::shared_ptr<Region> region)
 {
 	_session->audition_region (region);
 }
@@ -3067,8 +3214,8 @@ Editor::region_from_selection ()
 	timecnt_t selection_cnt = start.distance (end);
 
 	for (TrackSelection::iterator i = tracks.begin(); i != tracks.end(); ++i) {
-		boost::shared_ptr<Region> current;
-		boost::shared_ptr<Playlist> pl;
+		std::shared_ptr<Region> current;
+		std::shared_ptr<Playlist> pl;
 		timecnt_t internal_start;
 		string new_name;
 
@@ -3090,12 +3237,12 @@ Editor::region_from_selection ()
 		plist.add (ARDOUR::Properties::name, new_name);
 		plist.add (ARDOUR::Properties::layer, 0);
 
-		boost::shared_ptr<Region> region (RegionFactory::create (current, plist));
+		std::shared_ptr<Region> region (RegionFactory::create (current, plist));
 	}
 }
 
 void
-Editor::create_region_from_selection (vector<boost::shared_ptr<Region> >& new_regions)
+Editor::create_region_from_selection (vector<std::shared_ptr<Region> >& new_regions)
 {
 	if (selection->time.empty() || selection->tracks.empty()) {
 		return;
@@ -3114,8 +3261,8 @@ Editor::create_region_from_selection (vector<boost::shared_ptr<Region> >& new_re
 	sort_track_selection (ts);
 
 	for (TrackSelection::iterator i = ts.begin(); i != ts.end(); ++i) {
-		boost::shared_ptr<Region> current;
-		boost::shared_ptr<Playlist> playlist;
+		std::shared_ptr<Region> current;
+		std::shared_ptr<Playlist> playlist;
 		timecnt_t internal_start;
 		string new_name;
 
@@ -3149,7 +3296,7 @@ Editor::split_multichannel_region ()
 		return;
 	}
 
-	vector< boost::shared_ptr<Region> > v;
+	vector< std::shared_ptr<Region> > v;
 
 	for (list<RegionView*>::iterator x = rs.begin(); x != rs.end(); ++x) {
 		(*x)->region()->separate_by_channel (v);
@@ -3216,8 +3363,11 @@ void
 Editor::separate_regions_between (const TimeSelection& ts)
 {
 	bool in_command = false;
-	boost::shared_ptr<Playlist> playlist;
+	std::shared_ptr<Playlist> playlist;
 	RegionSelection new_selection;
+
+	/* the Separate action will likely create a lot of regions; we want them all assigned to the same region-group */
+	Region::RegionGroupRetainer rgr;
 
 	TrackViewList tmptracks = get_tracks_for_range_action ();
 	sort_track_selection (tmptracks);
@@ -3297,7 +3447,7 @@ Editor::separate_regions_between (const TimeSelection& ts)
 }
 
 struct PlaylistState {
-	boost::shared_ptr<Playlist> playlist;
+	std::shared_ptr<Playlist> playlist;
 	XMLNode*  before;
 };
 
@@ -3382,7 +3532,7 @@ Editor::separate_under_selected_regions ()
 
 	begin_reversible_command (_("separate region under"));
 
-	list<boost::shared_ptr<Region> > regions_to_remove;
+	list<std::shared_ptr<Region> > regions_to_remove;
 
 	for (RegionSelection::iterator i = rs.begin(); i != rs.end(); ++i) {
 		// we can't just remove the region(s) in this loop because
@@ -3397,9 +3547,9 @@ Editor::separate_under_selected_regions ()
 		regions_to_remove.push_back ((*i)->region());
 	}
 
-	for (list<boost::shared_ptr<Region> >::iterator rl = regions_to_remove.begin(); rl != regions_to_remove.end(); ++rl) {
+	for (list<std::shared_ptr<Region> >::iterator rl = regions_to_remove.begin(); rl != regions_to_remove.end(); ++rl) {
 
-		boost::shared_ptr<Playlist> playlist = (*rl)->playlist();
+		std::shared_ptr<Playlist> playlist = (*rl)->playlist();
 
 		if (!playlist) {
 			// is this check necessary?
@@ -3445,34 +3595,23 @@ Editor::separate_under_selected_regions ()
 void
 Editor::crop_region_to_selection ()
 {
-	if (!selection->time.empty()) {
+	timepos_t start;
+	timepos_t end;
 
-		begin_reversible_command (_("Crop Regions to Time Selection"));
-		for (std::list<TimelineRange>::iterator i = selection->time.begin(); i != selection->time.end(); ++i) {
-			crop_region_to ((*i).start(), (*i).end());
-		}
+	if (get_edit_op_range (start, end)) {
+		begin_reversible_command (_("Crop Regions to Edit Range"));
+
+		crop_region_to (start, end);
+
 		commit_reversible_command();
-	} else {
-
-		timepos_t start;
-		timepos_t end;
-
-		if (get_edit_op_range (start, end)) {
-			begin_reversible_command (_("Crop Regions to Edit Range"));
-
-			crop_region_to (start, end);
-
-			commit_reversible_command();
-		}
 	}
-
 }
 
 void
 Editor::crop_region_to (timepos_t const & start, timepos_t const & end)
 {
-	vector<boost::shared_ptr<Playlist> > playlists;
-	boost::shared_ptr<Playlist> playlist;
+	vector<std::shared_ptr<Playlist> > playlists;
+	std::shared_ptr<Playlist> playlist;
 	TrackViewList ts;
 
 	if (selection->tracks.empty()) {
@@ -3491,7 +3630,7 @@ Editor::crop_region_to (timepos_t const & start, timepos_t const & end)
 			continue;
 		}
 
-		boost::shared_ptr<Track> t = rtv->track();
+		std::shared_ptr<Track> t = rtv->track();
 
 		if (t) {
 			if ((playlist = rtv->playlist()) != 0) {
@@ -3504,50 +3643,59 @@ Editor::crop_region_to (timepos_t const & start, timepos_t const & end)
 		return;
 	}
 
-	timepos_t pos;
-	timepos_t new_start;
-	timepos_t new_end;
-	timecnt_t new_length;
+	for (vector<std::shared_ptr<Playlist> >::iterator i = playlists.begin(); i != playlists.end(); ++i) {
 
-	for (vector<boost::shared_ptr<Playlist> >::iterator i = playlists.begin(); i != playlists.end(); ++i) {
-
-		/* Only the top regions at start and end have to be cropped */
-		boost::shared_ptr<Region> region_at_start = (*i)->top_region_at(start);
-		boost::shared_ptr<Region> region_at_end = (*i)->top_region_at(end);
-
-		vector<boost::shared_ptr<Region> > regions;
-
-		if (region_at_start != 0) {
-			regions.push_back (region_at_start);
-		}
-		if (region_at_end != 0) {
-			regions.push_back (region_at_end);
-		}
-
-		/* now adjust lengths */
-		for (vector<boost::shared_ptr<Region> >::iterator i = regions.begin(); i != regions.end(); ++i) {
-
-			pos = (*i)->position();
-			new_start = max (start, pos);
-			if (timepos_t::max (pos.time_domain()).earlier (pos) > (*i)->length()) {
-				new_end = (*i)->end();
-			} else {
-				new_end = timepos_t::max (pos.time_domain());
+		std::shared_ptr<RegionList> regions_at_start = (*i)->regions_at(start);
+		for (RegionList::const_iterator r = regions_at_start->begin(); r != regions_at_start->end(); ++r) {
+			std::shared_ptr<AudioRegion> ar = std::dynamic_pointer_cast<AudioRegion>(*r);
+			if (ar) {
+				//if we cut an audio region during the fade, keep the fade handle at the same spot
+				ar->playlist()->clear_owned_changes ();
+				samplepos_t pos = start.samples ();
+				samplecnt_t fade_length;
+				samplepos_t fade_start = ar->position_sample() + ar->fade_in()->back()->when.samples();
+				if (pos <= fade_start) {
+					fade_length = fade_start - pos;
+					ar->set_fade_in_length (fade_length);
+				}
+				vector<Command*> cmds;
+				ar->playlist()->rdiff (cmds);
+				_session->add_commands (cmds);
 			}
-			new_end = min (end, new_end);
-			new_length = new_start.distance (new_end);
 
-			(*i)->clear_changes ();
-			(*i)->trim_to (new_start, new_length);
-			_session->add_command (new StatefulDiffCommand (*i));
+			(*r)->trim_front (start);
+			_session->add_command (new StatefulDiffCommand (*r));
 		}
+
+		std::shared_ptr<RegionList> regions_at_end = (*i)->regions_at(end);
+		for (RegionList::const_iterator r = regions_at_end->begin(); r != regions_at_end->end(); ++r) {
+			std::shared_ptr<AudioRegion> ar = std::dynamic_pointer_cast<AudioRegion>(*r);
+			if (ar) {
+				//if we cut an audio region during the fade, keep the fade handle at the same spot
+				ar->playlist()->clear_owned_changes ();
+				samplepos_t pos = end.samples ();
+				samplecnt_t fade_length;
+				samplepos_t fade_end = ar->position_sample() + ar->length_samples() - ar->fade_out()->back()->when.samples();
+				if (pos >= fade_end) {
+					fade_length = pos - fade_end ;
+					ar->set_fade_out_length (fade_length);
+				}
+				vector<Command*> cmds;
+				ar->playlist()->rdiff (cmds);
+				_session->add_commands (cmds);
+			}
+
+			(*r)->trim_end (end);
+			_session->add_command (new StatefulDiffCommand (*r));
+		}
+
 	}
 }
 
 void
 Editor::region_fill_track ()
 {
-	boost::shared_ptr<Playlist> playlist;
+	std::shared_ptr<Playlist> playlist;
 	RegionSelection regions = get_regions_from_selection_and_entered ();
 	RegionSelection foo;
 
@@ -3558,7 +3706,7 @@ Editor::region_fill_track ()
 	}
 
 	timepos_t const start_time = regions.start_time ();
-	timepos_t const end_time = regions.end_time ();
+	timepos_t const end_time = regions.end_time ().increment();
 	timecnt_t const gap = start_time.distance (end_time);
 
 	begin_reversible_command (Operations::region_fill);
@@ -3567,7 +3715,7 @@ Editor::region_fill_track ()
 
 	for (RegionSelection::iterator i = regions.begin(); i != regions.end(); ++i) {
 
-		boost::shared_ptr<Region> r ((*i)->region());
+		std::shared_ptr<Region> r ((*i)->region());
 
 		TimeAxisView& tv = (*i)->get_time_axis_view();
 		RouteTimeAxisView* rtv = dynamic_cast<RouteTimeAxisView*> (&tv);
@@ -3613,7 +3761,7 @@ Editor::set_sync_point (timepos_t const & where, const RegionSelection& rs)
 			continue;
 		}
 
-		boost::shared_ptr<Region> region ((*r)->region());
+		std::shared_ptr<Region> region ((*r)->region());
 
 		if (!in_command) {
 			begin_reversible_command (_("set sync point"));
@@ -3720,7 +3868,7 @@ Editor::align_regions_relative (RegionPoint point)
 	list<RegionView*> sorted;
 	rs.by_position (sorted);
 
-	boost::shared_ptr<Region> r ((*sorted.begin())->region());
+	std::shared_ptr<Region> r ((*sorted.begin())->region());
 
 	switch (point) {
 	case Start:
@@ -3773,7 +3921,7 @@ Editor::align_regions_relative (RegionPoint point)
 
 	for (list<RegionView*>::iterator i = sorted.begin(); i != sorted.end(); ++i) {
 
-		boost::shared_ptr<Region> region ((*i)->region());
+		std::shared_ptr<Region> region ((*i)->region());
 
 		region->clear_changes ();
 
@@ -3791,7 +3939,7 @@ Editor::align_regions_relative (RegionPoint point)
 }
 
 void
-Editor::align_region (boost::shared_ptr<Region> region, RegionPoint point, timepos_t const & position)
+Editor::align_region (std::shared_ptr<Region> region, RegionPoint point, timepos_t const & position)
 {
 	begin_reversible_command (_("align region"));
 	align_region_internal (region, point, position);
@@ -3799,7 +3947,7 @@ Editor::align_region (boost::shared_ptr<Region> region, RegionPoint point, timep
 }
 
 void
-Editor::align_region_internal (boost::shared_ptr<Region> region, RegionPoint point, timepos_t const & position)
+Editor::align_region_internal (std::shared_ptr<Region> region, RegionPoint point, timepos_t const & position)
 {
 	region->clear_changes ();
 
@@ -3894,11 +4042,8 @@ Editor::trim_region_to_location (const Location& loc, const char* str)
 	for (RegionSelection::iterator x = rs.begin(); x != rs.end(); ++x) {
 		RegionView* rv = (*x);
 
-		/* require region to span proposed trim */
-		switch (rv->region()->coverage (loc.start(), loc.end())) {
-		case Temporal::OverlapNone:
-			break;
-		default:
+		/* require selected region(s) to overlap with proposed trim */
+		if (rv->region()->coverage (loc.start(), loc.end())==Temporal::OverlapNone) {
 			continue;
 		}
 
@@ -3946,7 +4091,7 @@ Editor::trim_to_region(bool forward)
 	RegionSelection rs = get_regions_from_selection_and_entered ();
 	bool in_command = false;
 
-	boost::shared_ptr<Region> next_region;
+	std::shared_ptr<Region> next_region;
 
 	for (RegionSelection::iterator x = rs.begin(); x != rs.end(); ++x) {
 
@@ -3962,8 +4107,8 @@ Editor::trim_to_region(bool forward)
 			continue;
 		}
 
-		boost::shared_ptr<Region> region = arv->region();
-		boost::shared_ptr<Playlist> playlist (region->playlist());
+		std::shared_ptr<Region> region = arv->region();
+		std::shared_ptr<Playlist> playlist (region->playlist());
 
 		region->clear_changes ();
 
@@ -3975,6 +4120,7 @@ Editor::trim_to_region(bool forward)
 				continue;
 			}
 
+			/* new end is 1 domain unit before the next region */
 			region->trim_end (next_region->position().decrement());
 			arv->region_changed (PropertyChange (ARDOUR::Properties::length));
 		}
@@ -4021,6 +4167,7 @@ Editor::_freeze_thread (void* arg)
 void*
 Editor::freeze_thread ()
 {
+	TempoMap::SharedPtr tmap (TempoMap::fetch());
 	/* create event pool because we may need to talk to the session */
 	SessionEvent::create_per_thread_pool ("freeze events", 64);
 	/* create per-thread buffers for process() tree to use */
@@ -4052,7 +4199,6 @@ Editor::freeze_route ()
 			);
 		d.set_title (_("Cannot freeze"));
 		d.run ();
-		return;
 		return;
 	}
 
@@ -4094,7 +4240,7 @@ Editor::freeze_route ()
 
 	InterthreadProgressWindow ipw (current_interthread_info, _("Freeze"), _("Cancel Freeze"));
 
-	pthread_create_and_store (X_("freezer"), &itt.thread, _freeze_thread, this);
+	pthread_create_and_store (X_("freezer"), &itt.thread, _freeze_thread, this, 0);
 
 	CursorContext::Handle cursor_ctx = CursorContext::create(*this, _cursors->wait);
 
@@ -4107,15 +4253,38 @@ Editor::freeze_route ()
 }
 
 void
-Editor::bounce_range_selection (BounceTarget target, bool enable_processing)
+Editor::bounce_range_selection (BounceTarget target, bool with_processing)
 {
 	if (selection->time.empty()) {
 		return;
 	}
 
-	assert (!(enable_processing && (target == NewTrigger)));
+	/* you can't currently apply processing to a NewTrigger bounce */
+	assert (!(with_processing && (target == NewTrigger)));
 
-	uint32_t trigger_slot = 0;
+	/* if consolidating a range to this track with processing, make sure the track-count matches */
+	if (target == ReplaceRange) {
+		TrackSelection views = selection->tracks;
+		for (TrackViewList::iterator i = views.begin(); i != views.end(); ++i) {
+
+			if (with_processing) {
+
+				RouteTimeAxisView* rtv = dynamic_cast<RouteTimeAxisView*> (*i);
+
+				if (rtv && rtv->track() && !rtv->track()->bounceable (rtv->track()->main_outs(), false)) {
+					ArdourMessageDialog d (
+						_("You can't perform this operation because the processing of the signal "
+						  "will cause one or more of the tracks to end up with a region with more channels than this track has inputs.\n\n"
+						  "You can do this without processing, which is a different operation.")
+						);
+					d.set_title (_("Cannot bounce"));
+					d.run ();
+					return;
+				}
+			}
+		}
+	}
+
 	string bounce_name;
 	switch (target) {
 		case NewSource:
@@ -4125,81 +4294,69 @@ Editor::bounce_range_selection (BounceTarget target, bool enable_processing)
 			bounce_name = "Consolidated";
 			break;
 		case NewTrigger:
-			bounce_name = "Trigger";
+			bounce_name = "Unnamed Clip";
 			break;
 	}
-
-	TrackSelection views = selection->tracks;
-
-	for (TrackViewList::iterator i = views.begin(); i != views.end(); ++i) {
-
-		if (enable_processing) {
-
-			RouteTimeAxisView* rtv = dynamic_cast<RouteTimeAxisView*> (*i);
-
-			if (rtv && rtv->track() && target == ReplaceRange && !rtv->track()->bounceable (rtv->track()->main_outs(), false)) {
-				ArdourMessageDialog d (
-					_("You can't perform this operation because the processing of the signal "
-					  "will cause one or more of the tracks to end up with a region with more channels than this track has inputs.\n\n"
-					  "You can do this without processing, which is a different operation.")
-					);
-				d.set_title (_("Cannot bounce"));
-				d.run ();
-				return;
-			}
-		}
-	}
-
-	/*prompt the user for a new name*/
+	bool   copy_to_clip_library = false;
+	bool   copy_to_trigger = false;
+	uint32_t trigger_slot         = 0;
 	{
-		Prompter dialog (true);
-		ArdourDropdown* tslot = 0;
+		/*prompt the user for a new name*/
 
-		switch (target) {
-			case NewSource:
-				dialog.set_prompt (_("Name for Bounced Region:"));
-				dialog.add_button (_("Bounce"), RESPONSE_ACCEPT);
-				break;
-			case ReplaceRange:
-				dialog.set_prompt (_("Name for Consolidated Region:"));
-				dialog.add_button (_("Rename"), RESPONSE_ACCEPT);
-				break;
-			case NewTrigger:
-				dialog.set_prompt (_("Name for Trigger:"));
-				dialog.add_button (_("Bounce"), RESPONSE_ACCEPT);
-				break;
-		}
+		ArdourWidgets::Prompter dialog (true);
+
+		dialog.set_prompt (_("Name for Bounced Range:"));
 
 		dialog.set_name ("BounceNameWindow");
 		dialog.set_size_request (400, -1);
 		dialog.set_position (Gtk::WIN_POS_MOUSE);
 
+		dialog.add_button (_("Bounce"), RESPONSE_ACCEPT);
 		dialog.set_initial_text (bounce_name);
 
-		if (target == NewSource) {
-			Label* label = manage (new Label (_("Bounced Range will appear in the Source list.")));
-			dialog.get_vbox()->set_spacing (8);
-			dialog.get_vbox()->pack_start (*label);
-			label->show();
-		} else if (target == NewTrigger) {
-			Label* label = manage (new Label (_("Trigger Slot:")));
-			HBox*  tbox  = manage (new HBox);
-			tslot        = manage (new ArdourDropdown ());
+		Table*  table  = manage (new Table);
+		table->set_spacings (4);
+		table->set_border_width (8);
+		table->set_homogeneous (true);
+		dialog.get_vbox()->pack_start (*table);
+		dialog.get_vbox()->set_spacing (4);
 
-			for (int c = 0; c < default_triggers_per_box; ++c) {
-				// XXX ('A' + x) is not translatable, TODO abstract using nth_letter()
-				tslot->AddMenuElem (Menu_Helpers::MenuElem (string_compose ("%1", (char)('A' + c)), sigc::bind ([] (uint32_t* t, uint32_t v) {*t = v;}, &trigger_slot, c)));
+		/* copy to a slot on this track ? */
+		Gtk::CheckButton *to_slot = NULL;
+		if (!with_processing) {
+			to_slot = manage (new Gtk::CheckButton (_("Bounce to Trigger Slot:")));
+			Gtk::Alignment *slot_align = manage (new Gtk::Alignment (0, .5, 0, 0));
+			slot_align->add (*to_slot);
+
+			ArdourWidgets::ArdourDropdown *tslot = manage (new ArdourWidgets::ArdourDropdown ());
+
+			for (int c = 0; c < TriggerBox::default_triggers_per_box; ++c) {
+				std::string lbl = cue_marker_name (c);
+				tslot->AddMenuElem (Menu_Helpers::MenuElem (lbl, sigc::bind ([] (uint32_t* t, uint32_t v, ArdourWidgets::ArdourDropdown* s, std::string l) {*t = v; s->set_text (l);}, &trigger_slot, c, tslot, lbl)));
 			}
 			tslot->set_active ("A");
 
-			tbox->set_homogeneous (false);
-			tbox->set_spacing (5);
-			tbox->set_border_width (10);
-			tbox->pack_start (*label, false, false);
-			tbox->pack_start (*tslot, true, true);
-			tbox->show_all ();
-			dialog.get_vbox()->pack_start (*tbox);
+			HBox *tbox = manage (new HBox());
+			tbox->pack_start(*slot_align, false, false);
+			tbox->pack_start(*tslot, false, false);
+			table->attach (*tbox,       0, 2, 0,1, Gtk::FILL, Gtk::SHRINK);
+			if (target==NewTrigger) {
+				to_slot->set_active(true);
+			}
 		}
+
+		/* copy to the user's Clip Library ? */
+		Gtk::CheckButton *cliplib = manage (new Gtk::CheckButton (_("Bounce to Clip Library")));
+		Gtk::Alignment *align = manage (new Gtk::Alignment (0, .5, 0, 0));
+		align->add (*cliplib);
+		align->show_all ();
+		table->attach (*align,      0, 2, 1,2, Gtk::FILL, Gtk::SHRINK);
+
+		/* in all cases, the selected Range will appear in the Source list */
+		Label* s_label = manage (new Label (_("Bounced Range will appear in the Source list")));
+		table->attach (*s_label,      0, 2, 2,3, Gtk::FILL, Gtk::SHRINK);
+
+		dialog.get_vbox()->show_all ();
 
 		dialog.show ();
 
@@ -4209,15 +4366,50 @@ Editor::bounce_range_selection (BounceTarget target, bool enable_processing)
 		default:
 			return;
 		}
+		dialog.get_result(bounce_name);
 
-		dialog.get_result (bounce_name);
+		if (to_slot && to_slot->get_active()) {
+			copy_to_trigger = true;
+		}
+		if (cliplib->get_active ()) {
+			copy_to_clip_library = true;
+		}
 	}
 
-	timepos_t start = selection->time[clicked_selection].start();
-	timepos_t end = selection->time[clicked_selection].end();
+	/* prevent user from accidentally overwriting a slot that they can't see */
+	bool overwriting = false;
+	if (copy_to_trigger) {
+		for (RegionSelection::iterator i = selection->regions.begin(); i != selection->regions.end(); ++i) {
+
+			std::shared_ptr<Region> region ((*i)->region());
+			RouteTimeAxisView* rtv = dynamic_cast<RouteTimeAxisView*>(&(*i)->get_time_axis_view());
+			std::shared_ptr<Track> track = std::dynamic_pointer_cast<Track> (rtv->route());
+			if (!track) {
+				continue;
+			}
+			if (track->triggerbox()->trigger(trigger_slot)->region()) {
+				overwriting = true;
+			}
+		}
+		if (overwriting) {
+			ArdourMessageDialog msg (string_compose(_("Are you sure you want to overwrite the contents in slot %1?"),cue_marker_name(trigger_slot)), false, MESSAGE_QUESTION, BUTTONS_YES_NO, true);
+			msg.set_title (_("Overwriting slot"));
+			msg.set_secondary_text (_("One of your selected tracks has content in this slot."));
+			if (msg.run () != RESPONSE_YES) {
+				return;
+			}
+		}
+	}
+
+	timepos_t start = selection->time.start_time();
+	timepos_t end = selection->time.end_time();
 	timecnt_t cnt = start.distance (end);
 	bool in_command = false;
 
+	TempoMap::SharedPtr tmap (TempoMap::use());
+	double tempo = tmap->tempo_at(start).quarter_notes_per_minute();
+
+	TrackSelection views = selection->tracks;
 	for (TrackViewList::iterator i = views.begin(); i != views.end(); ++i) {
 
 		RouteTimeAxisView* rtv = dynamic_cast<RouteTimeAxisView*> (*i);
@@ -4226,7 +4418,7 @@ Editor::bounce_range_selection (BounceTarget target, bool enable_processing)
 			continue;
 		}
 
-		boost::shared_ptr<Playlist> playlist;
+		std::shared_ptr<Playlist> playlist;
 
 		if ((playlist = rtv->playlist()) == 0) {
 			continue;
@@ -4237,14 +4429,14 @@ Editor::bounce_range_selection (BounceTarget target, bool enable_processing)
 		playlist->clear_changes ();
 		playlist->clear_owned_changes ();
 
-		boost::shared_ptr<Region> r;
+		std::shared_ptr<Region> r;
 
 		/*make the "source" (whole-file region)*/
 		/*note: bounce_range() will append the playlist name to the resulting region and filename*/
-		if (enable_processing) {
+		if (with_processing) {
 			r = rtv->track()->bounce_range (start.samples(), (start+cnt).samples(), itt, rtv->track()->main_outs(), false, bounce_name);
 		} else {
-			r = rtv->track()->bounce_range (start.samples(), (start+cnt).samples(), itt, boost::shared_ptr<Processor>(), false, bounce_name);
+			r = rtv->track()->bounce_range (start.samples(), (start+cnt).samples(), itt, std::shared_ptr<Processor>(), false, bounce_name);
 		}
 
 		if (!r) {
@@ -4256,8 +4448,12 @@ Editor::bounce_range_selection (BounceTarget target, bool enable_processing)
 			in_command = true;
 		}
 
+		if (copy_to_clip_library) {
+			export_to_clip_library (r);
+		}
+
 		if (target == ReplaceRange) {
-			/*remove the edxisting regions under the edit range*/
+			/*remove the existing regions under the edit range*/
 			list<TimelineRange> ranges;
 			ranges.push_back (TimelineRange (start, start+cnt, 0));
 			playlist->cut (ranges); // discard result
@@ -4266,10 +4462,17 @@ Editor::bounce_range_selection (BounceTarget target, bool enable_processing)
 			/*we don't add the whole_file region here; we insert a discrete copy*/
 			PropertyList plist;
 			plist.add (ARDOUR::Properties::whole_file, false);
-			boost::shared_ptr<Region> copy (RegionFactory::create (r, plist));
+			std::shared_ptr<Region> copy (RegionFactory::create (r, plist));
 			playlist->add_region (copy, start);
-		} else if (target == NewTrigger) {
+		}
+
+		if (copy_to_trigger) {
+			std::shared_ptr<Trigger::UIState> state (new Trigger::UIState());
+			state->name = bounce_name;
+			state->tempo = tempo;
+			rtv->track ()->triggerbox ()->enqueue_trigger_state_for_region(r, state);
 			rtv->track ()->triggerbox ()->set_from_selection (trigger_slot, r);
+			rtv->track ()->presentation_info ().set_trigger_track (true);
 		}
 
 		vector<Command*> cmds;
@@ -4291,11 +4494,32 @@ Editor::delete_ ()
 	//special case: if the user is pointing in the editor/mixer strip, they may be trying to delete a plugin.
 	//we need this because the editor-mixer strip is in the editor window, so it doesn't get the bindings from the mix window
 	bool deleted = false;
-	if (current_mixer_strip && current_mixer_strip == MixerStrip::entered_mixer_strip())
-		deleted = current_mixer_strip->delete_processors ();
 
-	if (!deleted)
+	if (current_mixer_strip && current_mixer_strip == MixerStrip::entered_mixer_strip()) {
+		deleted = current_mixer_strip->delete_processors ();
+	}
+
+	if (internal_editing()) {
+		if (!selection->points.empty()) {
+			begin_reversible_command (_("delete control points"));
+			cut_copy_points (Delete, timepos_t (Temporal::AudioTime));
+			selection->clear_points ();
+			commit_reversible_command ();
+		} else {
+			midi_action (&MidiRegionView::delete_selection);
+		}
+		return;
+	}
+
+	if (!deleted) {
 		cut_copy (Delete);
+	}
+}
+
+void
+Editor::alt_delete_ ()
+{
+	delete_ ();
 }
 
 /** Cut selected regions, automation points or a time range */
@@ -4333,6 +4557,9 @@ Editor::cut_copy (CutCopyOp op)
 	/* only cancel selection if cut/copy is successful.*/
 
 	string opname;
+
+	/* the Cut action can create a lot of regions; we want them assigned to sensible region-groups */
+	Region::RegionGroupRetainer rgr;
 
 	switch (op) {
 	case Delete:
@@ -4445,7 +4672,7 @@ struct AutomationRecord {
 
 	XMLNode* state; ///< state before any operation
 	const AutomationLine* line; ///< line this came from
-	boost::shared_ptr<Evoral::ControlList> copy; ///< copied events for the cut buffer
+	std::shared_ptr<Evoral::ControlList> copy; ///< copied events for the cut buffer
 };
 
 struct PointsSelectionPositionSorter {
@@ -4470,7 +4697,7 @@ Editor::cut_copy_points (Editing::CutCopyOp op, timepos_t const & earliest_time)
 	_last_cut_copy_source_track = &selection->points.front()->line().trackview;
 
 	/* Keep a record of the AutomationLists that we end up using in this operation */
-	typedef std::map<boost::shared_ptr<AutomationList>, AutomationRecord> Lists;
+	typedef std::map<std::shared_ptr<AutomationList>, AutomationRecord> Lists;
 	Lists lists;
 
 	/* user could select points in any order */
@@ -4479,7 +4706,7 @@ Editor::cut_copy_points (Editing::CutCopyOp op, timepos_t const & earliest_time)
 	/* Go through all selected points, making an AutomationRecord for each distinct AutomationList */
 	for (PointSelection::iterator sel_point = selection->points.begin(); sel_point != selection->points.end(); ++sel_point) {
 		const AutomationLine&                   line = (*sel_point)->line();
-		const boost::shared_ptr<AutomationList> al   = line.the_list();
+		const std::shared_ptr<AutomationList> al   = line.the_list();
 		if (lists.find (al) == lists.end ()) {
 			/* We haven't seen this list yet, so make a record for it.  This includes
 			   taking a copy of its current state, in case this is needed for undo later.
@@ -4493,29 +4720,17 @@ Editor::cut_copy_points (Editing::CutCopyOp op, timepos_t const & earliest_time)
 		   ControlList for each of our source lists to put the cut buffer data in.
 		*/
 		for (Lists::iterator i = lists.begin(); i != lists.end(); ++i) {
-			i->second.copy = i->first->create (i->first->parameter (), i->first->descriptor(), i->first->time_domain());
+			i->second.copy = i->first->create (i->first->parameter (), i->first->descriptor(), *i->first);
 		}
 
 		/* Add all selected points to the relevant copy ControlLists */
 
 		for (PointSelection::iterator sel_point = selection->points.begin(); sel_point != selection->points.end(); ++sel_point) {
-			boost::shared_ptr<AutomationList>    al = (*sel_point)->line().the_list();
+			std::shared_ptr<AutomationList>    al = (*sel_point)->line().the_list();
 			AutomationList::const_iterator ctrl_evt = (*sel_point)->model ();
 
 			lists[al].copy->fast_simple_add ((*ctrl_evt)->when, (*ctrl_evt)->value);
 			earliest = std::min (earliest, (*ctrl_evt)->when);
-		}
-
-		/* Snap start time backwards, so copy/paste is snap aligned. */
-
-		if (earliest != timepos_t::max (earliest.time_domain())) {
-			if (earliest.time_domain() == Temporal::BeatTime) {
-				/* always just round down to beat */
-				earliest = timepos_t (earliest.beats().round_down_to_beat());
-			} else {
-				/* do actual snap */
-				snap_to (earliest, Temporal::RoundDownMaybe);
-			}
 		}
 
 		for (Lists::iterator i = lists.begin(); i != lists.end(); ++i) {
@@ -4524,7 +4739,7 @@ Editor::cut_copy_points (Editing::CutCopyOp op, timepos_t const & earliest_time)
 			   when copying from several lists and the paste starts at the
 			   earliest copied piece of data.
 			*/
-			boost::shared_ptr<Evoral::ControlList> &al_cpy = i->second.copy;
+			std::shared_ptr<Evoral::ControlList> &al_cpy = i->second.copy;
 			for (AutomationList::iterator ctrl_evt = al_cpy->begin(); ctrl_evt != al_cpy->end(); ++ctrl_evt) {
 				(*ctrl_evt)->when.shift_earlier (earliest);
 			}
@@ -4544,7 +4759,7 @@ Editor::cut_copy_points (Editing::CutCopyOp op, timepos_t const & earliest_time)
 		/* Remove each selected point from its AutomationList */
 		for (PointSelection::iterator sel_point = selection->points.begin(); sel_point != selection->points.end(); ++sel_point) {
 			AutomationLine& line = (*sel_point)->line ();
-			boost::shared_ptr<AutomationList> al = line.the_list();
+			std::shared_ptr<AutomationList> al = line.the_list();
 
 			bool erase = true;
 
@@ -4562,7 +4777,7 @@ Editor::cut_copy_points (Editing::CutCopyOp op, timepos_t const & earliest_time)
 
 		/* Thaw the lists and add undo records for them */
 		for (Lists::iterator i = lists.begin(); i != lists.end(); ++i) {
-			boost::shared_ptr<AutomationList> al = i->first;
+			std::shared_ptr<AutomationList> al = i->first;
 			al->thaw ();
 			_session->add_command (new MementoCommand<AutomationList> (*al.get(), i->second.state, &(al->get_state ())));
 		}
@@ -4609,7 +4824,7 @@ struct lt_playlist {
 
 struct PlaylistMapping {
 	TimeAxisView* tv;
-	boost::shared_ptr<Playlist> pl;
+	std::shared_ptr<Playlist> pl;
 
 	PlaylistMapping (TimeAxisView* tvp) : tv (tvp) {}
 };
@@ -4624,15 +4839,15 @@ Editor::remove_clicked_region ()
 
 	begin_reversible_command (_("remove region"));
 
-	boost::shared_ptr<Playlist> playlist = clicked_routeview->playlist();
-	boost::shared_ptr<Region> region = clicked_regionview->region();
+	std::shared_ptr<Playlist> playlist = clicked_routeview->playlist();
+	std::shared_ptr<Region> region = clicked_regionview->region();
 
 	playlist->clear_changes ();
 	playlist->clear_owned_changes ();
 	playlist->remove_region (region);
 
 	if (should_ripple()) {
-		do_ripple (playlist, region->position(), - region->length(), boost::shared_ptr<Region>(), true);
+		do_ripple (playlist, region->position(), - region->length(), std::shared_ptr<Region>(), true);
 	} else {
 		playlist->rdiff_and_add_command (_session);
 	}
@@ -4648,11 +4863,11 @@ Editor::recover_regions (ARDOUR::RegionList regions)
 	begin_reversible_command (_("recover regions"));
 
 	for (RegionList::iterator i = regions.begin(); i != regions.end(); ++i) {
-		boost::shared_ptr<ARDOUR::Source> source = (*i)->source();
+		std::shared_ptr<ARDOUR::Source> source = (*i)->source();
 
 		RouteList routes = _session->get_routelist();
 		for (RouteList::iterator it = routes.begin(); it != routes.end(); ++it) {
-			boost::shared_ptr<ARDOUR::Track> track = boost::dynamic_pointer_cast<Track>(*it);
+			std::shared_ptr<ARDOUR::Track> track = std::dynamic_pointer_cast<Track>(*it);
 			if (track) {
 				//ToDo
 				if (source->captured_for() == track->) {
@@ -4687,7 +4902,7 @@ Editor::remove_regions (const RegionSelection& sel, bool can_ripple, bool as_par
 	/* make a local copy */
 	RegionSelection rs = sel;
 
-	list<boost::shared_ptr<Region> > regions_to_remove;
+	list<std::shared_ptr<Region> > regions_to_remove;
 
 	for (RegionSelection::iterator i = rs.begin(); i != rs.end(); ++i) {
 		// we can't just remove the region(s) in this loop because
@@ -4702,11 +4917,11 @@ Editor::remove_regions (const RegionSelection& sel, bool can_ripple, bool as_par
 		regions_to_remove.push_back ((*i)->region());
 	}
 
-	vector<boost::shared_ptr<Playlist> > playlists;
+	vector<std::shared_ptr<Playlist> > playlists;
 
-	for (list<boost::shared_ptr<Region> >::iterator rl = regions_to_remove.begin(); rl != regions_to_remove.end(); ++rl) {
+	for (list<std::shared_ptr<Region> >::iterator rl = regions_to_remove.begin(); rl != regions_to_remove.end(); ++rl) {
 
-		boost::shared_ptr<Playlist> playlist = (*rl)->playlist();
+		std::shared_ptr<Playlist> playlist = (*rl)->playlist();
 
 		if (!playlist) {
 			// is this check necessary?
@@ -4726,11 +4941,11 @@ Editor::remove_regions (const RegionSelection& sel, bool can_ripple, bool as_par
 		playlist->remove_region (*rl);
 
 		if (can_ripple && should_ripple()) {
-			do_ripple (playlist, (*rl)->position(), -(*rl)->length(), boost::shared_ptr<Region>(), false);
+			do_ripple (playlist, (*rl)->position(), -(*rl)->length(), std::shared_ptr<Region>(), false);
 		}
 	}
 
-	vector<boost::shared_ptr<Playlist> >::iterator pl;
+	vector<std::shared_ptr<Playlist> >::iterator pl;
 	bool in_command = false;
 
 	for (pl = playlists.begin(); pl != playlists.end(); ++pl) {
@@ -4770,8 +4985,7 @@ Editor::cut_copy_regions (CutCopyOp op, RegionSelection& rs)
 
 	timepos_t first_position = timepos_t::max (Temporal::AudioTime);
 
-	typedef set<boost::shared_ptr<Playlist> > FreezeList;
-	FreezeList freezelist;
+	PlaylistSet freezelist;
 
 	/* get ordering correct before we cut/copy */
 
@@ -4782,10 +4996,10 @@ Editor::cut_copy_regions (CutCopyOp op, RegionSelection& rs)
 		first_position = min ((*x)->region()->position(), first_position);
 
 		if (op == Cut || op == Clear || op == Delete) {
-			boost::shared_ptr<Playlist> pl = (*x)->region()->playlist();
+			std::shared_ptr<Playlist> pl = (*x)->region()->playlist();
 
 			if (pl) {
-				FreezeList::iterator fl;
+				PlaylistSet::iterator fl;
 
 				// only take state if this is a new playlist.
 				for (fl = freezelist.begin(); fl != freezelist.end(); ++fl) {
@@ -4817,9 +5031,19 @@ Editor::cut_copy_regions (CutCopyOp op, RegionSelection& rs)
 		}
 	}
 
+	struct Ripple {
+		std::shared_ptr<Playlist> playlist;
+		timepos_t position;
+		timecnt_t length;
+
+		Ripple (std::shared_ptr<Playlist> pl, timepos_t const & pos, timecnt_t const & len) : playlist (pl), position (pos), length (len) {}
+	};
+
+	std::list<Ripple> ripple_list;
+
 	for (RegionSelection::iterator x = rs.begin(); x != rs.end(); ) {
 
-		boost::shared_ptr<Playlist> pl = (*x)->region()->playlist();
+		std::shared_ptr<Playlist> pl = (*x)->region()->playlist();
 
 		if (!pl) {
 			/* region not yet associated with a playlist (e.g. unfinished
@@ -4830,7 +5054,7 @@ Editor::cut_copy_regions (CutCopyOp op, RegionSelection& rs)
 		}
 
 		TimeAxisView& tv = (*x)->get_time_axis_view();
-		boost::shared_ptr<Playlist> npl;
+		std::shared_ptr<Playlist> npl;
 		RegionSelection::iterator tmp;
 
 		tmp = x;
@@ -4857,8 +5081,8 @@ Editor::cut_copy_regions (CutCopyOp op, RegionSelection& rs)
 			}
 		}
 
-		boost::shared_ptr<Region> r = (*x)->region();
-		boost::shared_ptr<Region> _xx;
+		std::shared_ptr<Region> r = (*x)->region();
+		std::shared_ptr<Region> _xx;
 
 		assert (r != 0);
 
@@ -4866,7 +5090,7 @@ Editor::cut_copy_regions (CutCopyOp op, RegionSelection& rs)
 		case Delete:
 			pl->remove_region (r);
 			if (should_ripple()) {
-				do_ripple (pl, r->position(), -r->length(), boost::shared_ptr<Region>(), false);
+				ripple_list.push_front (Ripple (pl, r->position(), -r->length()));
 			}
 			break;
 
@@ -4875,7 +5099,7 @@ Editor::cut_copy_regions (CutCopyOp op, RegionSelection& rs)
 			npl->add_region (_xx, timepos_t (first_position.distance (r->position())));
 			pl->remove_region (r);
 			if (should_ripple()) {
-				do_ripple (pl, r->position(), -r->length(), boost::shared_ptr<Region>(), false);
+				ripple_list.push_front (Ripple (pl, r->position(), -r->length()));
 			}
 			break;
 
@@ -4887,7 +5111,7 @@ Editor::cut_copy_regions (CutCopyOp op, RegionSelection& rs)
 		case Clear:
 			pl->remove_region (r);
 			if (should_ripple()) {
-				do_ripple (pl, r->position(), -r->length(), boost::shared_ptr<Region>(), false);
+				ripple_list.push_front (Ripple (pl, r->position(), -r->length()));
 			}
 			break;
 		}
@@ -4895,9 +5119,24 @@ Editor::cut_copy_regions (CutCopyOp op, RegionSelection& rs)
 		x = tmp;
 	}
 
+	if (!ripple_list.empty()) {
+
+		/* The regions were sorted into (track, position) order. We
+		 * need to run the rippling in reverse order, so that later
+		 * cut/delete operations cause rippling further down the
+		 * timeline and then work towards zero.
+		 */
+
+		for (auto const & ripple : ripple_list) {
+			do_ripple (ripple.playlist, ripple.position, ripple.length, nullptr, freezelist, false);
+		}
+
+		ripple_list.clear ();
+	}
+
 	if (op != Delete) {
 
-		list<boost::shared_ptr<Playlist> > foo;
+		list<std::shared_ptr<Playlist> > foo;
 
 		/* the pmap is in the same order as the tracks in which selected regions occurred */
 
@@ -4919,14 +5158,15 @@ Editor::cut_copy_regions (CutCopyOp op, RegionSelection& rs)
 		}
 	}
 
-	for (FreezeList::iterator pl = freezelist.begin(); pl != freezelist.end(); ++pl) {
-		(*pl)->thaw ();
+	for (auto const & pl : freezelist) {
+
+		pl->thaw ();
 
 		/* We might have removed regions, which alters other regions' layering_index,
 		   so we need to do a recursive diff here.
 		*/
 
-		(*pl)->rdiff_and_add_command (_session);
+		pl->rdiff_and_add_command (_session);
 	}
 }
 
@@ -4952,6 +5192,52 @@ Editor::cut_copy_ranges (CutCopyOp op)
 
 	for (TrackViewList::iterator i = ts.begin(); i != ts.end(); ++i) {
 		(*i)->cut_copy_clear (*selection, op);
+	}
+
+	if (should_ripple_all() && (
+	     (op == Cut) ||
+	     (op == Delete) ||
+	     (op == Clear)) ){
+
+		//set up for undo
+		bool changed = false;
+		XMLNode &before = _session->locations()->get_state();
+
+		/* If markers are inside a deleted range, they must be removed */
+		/* TODO: currently we have no Cut-buffer for markers, we can only Delete them */
+		Locations::LocationList locs;
+		_session->locations()->find_all_between (selection->time.start_time(), selection->time.end_time(), locs, Location::Flags(0));
+		for (Locations::LocationList::iterator i = locs.begin(); i != locs.end(); ++i) {
+			if ((*i)->is_mark()) {
+				/* remove the marks in our Range */
+				_session->locations()->remove (*i);
+				changed = true;
+			} else if ((*i)->is_range_marker()) {
+				/* if a named-range is wholly incorporated in our Range: delete it */
+				if ((*i)->start() >= selection->time.start_time() && (*i)->end() <= selection->time.end_time() ) {
+					_session->locations()->remove (*i);
+					changed = true;
+				} else if ((*i)->start() >= selection->time.start_time() && (*i)->end() > selection->time.end_time() ) {
+					/* only the start of a named-range is incorporated in our Range: move it to the start of the selection */
+					(*i)->set_start(selection->time.start_time()) ;
+					changed = true;
+				} else if ((*i)->end() >= selection->time.start_time() && (*i)->end() > selection->time.end_time() ) {
+					/* only the end of a named-range is incorporated in our Range: move it to the start of the selection */
+					(*i)->set_end(selection->time.start_time()) ;
+					changed = true;
+				}
+			}
+		}
+
+		//store undo command
+		if (changed) {
+			XMLNode &after = _session->locations()->get_state();
+			_session->add_command(new MementoCommand<Locations>(*(_session->locations()), &before, &after));
+		}
+
+		/* markers to the right of a deleted range should be rippled to the left */
+		/* this stores more undo memento commands */
+		ripple_marks(std::shared_ptr<Playlist>(), selection->time.start_time(), -selection->time.length());
 	}
 }
 
@@ -4989,6 +5275,9 @@ Editor::paste_internal (timepos_t const & pos, float times)
 	if (cut_buffer->empty(internal_editing())) {
 		return;
 	}
+
+	/* the Paste operation will result in one or more new regions, and we want them to share a region-group-id */
+	Region::RegionGroupRetainer rgr;
 
 	if (position == timepos_t::max (position.time_domain())) {
 		position = get_preferred_edit_position();
@@ -5064,6 +5353,7 @@ Editor::paste_internal (timepos_t const & pos, float times)
 		   R1.A1, R1.A2, R2, R2.A1, ... */
 	}
 
+	bool commit = false;
 	begin_reversible_command (Operations::paste);
 
 	if (ts.size() == 1 && cut_buffer->lines.size() == 1 &&
@@ -5072,7 +5362,7 @@ Editor::paste_internal (timepos_t const & pos, float times)
 	       "greedy" paste from one automation type to another. */
 
 		PasteContext ctx(paste_count, times, ItemCounts(), true);
-		ts.front()->paste (position, *cut_buffer, ctx);
+		commit |= ts.front()->paste (position, *cut_buffer, ctx);
 
 	} else {
 
@@ -5080,13 +5370,17 @@ Editor::paste_internal (timepos_t const & pos, float times)
 
 		PasteContext ctx(paste_count, times, ItemCounts(), false);
 		for (TrackViewList::iterator i = ts.begin(); i != ts.end(); ++i) {
-			(*i)->paste (position, *cut_buffer, ctx);
+			commit |= (*i)->paste (position, *cut_buffer, ctx);
 		}
 	}
 
 	++paste_count;
 
-	commit_reversible_command ();
+	if (commit) {
+		commit_reversible_command ();
+	} else {
+		abort_reversible_command ();
+	}
 }
 
 void
@@ -5103,14 +5397,15 @@ Editor::duplicate_some_regions (RegionSelection& regions, float times)
 		return;
 	}
 
-	boost::shared_ptr<Playlist> playlist;
-	std::set<boost::shared_ptr<Playlist> > playlists; // list of unique playlists affected by duplication
+	std::vector<sigc::connection> cl;
+	std::shared_ptr<Playlist> playlist;
+	PlaylistSet playlists; // list of unique playlists affected by duplication
 	RegionSelection sel = regions; // clear (below) may  clear the argument list if its the current region selection
 	RegionSelection foo;
 
-	timepos_t const start_sample = regions.start_time ();
-	timepos_t const end_sample = regions.end_time ();
-	timecnt_t const span = start_sample.distance (end_sample);
+	timepos_t const start_time = regions.start_time ();
+	timepos_t const end_time = regions.end_time ().increment();
+	timecnt_t const span = start_time.distance (end_time);
 
 	begin_reversible_command (Operations::duplicate_region);
 
@@ -5131,42 +5426,63 @@ Editor::duplicate_some_regions (RegionSelection& regions, float times)
 				/* successfully inserted into set, so it's the first time we've seen this playlist */
 				playlist->clear_changes ();
 				playlist->clear_owned_changes ();
+				playlist->freeze ();
 			}
 		}
 
-		for (set<boost::shared_ptr<Playlist> >::iterator p = playlists.begin(); p != playlists.end(); ++p) {
-			do_ripple ((*p), start_sample, span * times, &exclude, false);
+		for (PlaylistSet::iterator p = playlists.begin(); p != playlists.end(); ++p) {
+			do_ripple ((*p), start_time, span.scale (times), &exclude, playlists, false);
 		}
 	}
 
 	for (RegionSelection::iterator i = sel.begin(); i != sel.end(); ++i) {
 
-		boost::shared_ptr<Region> r ((*i)->region());
+		std::shared_ptr<Region> r ((*i)->region());
 
 		TimeAxisView& tv = (*i)->get_time_axis_view();
 		RouteTimeAxisView* rtv = dynamic_cast<RouteTimeAxisView*> (&tv);
-		latest_regionviews.clear ();
-		sigc::connection c = rtv->view()->RegionViewAdded.connect (sigc::mem_fun(*this, &Editor::collect_new_region_view));
+		cl.push_back (rtv->view()->RegionViewAdded.connect (sigc::mem_fun(*this, &Editor::collect_new_region_view)));
 
-		timepos_t position = end_sample + (start_sample.distance (r->end()));
+		/* XXX problem arew here. When duplicating audio regions, the
+		 * next one must be positioned 1 sample after the end of the
+		 * prior region.
+		 *
+		 * For MIDI, this is not requiredd, because we allow MIDI
+		 * events to be simultaneous without affecting semantics.
+		 *
+		 * HOWEVER, opaque MIDI regions will cause an underlying note
+		 * off at the end of earlier region to not be delivered. In
+		 * reality, the note tracker will fix this by resolving all
+		 * on-notes at the region's end, but that does not seem like a
+		 * good solution.
+		 */
+
+		timepos_t position = end_time;
+		position += start_time.distance (r->position());
+
 		playlist = (*i)->region()->playlist();
 
 		if (!should_ripple()) {
 			if (playlists.insert (playlist).second) {
 				playlist->clear_changes ();
 				playlist->clear_owned_changes ();
+				playlist->freeze ();
 			}
 		}
 
 		playlist->duplicate (r, position, span, times);
 
-		c.disconnect ();
+	}
 
+	for (PlaylistSet::iterator p = playlists.begin(); p != playlists.end(); ++p) {
+		latest_regionviews.clear ();
+		(*p)->thaw ();
+		(*p)->rdiff_and_add_command (_session);
 		foo.insert (foo.end(), latest_regionviews.begin(), latest_regionviews.end());
 	}
 
-	for (set<boost::shared_ptr<Playlist> >::iterator p = playlists.begin(); p != playlists.end(); ++p) {
-		(*p)->rdiff_and_add_command (_session);
+	for (auto& c: cl) {
+		c.disconnect ();
 	}
 
 	if (!foo.empty()) {
@@ -5183,7 +5499,7 @@ Editor::duplicate_selection (float times)
 		return;
 	}
 
-	boost::shared_ptr<Playlist> playlist;
+	std::shared_ptr<Playlist> playlist;
 
 	TrackViewList ts = selection->tracks.filter_to_unique_playlists ();
 
@@ -5252,7 +5568,7 @@ Editor::center_edit_point ()
 
 /** Caller must begin and commit a reversible command */
 void
-Editor::clear_playlist (boost::shared_ptr<Playlist> playlist)
+Editor::clear_playlist (std::shared_ptr<Playlist> playlist)
 {
 	playlist->clear_changes ();
 	playlist->clear ();
@@ -5262,7 +5578,7 @@ Editor::clear_playlist (boost::shared_ptr<Playlist> playlist)
 void
 Editor::nudge_track (bool use_edit, bool forwards)
 {
-	boost::shared_ptr<Playlist> playlist;
+	std::shared_ptr<Playlist> playlist;
 	timecnt_t distance;
 	timecnt_t next_distance;
 	timepos_t start;
@@ -5392,7 +5708,7 @@ Editor::tag_regions (RegionList regions)
 void
 Editor::tag_selected_region ()
 {
-	std::list<boost::shared_ptr<Region> > rlist;
+	std::list<std::shared_ptr<Region> > rlist;
 
 	RegionSelection rs = get_regions_from_selection_and_entered ();
 	for (RegionSelection::iterator r = rs.begin(); r != rs.end(); r++) {
@@ -5409,17 +5725,17 @@ Editor::tag_last_capture ()
 		return;
 	}
 
-	std::list<boost::shared_ptr<Region> > rlist;
+	std::list<std::shared_ptr<Region> > rlist;
 
-	std::list<boost::shared_ptr<Source> > srcs;
+	std::list<std::shared_ptr<Source> > srcs;
 	_session->get_last_capture_sources (srcs);
-	for (std::list<boost::shared_ptr<Source> >::iterator i = srcs.begin(); i != srcs.end(); ++i) {
-		boost::shared_ptr<ARDOUR::Source> source = (*i);
+	for (std::list<std::shared_ptr<Source> >::iterator i = srcs.begin(); i != srcs.end(); ++i) {
+		std::shared_ptr<ARDOUR::Source> source = (*i);
 		if (source) {
 
-			set<boost::shared_ptr<Region> > regions;
+			set<std::shared_ptr<Region> > regions;
 			RegionFactory::get_regions_using_source (source, regions);
-			for (set<boost::shared_ptr<Region> >::iterator r = regions.begin(); r != regions.end(); r++) {
+			for (set<std::shared_ptr<Region> >::iterator r = regions.begin(); r != regions.end(); r++) {
 				rlist.push_back(*r);
 			}
 
@@ -5579,41 +5895,6 @@ Editor::normalize_region ()
 	}
 }
 
-
-void
-Editor::reset_region_scale_amplitude ()
-{
-	if (!_session) {
-		return;
-	}
-
-	RegionSelection rs = get_regions_from_selection_and_entered ();
-
-	if (rs.empty()) {
-		return;
-	}
-
-	bool in_command = false;
-
-	for (RegionSelection::iterator r = rs.begin(); r != rs.end(); ++r) {
-		AudioRegionView* const arv = dynamic_cast<AudioRegionView*>(*r);
-		if (!arv)
-			continue;
-		arv->region()->clear_changes ();
-		arv->audio_region()->set_scale_amplitude (1.0f);
-
-		if(!in_command) {
-				begin_reversible_command ("reset gain");
-				in_command = true;
-		}
-		_session->add_command (new StatefulDiffCommand (arv->region()));
-	}
-
-	if (in_command) {
-		commit_reversible_command ();
-	}
-}
-
 void
 Editor::adjust_region_gain (bool up)
 {
@@ -5639,7 +5920,8 @@ Editor::adjust_region_gain (bool up)
 
 		arv->region()->clear_changes ();
 
-		double dB = accurate_coefficient_to_dB (arv->audio_region()->scale_amplitude ());
+		gain_t scale_amplitude = arv->audio_region()->scale_amplitude ();
+		double dB = accurate_coefficient_to_dB (fabsf (scale_amplitude));
 
 		if (up) {
 			dB += 1;
@@ -5647,7 +5929,7 @@ Editor::adjust_region_gain (bool up)
 			dB -= 1;
 		}
 
-		arv->audio_region()->set_scale_amplitude (dB_to_coefficient (dB));
+		arv->audio_region()->set_scale_amplitude (dB_to_coefficient (dB) * (scale_amplitude < 0 ? -1. : 1.));
 
 		if (!in_command) {
 				begin_reversible_command ("adjust region gain");
@@ -5750,11 +6032,15 @@ Editor::strip_region_silence ()
 	}
 }
 
-Command*
+PBD::Command*
 Editor::apply_midi_note_edit_op_to_region (MidiOperator& op, MidiRegionView& mrv)
 {
 	Evoral::Sequence<Temporal::Beats>::Notes selected;
 	mrv.selection_as_notelist (selected, true);
+
+	if (selected.empty()) {
+		return 0;
+	}
 
 	vector<Evoral::Sequence<Temporal::Beats>::Notes> v;
 	v.push_back (selected);
@@ -5794,8 +6080,91 @@ Editor::apply_midi_note_edit_op (MidiOperator& op, const RegionSelection& rs)
 	}
 }
 
+#include "ardour/midi_source.h" // MidiSource::name()
+
 void
-Editor::fork_region ()
+Editor::fork_regions_from_unselected ()
+{
+	/* keep linkage between regions in the selection, but unlink from unselected regions */
+	RegionSelection rs = get_regions_from_selection_and_entered ();
+
+	if (rs.empty()) {
+		return;
+	}
+
+	CursorContext::Handle cursor_ctx = CursorContext::create(*this, _cursors->wait);
+	bool in_command = false;
+
+	gdk_flush ();
+
+	/* find the set of all MidiSources associated with the selected regions */
+	std::set<std::shared_ptr<MidiSource> > sources_list;
+	for (const auto& r : rs) {
+		const MidiRegionView* const mrv = dynamic_cast<const MidiRegionView*>(r);
+		if (!mrv)
+			continue; // not a MIDI region
+
+		sources_list.insert(mrv->midi_region()->midi_source());
+	}
+
+	PlaylistSet affected_playlists;
+	for (auto r : rs) {
+		const MidiRegionView* const mrv = dynamic_cast<const MidiRegionView*>(r);
+		if (mrv && sources_list.find(mrv->midi_region()->midi_source()) != sources_list.end()) {
+			affected_playlists.insert(mrv->region()->playlist());
+		}
+	}
+	for (auto const & p : affected_playlists) {
+		p->clear_changes ();
+		p->freeze ();
+	}
+
+	/* iterate over sources that need to be duplicated */
+	for (const auto& ms : sources_list) {
+		/* duplicate source */
+		std::shared_ptr<MidiSource> new_source = _session->create_midi_source_for_session (ms->name());
+		for (RegionSelection::iterator r = rs.begin(); r != rs.end(); ) {
+			RegionSelection::iterator tmp = r;
+			++tmp;
+
+			const MidiRegionView* const mrv = dynamic_cast<const MidiRegionView*>(*r);
+
+			if (!mrv) {
+				r = tmp;
+				continue;
+			}
+			if (mrv->midi_region()->midi_source() != ms) {
+				r = tmp;
+				continue;
+			}
+
+			try {
+				if (!in_command) {
+					begin_reversible_command (_("Unlink from unselected"));
+					in_command = true;
+				}
+				std::shared_ptr<Playlist> playlist = mrv->region()->playlist();
+				std::shared_ptr<Region> new_region = mrv->midi_region()->clone (new_source);
+				new_region->set_name (mrv->region()->name() + "-unlinked-region");
+				playlist->replace_region (mrv->region(), new_region, mrv->region()->position());
+			} catch (...) {
+				error << string_compose (_("Could not unlink %1"), mrv->region()->name()) << endmsg;
+			}
+			r = tmp;
+		}
+	}
+	if (in_command) {
+		for (auto p : affected_playlists) {
+			p->thaw ();
+			_session->add_command(new StatefulDiffCommand (p));
+		}
+
+		commit_reversible_command ();
+	}
+}
+
+void
+Editor::fork_selected_regions ()
 {
 	RegionSelection rs = get_regions_from_selection_and_entered ();
 
@@ -5816,9 +6185,9 @@ Editor::fork_region ()
 
 		if (mrv) {
 			try {
-				boost::shared_ptr<Playlist> playlist = mrv->region()->playlist();
-				boost::shared_ptr<MidiSource> new_source = _session->create_midi_source_by_stealing_name (mrv->midi_view()->track());
-				boost::shared_ptr<MidiRegion> newregion = mrv->midi_region()->clone (new_source);
+				std::shared_ptr<Playlist> playlist = mrv->region()->playlist();
+				std::shared_ptr<MidiSource> new_source = _session->create_midi_source_by_stealing_name (mrv->midi_view()->track());
+				std::shared_ptr<MidiRegion> newregion = mrv->midi_region()->clone (new_source);
 
 				if (!in_command) {
 					begin_reversible_command (_("Fork Region(s)"));
@@ -5855,31 +6224,51 @@ Editor::quantize_regions (const RegionSelection& rs)
 		return;
 	}
 
-	if (!quantize_dialog) {
-		quantize_dialog = new QuantizeDialog (*this);
-	}
+	bool ignored;
+	Quantize quant = get_quantize_op (true, ignored);
 
-	if (quantize_dialog->is_mapped()) {
-		/* in progress already */
-		return;
-	}
-
-	quantize_dialog->present ();
-	const int r = quantize_dialog->run ();
-	quantize_dialog->hide ();
-
-	if (r == Gtk::RESPONSE_OK) {
-		Quantize quant (quantize_dialog->snap_start(),
-		                quantize_dialog->snap_end(),
-				quantize_dialog->start_grid_size(),
-		                quantize_dialog->end_grid_size(),
-				quantize_dialog->strength(),
-		                quantize_dialog->swing(),
-		                quantize_dialog->threshold());
-
+	if (!quant.empty()) {
 		apply_midi_note_edit_op (quant, rs);
 	}
 }
+
+Quantize
+Editor::get_quantize_op (bool force_dialog, bool& did_show_dialog)
+{
+	did_show_dialog = false;
+
+	if (!quantize_dialog) {
+		quantize_dialog = new QuantizeDialog (*this);
+		force_dialog = true;
+	}
+
+	if (quantize_dialog->get_mapped()) {
+		/* in progress already */
+		return Quantize (false, false, Temporal::Beats(), Temporal::Beats(), 0., 0., Temporal::Beats());
+	}
+
+	int r = Gtk::RESPONSE_OK;
+
+	if (force_dialog) {
+		quantize_dialog->present ();
+		r = quantize_dialog->run ();
+		quantize_dialog->hide ();
+		did_show_dialog = true;
+	}
+
+	if (r == Gtk::RESPONSE_OK) {
+		return Quantize (quantize_dialog->snap_start(),
+		                 quantize_dialog->snap_end(),
+		                 quantize_dialog->start_grid_size(),
+		                 quantize_dialog->end_grid_size(),
+		                 quantize_dialog->strength(),
+		                 quantize_dialog->swing(),
+		                 quantize_dialog->threshold());
+	}
+
+	return Quantize (false, false, Temporal::Beats(), Temporal::Beats(), 0., 0., Temporal::Beats());
+}
+
 
 void
 Editor::legatize_region (bool shrink_only)
@@ -6046,58 +6435,58 @@ Editor::apply_filter (Filter& filter, string command, ProgressReporter* progress
 		RegionSelection::iterator tmp = r;
 		++tmp;
 
-		AudioRegionView* const arv = dynamic_cast<AudioRegionView*>(*r);
-		if (arv) {
-			boost::shared_ptr<Playlist> playlist = arv->region()->playlist();
+		RegionView* const rv = *r;
+		std::shared_ptr<Playlist> playlist = rv->region()->playlist();
 
-			if (progress) {
-				progress->descend (1.0 / N);
+		if (progress) {
+			progress->descend (1.0 / N);
+		}
+
+		if (rv->region()->apply (filter, progress) == 0) {
+
+			playlist->clear_changes ();
+			playlist->clear_owned_changes ();
+
+			if (!in_command) {
+				begin_reversible_command (command);
+				in_command = true;
 			}
 
-			if (arv->audio_region()->apply (filter, progress) == 0) {
+			if (filter.results.empty ()) {
 
-				playlist->clear_changes ();
-				playlist->clear_owned_changes ();
+				/* no regions returned; remove the old one */
+				// playlist->remove_region (rv->region ());
 
-				if (!in_command) {
-					begin_reversible_command (command);
-					in_command = true;
-				}
+			} else {
 
-				if (filter.results.empty ()) {
+				playlist->freeze ();
+				std::vector<std::shared_ptr<Region> >::iterator res = filter.results.begin ();
 
-					/* no regions returned; remove the old one */
-					playlist->remove_region (arv->region ());
+				/* first region replaces the old one */
+				playlist->replace_region (rv->region(), *res, (*res)->position());
+				++res;
 
-				} else {
-
-					std::vector<boost::shared_ptr<Region> >::iterator res = filter.results.begin ();
-
-					/* first region replaces the old one */
-					playlist->replace_region (arv->region(), *res, (*res)->position());
+				/* add the rest */
+				while (res != filter.results.end()) {
+					playlist->add_region (*res, (*res)->position());
 					++res;
-
-					/* add the rest */
-					while (res != filter.results.end()) {
-						playlist->add_region (*res, (*res)->position());
-						++res;
-					}
-
 				}
+				playlist->thaw ();
 
-				/* We might have removed regions, which alters other regions' layering_index,
-				   so we need to do a recursive diff here.
-				*/
-				vector<Command*> cmds;
-				playlist->rdiff (cmds);
-				_session->add_commands (cmds);
-
-				_session->add_command(new StatefulDiffCommand (playlist));
 			}
 
-			if (progress) {
-				progress->ascend ();
-			}
+			/* We might have removed regions, which alters other regions' layering_index,
+			   so we need to do a recursive diff here.
+			*/
+			vector<Command*> cmds;
+			playlist->rdiff (cmds);
+			_session->add_commands (cmds);
+
+			_session->add_command(new StatefulDiffCommand (playlist));
+		}
+
+		if (progress) {
+			progress->ascend ();
 		}
 
 		r = tmp;
@@ -6129,7 +6518,7 @@ Editor::reset_region_gain_envelopes ()
 	for (RegionSelection::iterator i = rs.begin(); i != rs.end(); ++i) {
 		AudioRegionView* const arv = dynamic_cast<AudioRegionView*>(*i);
 		if (arv) {
-			boost::shared_ptr<AutomationList> alist (arv->audio_region()->envelope());
+			std::shared_ptr<AutomationList> alist (arv->audio_region()->envelope());
 			XMLNode& before (alist->get_state());
 
 			arv->audio_region()->set_default_envelope ();
@@ -6168,6 +6557,41 @@ Editor::set_gain_envelope_visibility ()
 		if (v) {
 			v->audio_view()->foreach_regionview (sigc::mem_fun (this, &Editor::set_region_gain_visibility));
 		}
+	}
+}
+
+void
+Editor::toggle_region_polarity ()
+{
+	if (_ignore_region_action) {
+		return;
+	}
+
+	RegionSelection rs = get_regions_from_selection_and_entered ();
+
+	if (!_session || rs.empty()) {
+		return;
+	}
+
+	bool in_command = false;
+
+	for (RegionSelection::iterator i = rs.begin(); i != rs.end(); ++i) {
+		AudioRegionView* const arv = dynamic_cast<AudioRegionView*>(*i);
+		if (arv) {
+			arv->region()->clear_changes ();
+			gain_t scale_amplitude = arv->audio_region()->scale_amplitude ();
+			arv->audio_region()->set_scale_amplitude (-1 * scale_amplitude);
+
+			if (!in_command) {
+				begin_reversible_command (_("region polarity invert"));
+				in_command = true;
+			}
+			_session->add_command (new StatefulDiffCommand (arv->region()));
+		}
+	}
+
+	if (in_command) {
+		commit_reversible_command ();
 	}
 }
 
@@ -6371,8 +6795,8 @@ Editor::play_solo_selection (bool restart)
 		TriggerEntry* entry = *ts.begin();
 		TriggerPtr slot = entry->trigger();
 		ARDOUR::SessionObject *obj = slot->box().owner();
-		boost::shared_ptr<Stripable> shared_strip = _session->stripable_by_id(obj->id());
-		StripableList sl;  sl.push_back(boost::shared_ptr<Stripable>(shared_strip));
+		std::shared_ptr<Stripable> shared_strip = _session->stripable_by_id(obj->id());
+		StripableList sl;  sl.push_back(std::shared_ptr<Stripable>(shared_strip));
 		_session->solo_selection (sl, true);
 		_session->request_cancel_play_range();
 		slot->bang();  //ToDo:  how will this work with Gate+Repeat ?
@@ -6392,7 +6816,7 @@ Editor::toggle_solo ()
 {
 	bool new_state = false;
 	bool first = true;
-	boost::shared_ptr<ControlList> cl (new ControlList);
+	std::shared_ptr<AutomationControlList> cl (new AutomationControlList);
 
 	for (TrackSelection::iterator i = selection->tracks.begin(); i != selection->tracks.end(); ++i) {
 		StripableTimeAxisView *stav = dynamic_cast<StripableTimeAxisView *>(*i);
@@ -6417,7 +6841,7 @@ Editor::toggle_mute ()
 {
 	bool new_state = false;
 	bool first = true;
-	boost::shared_ptr<ControlList> cl (new ControlList);
+	std::shared_ptr<AutomationControlList> cl (new AutomationControlList);
 
 	for (TrackSelection::iterator i = selection->tracks.begin(); i != selection->tracks.end(); ++i) {
 		StripableTimeAxisView *stav = dynamic_cast<StripableTimeAxisView *>(*i);
@@ -6431,7 +6855,7 @@ Editor::toggle_mute ()
 			first = false;
 		}
 
-		boost::shared_ptr<MuteControl> mc = stav->stripable()->mute_control();
+		std::shared_ptr<MuteControl> mc = stav->stripable()->mute_control();
 		cl->push_back (mc);
 		mc->start_touch (timepos_t (_session->audible_sample ()));
 	}
@@ -6507,7 +6931,7 @@ Editor::set_fade_length (bool in)
 			continue;
 		}
 
-		boost::shared_ptr<AutomationList> alist;
+		std::shared_ptr<AutomationList> alist;
 		if (in) {
 			alist = tmp->audio_region()->fade_in();
 		} else {
@@ -6554,7 +6978,7 @@ Editor::set_fade_in_shape (FadeShape shape)
 			continue;
 		}
 
-		boost::shared_ptr<AutomationList> alist = tmp->audio_region()->fade_in();
+		std::shared_ptr<AutomationList> alist = tmp->audio_region()->fade_in();
 		XMLNode &before = alist->get_state();
 
 		tmp->audio_region()->set_fade_in_shape (shape);
@@ -6589,7 +7013,7 @@ Editor::set_fade_out_shape (FadeShape shape)
 			continue;
 		}
 
-		boost::shared_ptr<AutomationList> alist = tmp->audio_region()->fade_out();
+		std::shared_ptr<AutomationList> alist = tmp->audio_region()->fade_out();
 		XMLNode &before = alist->get_state();
 
 		tmp->audio_region()->set_fade_out_shape (shape);
@@ -6625,7 +7049,7 @@ Editor::set_fade_in_active (bool yn)
 		}
 
 
-		boost::shared_ptr<AudioRegion> ar (tmp->audio_region());
+		std::shared_ptr<AudioRegion> ar (tmp->audio_region());
 
 		ar->clear_changes ();
 		ar->set_fade_in_active (yn);
@@ -6659,7 +7083,7 @@ Editor::set_fade_out_active (bool yn)
 			continue;
 		}
 
-		boost::shared_ptr<AudioRegion> ar (tmp->audio_region());
+		std::shared_ptr<AudioRegion> ar (tmp->audio_region());
 
 		ar->clear_changes ();
 		ar->set_fade_out_active (yn);
@@ -6683,7 +7107,7 @@ Editor::toggle_region_fades (int dir)
 		return;
 	}
 
-	boost::shared_ptr<AudioRegion> ar;
+	std::shared_ptr<AudioRegion> ar;
 	bool yn = false;
 
 	RegionSelection rs = get_regions_from_selection_and_entered ();
@@ -6694,7 +7118,7 @@ Editor::toggle_region_fades (int dir)
 
 	RegionSelection::iterator i;
 	for (i = rs.begin(); i != rs.end(); ++i) {
-		if ((ar = boost::dynamic_pointer_cast<AudioRegion>((*i)->region())) != 0) {
+		if ((ar = std::dynamic_pointer_cast<AudioRegion>((*i)->region())) != 0) {
 			if (dir == -1) {
 				yn = ar->fade_out_active ();
 			} else {
@@ -6712,7 +7136,7 @@ Editor::toggle_region_fades (int dir)
 	bool in_command = false;
 
 	for (RegionSelection::iterator i = rs.begin(); i != rs.end(); ++i) {
-		if ((ar = boost::dynamic_pointer_cast<AudioRegion>((*i)->region())) == 0) {
+		if ((ar = std::dynamic_pointer_cast<AudioRegion>((*i)->region())) == 0) {
 			continue;
 		}
 		ar->clear_changes ();
@@ -7160,7 +7584,7 @@ Editor::set_tempo_from_region ()
 
 	RegionView* rv = rs.front();
 
-	define_one_bar (rv->region()->position(), rv->region()->end());
+	define_one_bar (rv->region()->position(), rv->region()->end(), _("region"));
 }
 
 void
@@ -7168,16 +7592,16 @@ Editor::use_range_as_bar ()
 {
 	timepos_t start, end;
 	if (get_edit_op_range (start, end)) {
-		define_one_bar (start, end);
+		define_one_bar (start, end, _("range"));
 	}
 }
 
 void
-Editor::define_one_bar (timepos_t const & start, timepos_t const & end)
+Editor::define_one_bar (timepos_t const & start, timepos_t const & end, std::string const & from)
 {
 	timecnt_t length = start.distance (end);
 
-	TempoMap::SharedPtr tmap (TempoMap::write_copy());
+	TempoMap::SharedPtr tmap (TempoMap::use());
 	const Meter& m (tmap->meter_at (start));
 
 	/* length = 1 bar */
@@ -7193,7 +7617,7 @@ Editor::define_one_bar (timepos_t const & start, timepos_t const & end)
 
 	/* beats per minute = */
 
-	double beats_per_minute = (superclock_ticks_per_second * 60.0) / superclocks_per_beat;
+	double beats_per_minute = (superclock_ticks_per_second() * 60.0) / superclocks_per_beat;
 
 	/* now decide whether to:
 
@@ -7245,25 +7669,17 @@ Editor::define_one_bar (timepos_t const & start, timepos_t const & end)
 		*/
 	}
 
-	begin_reversible_command (_("set tempo from region"));
-	XMLNode& before (tmap->get_state());
+	TempoMapChange tmc (*this, string_compose (_("set tempo from %1"), from));
 
 	if (do_global) {
-		tmap->set_tempo (Tempo (beats_per_minute, t.end_note_types_per_minute(), t.note_type()), timepos_t());
+		tmc.map().set_tempo (Tempo (beats_per_minute, t.end_note_types_per_minute(), t.note_type()), timepos_t());
 	} else if (t.time() == start) {
-		tmap->set_tempo (Tempo (beats_per_minute, t.end_note_types_per_minute(), t.note_type()), start);
+		tmc.map().set_tempo (Tempo (beats_per_minute, t.end_note_types_per_minute(), t.note_type()), start);
 	} else {
 		/* constant tempo */
 		const Tempo tempo (beats_per_minute, t.note_type());
-		tmap->set_tempo (tempo, start);
+		tmc.map().set_tempo (tempo, start);
 	}
-
-	XMLNode& after (tmap->get_state());
-
-	_session->add_command (new MementoCommand<Temporal::TempoMap> (new Temporal::TempoMap::MementoBinder(), &before, &after));
-	commit_reversible_command ();
-
-	TempoMap::update (tmap);
 }
 
 void
@@ -7286,7 +7702,7 @@ Editor::split_region_at_transients ()
 		tmp = i;
 		++tmp;
 
-		boost::shared_ptr<AudioRegion> ar = boost::dynamic_pointer_cast<AudioRegion> ((*i)->region());
+		std::shared_ptr<AudioRegion> ar = std::dynamic_pointer_cast<AudioRegion> ((*i)->region());
 
 		if (ar) {
 			ar->transients (positions);
@@ -7302,13 +7718,13 @@ Editor::split_region_at_transients ()
 }
 
 void
-Editor::split_region_at_points (boost::shared_ptr<Region> r, AnalysisFeatureList& positions, bool can_ferret, bool select_new)
+Editor::split_region_at_points (std::shared_ptr<Region> r, AnalysisFeatureList& positions, bool can_ferret, bool select_new)
 {
 	bool use_rhythmic_rodent = false;
 
-	boost::shared_ptr<Playlist> pl = r->playlist();
+	std::shared_ptr<Playlist> pl = r->playlist();
 
-	list<boost::shared_ptr<Region> > new_regions;
+	list<std::shared_ptr<Region> > new_regions;
 
 	if (!pl) {
 		return;
@@ -7366,7 +7782,7 @@ Editor::split_region_at_points (boost::shared_ptr<Region> r, AnalysisFeatureList
 	pl->freeze ();
 	pl->remove_region (r);
 
-	timepos_t pos;
+	timepos_t pos (AudioTime);
 
 	const timepos_t rstart = r->position ();
 	const samplepos_t start_sample = r->position_sample();
@@ -7374,7 +7790,7 @@ Editor::split_region_at_points (boost::shared_ptr<Region> r, AnalysisFeatureList
 
 	while (x != positions.end()) {
 
-		/* deal with positons that are out of scope of present region bounds */
+		/* deal with positions that are out of scope of present region bounds */
 
 		if (*x < start_sample || *x >= end_sample) {
 			++x;
@@ -7385,16 +7801,21 @@ Editor::split_region_at_points (boost::shared_ptr<Region> r, AnalysisFeatureList
 
 		timepos_t file_start = r->start() + pos;
 
-		/* length = next position - current position */
+		/* length = next position - current position
+		 * len = (*x) - pos - rstart;
+		 */
 
 		timecnt_t len = pos.distance (timepos_t (*x)) - rstart;
 
-		/* XXX we do we really want to allow even single-sample regions?
-		 * shouldn't we have some kind of lower limit on region size?
+		/* Transient and Onset analysis has a min gap size, but
+		 * user placed transients can be placed every sample.
+		 *
+		 * We might want to have a lower limit on the region size.
 		 */
 
-		if (len.is_zero () || len.is_negative()) {
-			break;
+		if (!len.is_positive ()) {
+			++x;
+			continue;
 		}
 
 		string new_name;
@@ -7405,7 +7826,7 @@ Editor::split_region_at_points (boost::shared_ptr<Region> r, AnalysisFeatureList
 
 		/* do NOT announce new regions 1 by one, just wait till they are all done */
 
-		PropertyList plist;
+		PropertyList plist (r->derive_properties ());
 
 		plist.add (ARDOUR::Properties::start, file_start);
 		plist.add (ARDOUR::Properties::length, len);
@@ -7413,8 +7834,8 @@ Editor::split_region_at_points (boost::shared_ptr<Region> r, AnalysisFeatureList
 		plist.add (ARDOUR::Properties::layer, 0);
 		// TODO set transients_offset
 
-		boost::shared_ptr<Region> nr = RegionFactory::create (r->sources(), plist, false);
-		/* because we set annouce to false, manually add the new region to the
+		std::shared_ptr<Region> nr = RegionFactory::create (r->sources(), plist, false);
+		/* because we set announce to false, manually add the new region to the
 		 * RegionFactory map
 		 */
 		RegionFactory::map_add (nr);
@@ -7434,15 +7855,15 @@ Editor::split_region_at_points (boost::shared_ptr<Region> r, AnalysisFeatureList
 	RegionFactory::region_name (new_name, r->name());
 
 	/* Add the final region */
-	PropertyList plist;
+	PropertyList plist (r->derive_properties ());
 
 	plist.add (ARDOUR::Properties::start, r->start() + pos);
 	plist.add (ARDOUR::Properties::length, (r->position() + pos).distance (r->end()));
 	plist.add (ARDOUR::Properties::name, new_name);
 	plist.add (ARDOUR::Properties::layer, 0);
 
-	boost::shared_ptr<Region> nr = RegionFactory::create (r->sources(), plist, false);
-	/* because we set annouce to false, manually add the new region to the
+	std::shared_ptr<Region> nr = RegionFactory::create (r->sources(), plist, false);
+	/* because we set announce to false, manually add the new region to the
 	   RegionFactory map
 	*/
 	RegionFactory::map_add (nr);
@@ -7465,7 +7886,7 @@ Editor::split_region_at_points (boost::shared_ptr<Region> r, AnalysisFeatureList
 
 	if (select_new) {
 
-		for (list<boost::shared_ptr<Region> >::iterator i = new_regions.begin(); i != new_regions.end(); ++i){
+		for (list<std::shared_ptr<Region> >::iterator i = new_regions.begin(); i != new_regions.end(); ++i){
 			set_selected_regionview_from_region_list ((*i), Selection::Add);
 		}
 	}
@@ -7512,7 +7933,7 @@ Editor::remove_transient(ArdourCanvas::Item* item)
 void
 Editor::snap_regions_to_grid ()
 {
-	list <boost::shared_ptr<Playlist > > used_playlists;
+	list <std::shared_ptr<Playlist > > used_playlists;
 
 	RegionSelection rs = get_regions_from_selection_and_entered ();
 
@@ -7524,7 +7945,7 @@ Editor::snap_regions_to_grid ()
 
 	for (RegionSelection::iterator r = rs.begin(); r != rs.end(); ++r) {
 
-		boost::shared_ptr<Playlist> pl = (*r)->region()->playlist();
+		std::shared_ptr<Playlist> pl = (*r)->region()->playlist();
 
 		if (!pl->frozen()) {
 			/* we haven't seen this playlist before */
@@ -7542,7 +7963,7 @@ Editor::snap_regions_to_grid ()
 	}
 
 	while (used_playlists.size() > 0) {
-		list <boost::shared_ptr<Playlist > >::iterator i = used_playlists.begin();
+		list <std::shared_ptr<Playlist > >::iterator i = used_playlists.begin();
 		(*i)->thaw();
 		used_playlists.pop_front();
 	}
@@ -7553,7 +7974,7 @@ Editor::snap_regions_to_grid ()
 void
 Editor::close_region_gaps ()
 {
-	list <boost::shared_ptr<Playlist > > used_playlists;
+	list <std::shared_ptr<Playlist > > used_playlists;
 
 	RegionSelection rs = get_regions_from_selection_and_entered ();
 
@@ -7612,13 +8033,13 @@ Editor::close_region_gaps ()
 	begin_reversible_command (_("close region gaps"));
 
 	int idx = 0;
-	boost::shared_ptr<Region> last_region;
+	std::shared_ptr<Region> last_region;
 
 	rs.sort_by_position_and_track();
 
 	for (RegionSelection::iterator r = rs.begin(); r != rs.end(); ++r) {
 
-		boost::shared_ptr<Playlist> pl = (*r)->region()->playlist();
+		std::shared_ptr<Playlist> pl = (*r)->region()->playlist();
 
 		if (!pl->frozen()) {
 			/* we haven't seen this playlist before */
@@ -7650,7 +8071,7 @@ Editor::close_region_gaps ()
 	}
 
 	while (used_playlists.size() > 0) {
-		list <boost::shared_ptr<Playlist > >::iterator i = used_playlists.begin();
+		list <std::shared_ptr<Playlist > >::iterator i = used_playlists.begin();
 		(*i)->thaw();
 		used_playlists.pop_front();
 	}
@@ -7684,9 +8105,9 @@ Editor::tab_to_transient (bool forward)
 			RouteTimeAxisView* rtv = dynamic_cast<RouteTimeAxisView*> (*t);
 
 			if (rtv) {
-				boost::shared_ptr<Track> tr = rtv->track();
+				std::shared_ptr<Track> tr = rtv->track();
 				if (tr) {
-					boost::shared_ptr<Playlist> pl = tr->playlist ();
+					std::shared_ptr<Playlist> pl = tr->playlist ();
 					if (pl) {
 						samplepos_t result = pl->find_next_transient (tpos, forward ? 1 : -1);
 
@@ -7746,28 +8167,24 @@ Editor::playhead_forward_to_grid ()
 		return;
 	}
 
-	timepos_t pos  (_playhead_cursor->current_sample ());
+	timepos_t pos (_playhead_cursor->current_sample ());
 
-	if ( _grid_type == GridTypeNone) {
-		if (pos < timepos_t::max (pos.time_domain()).earlier (timepos_t (samplepos_t (floor (current_page_samples()*0.1))))) {
-			pos += timepos_t (samplepos_t (floor (current_page_samples()*0.1)));
+	if (_grid_type == GridTypeNone) {
+		timepos_t const decipage (samplepos_t(floor (current_page_samples() * 0.1)));
+		if (pos < timepos_t::max (pos.time_domain()).earlier (decipage)) {
+			pos += timepos_t (decipage);
 			_session->request_locate (pos.samples());
 		} else {
 			_session->request_locate (0);
 		}
 	} else {
-
-		if (pos < timepos_t::max (pos.time_domain()).earlier (timepos_t (samplepos_t (3)))) {
-			pos += timepos_t (samplepos_t (2));
-			pos = snap_to_grid (pos, Temporal::RoundUpAlways, SnapToGrid_Scaled);
-			_session->request_locate (pos.samples());
-		}
+		pos = snap_to_grid (pos, Temporal::RoundUpAlways, SnapToGrid_Scaled);
+		_session->request_locate (pos.samples());
 	}
 
-
 	/* keep PH visible in window */
-	if (pos > timepos_t (_leftmost_sample + current_page_samples() *0.9)) {
-		reset_x_origin (pos.samples() -  (current_page_samples()*0.9));
+	if (pos > timepos_t (_leftmost_sample + current_page_samples() * 0.9)) {
+		reset_x_origin (pos.samples() - current_page_samples() * 0.9);
 	}
 }
 
@@ -7779,26 +8196,28 @@ Editor::playhead_backward_to_grid ()
 		return;
 	}
 
-	timepos_t pos  (_playhead_cursor->current_sample ());
+	timepos_t pos (_playhead_cursor->current_sample ());
 
-	if ( _grid_type == GridTypeNone) {
-		if (pos.samples() > current_page_samples()*0.1 ) {
-			pos.shift_earlier (timepos_t (samplepos_t (floor (current_page_samples()*0.1))));
+	if (_grid_type == GridTypeNone) {
+		samplepos_t const decipage (floor (current_page_samples() * 0.1));
+		if (pos.samples() > decipage) {
+			pos.shift_earlier (timepos_t (decipage));
 			_session->request_locate (pos.samples());
 		} else {
 			_session->request_locate (0);
 		}
 	} else {
-
-		if (pos.samples() > 2) {
-			pos.shift_earlier (timepos_t (samplepos_t (2)));
-			pos = snap_to_grid (pos, Temporal::RoundDownAlways, SnapToGrid_Scaled);
+		if (pos.samples() == 0) {
+			return;
 		}
+		pos = snap_to_grid (pos, Temporal::RoundDownAlways, SnapToGrid_Scaled);
 
-		//handle the case where we are rolling, and we're less than one-half second past the mark, we want to go to the prior mark...
-		//also see:  jump_backward_to_mark
+		/* handle the case where we are rolling, and we're less than one-half second past the mark,
+		 * we want to go to the prior mark...
+		 * also see: jump_backward_to_mark
+		 */
 		if (_session->transport_rolling()) {
-			if ((_playhead_cursor->current_sample() - pos.samples()) < _session->sample_rate()/2) {
+			if ((_playhead_cursor->current_sample() - pos.samples()) < _session->sample_rate() * 0.5) {
 				pos = snap_to_grid (pos, Temporal::RoundDownAlways, SnapToGrid_Scaled);
 			}
 		}
@@ -7807,8 +8226,8 @@ Editor::playhead_backward_to_grid ()
 	}
 
 	/* keep PH visible in window */
-	if (pos.samples() < (_leftmost_sample + current_page_samples() *0.1)) {
-		reset_x_origin (pos.samples() - (current_page_samples()*0.1));
+	if (pos.samples() < (_leftmost_sample + current_page_samples() * 0.1)) {
+		reset_x_origin (pos.samples() - current_page_samples() * 0.1);
 	}
 }
 
@@ -7820,6 +8239,12 @@ Editor::set_track_height (Height h)
 	for (TrackSelection::iterator x = ts.begin(); x != ts.end(); ++x) {
 		(*x)->set_height_enum (h);
 	}
+
+	/* when not setting height from a drag, nothing will cause a redisplay
+	   of the non-altered tracks. Do that explicitly.
+	*/
+
+	queue_redisplay_track_views ();
 }
 
 void
@@ -7885,8 +8310,8 @@ Editor::_remove_tracks ()
 	const char* trackstr;
 	const char* busstr;
 	const char* vcastr;
-	vector<boost::shared_ptr<Route> > routes;
-	vector<boost::shared_ptr<VCA> > vcas;
+	vector<std::shared_ptr<Route> > routes;
+	vector<std::shared_ptr<VCA> > vcas;
 	bool special_bus = false;
 
 	for (TrackSelection::iterator x = ts.begin(); x != ts.end(); ++x) {
@@ -7978,7 +8403,7 @@ edit your ardour.rc file to set the\n\
 	}
 
 	if (ntracks > 0) {
-			prompt += "\n" + string_compose ("(You may also lose the playlists associated with the %1)", trackstr) + "\n";
+			prompt += "\n" + string_compose (_("You may also lose the playlists associated with the %1"), trackstr) + "\n";
 	}
 
 	prompt += "\n" + string(_("This action cannot be undone, and the session file will be overwritten!"));
@@ -8018,13 +8443,13 @@ edit your ardour.rc file to set the\n\
 		PresentationInfo::ChangeSuspender cs;
 		DisplaySuspender ds;
 
-		boost::shared_ptr<RouteList> rl (new RouteList);
-		for (vector<boost::shared_ptr<Route> >::iterator x = routes.begin(); x != routes.end(); ++x) {
+		std::shared_ptr<RouteList> rl (new RouteList);
+		for (vector<std::shared_ptr<Route> >::iterator x = routes.begin(); x != routes.end(); ++x) {
 			rl->push_back (*x);
 		}
 		_session->remove_routes (rl);
 
-		for (vector<boost::shared_ptr<VCA> >::iterator x = vcas.begin(); x != vcas.end(); ++x) {
+		for (vector<std::shared_ptr<VCA> >::iterator x = vcas.begin(); x != vcas.end(); ++x) {
 			_session->vca_manager().remove_vca (*x);
 		}
 
@@ -8089,6 +8514,7 @@ Editor::insert_time (
 	bool in_command = false;
 
 	TrackViewList ts = selection->tracks.filter_to_unique_playlists ();
+	TempoMapChange tmc (*this, _("insert time"), true, false);
 
 	for (TrackViewList::iterator x = ts.begin(); x != ts.end(); ++x) {
 
@@ -8099,13 +8525,13 @@ Editor::insert_time (
 		 * than 1 track using playlists "from" a given track.
 		 */
 
-		set<boost::shared_ptr<Playlist> > pl;
+		PlaylistSet pl;
 
 		if (all_playlists) {
 			RouteTimeAxisView* rtav = dynamic_cast<RouteTimeAxisView*> (*x);
 			if (rtav && rtav->track ()) {
-				vector<boost::shared_ptr<Playlist> > all = _session->playlists()->playlists_for_track (rtav->track ());
-				for (vector<boost::shared_ptr<Playlist> >::iterator p = all.begin(); p != all.end(); ++p) {
+				vector<std::shared_ptr<Playlist> > all = _session->playlists()->playlists_for_track (rtav->track ());
+				for (vector<std::shared_ptr<Playlist> >::iterator p = all.begin(); p != all.end(); ++p) {
 					pl.insert (*p);
 				}
 			}
@@ -8115,7 +8541,7 @@ Editor::insert_time (
 			}
 		}
 
-		for (set<boost::shared_ptr<Playlist> >::iterator i = pl.begin(); i != pl.end(); ++i) {
+		for (PlaylistSet::iterator i = pl.begin(); i != pl.end(); ++i) {
 
 			(*i)->clear_changes ();
 			(*i)->clear_owned_changes ();
@@ -8196,12 +8622,12 @@ Editor::insert_time (
 			begin_reversible_command (_("insert time"));
 			in_command = true;
 		}
-		TempoMap::SharedPtr tmap (TempoMap::write_copy());
+		TempoMap::WritableSharedPtr tmap (TempoMap::write_copy());
 
 		XMLNode& before (tmap->get_state());
 		tmap->insert_time (pos, samples);
 		XMLNode& after (tmap->get_state());
-		_session->add_command (new MementoCommand<Temporal::TempoMap> (new Temporal::TempoMap::MementoBinder(), &before, &after));
+		_session->add_command (new Temporal::TempoCommand (_("insert time"), &before, &after));
 
 		TempoMap::update (tmap);
 	}
@@ -8266,7 +8692,7 @@ Editor::remove_time (timepos_t const & pos, timecnt_t const & duration, InsertTi
 
 	for (TrackSelection::iterator x = selection->tracks.begin(); x != selection->tracks.end(); ++x) {
 		/* regions */
-		boost::shared_ptr<Playlist> pl = (*x)->playlist();
+		std::shared_ptr<Playlist> pl = (*x)->playlist();
 
 		if (pl) {
 
@@ -8374,7 +8800,7 @@ Editor::remove_time (timepos_t const & pos, timecnt_t const & duration, InsertTi
 	}
 
 	if (tempo_too) {
-		TempoMap::SharedPtr tmap (TempoMap::write_copy());
+		TempoMap::WritableSharedPtr tmap (TempoMap::write_copy());
 		XMLNode& before (tmap->get_state());
 
 		if (tmap->remove_time (pos, duration)) {
@@ -8383,7 +8809,7 @@ Editor::remove_time (timepos_t const & pos, timecnt_t const & duration, InsertTi
 				in_command = true;
 			}
 			XMLNode& after (tmap->get_state());
-			_session->add_command (new MementoCommand<Temporal::TempoMap> (new Temporal::TempoMap::MementoBinder(), &before, &after));
+			_session->add_command (new Temporal::TempoCommand (_("remove time"), &before, &after));
 
 			TempoMap::update (tmap);
 		}
@@ -8506,12 +8932,15 @@ Editor::fit_tracks (TrackViewList & tracks)
 		}
 	}
 
+	/* apply height changes, so that scrolling works */
+	(void) process_redisplay_track_views ();
+
 	/*
 	   set the controls_layout height now, because waiting for its size
 	   request signal handler will cause the vertical adjustment setting to fail
 	*/
 
-	controls_layout.property_height () = _full_canvas_height;
+	reset_controls_layout_height (_full_canvas_height);
 	vertical_adjustment.set_value (first_y_pos);
 
 	redo_visual_stack.push_back (current_visual_state (true));
@@ -8587,7 +9016,7 @@ Editor::toggle_region_mute ()
 
 	for (RegionSelection::iterator i = rs.begin(); i != rs.end(); ++i) {
 
-		(*i)->region()->playlist()->clear_changes ();
+		(*i)->region()->clear_changes ();
 		(*i)->region()->set_muted (!(*i)->region()->muted ());
 		_session->add_command (new StatefulDiffCommand ((*i)->region()));
 
@@ -8670,7 +9099,7 @@ void
 Editor::toggle_midi_input_active (bool flip_others)
 {
 	bool onoff = false;
-	boost::shared_ptr<RouteList> rl (new RouteList);
+	std::shared_ptr<RouteList> rl (new RouteList);
 
 	for (TrackSelection::iterator i = selection->tracks.begin(); i != selection->tracks.end(); ++i) {
 		RouteTimeAxisView *rtav = dynamic_cast<RouteTimeAxisView *>(*i);
@@ -8679,7 +9108,7 @@ Editor::toggle_midi_input_active (bool flip_others)
 			continue;
 		}
 
-		boost::shared_ptr<MidiTrack> mt = rtav->midi_track();
+		std::shared_ptr<MidiTrack> mt = rtav->midi_track();
 
 		if (mt) {
 			rl->push_back (rtav->route());
@@ -8780,7 +9209,7 @@ Editor::toggle_all_existing_automation ()
 	for (TrackViewList::const_iterator t = tvl.begin(); t != tvl.end(); ++t) {
 		TimeAxisView::Children children = (*t)->get_child_list ();
 		for (TimeAxisView::Children::const_iterator c = children.begin(); c != children.end(); ++c) {
-			if (boost::dynamic_pointer_cast<AutomationTimeAxisView> (*c)) {
+			if (std::dynamic_pointer_cast<AutomationTimeAxisView> (*c)) {
 				some_automation_shown = true;
 				break;
 			}
@@ -8862,7 +9291,7 @@ Editor::launch_playlist_selector ()
 vector<MidiRegionView*>
 Editor::filter_to_unique_midi_region_views (RegionSelection const & ms) const
 {
-	typedef std::pair<boost::shared_ptr<MidiSource>,timepos_t> MapEntry;
+	typedef std::pair<std::shared_ptr<MidiSource>,timepos_t> MapEntry;
 	std::set<MapEntry> single_region_set;
 
 	vector<MidiRegionView*> views;
@@ -8953,12 +9382,19 @@ Editor::add_region_marker ()
 		return;
 	}
 
+	if (_session->actively_recording ()) {
+		CueMarker mark (str, position);
+		std::cerr << "queuing cue " << str << " at " << position << "\n";
+		_session->pending_source_markers.insert (mark);
+		ActionManager::get_action (X_("Region"), X_("add-region-cue-marker"))->set_sensitive(true);
+		return;
+	}
 
 	bool in_command = false;
 
 	for (RegionSelection::iterator r = rs.begin(); r != rs.end(); ++r) {
 
-		boost::shared_ptr<Region> region ((*r)->region());
+		std::shared_ptr<Region> region ((*r)->region());
 
 		if (position < region->position() || position >= region->position() + region->length()) {
 			cerr << "nope on that one\n";
@@ -9242,13 +9678,13 @@ Editor::remove_gaps (timecnt_t const & gap_threshold, timecnt_t const & leave_ga
 		locations_before = &_session->locations()->get_state();
 	}
 
-	set<boost::shared_ptr<Playlist> > pl;
+	PlaylistSet pl;
 
 	/* it will not be possible to infer this from the set<>, so keep track
 	 * of it explicitly
 	 */
 
-	boost::shared_ptr<Playlist> first_selected_playlist;
+	std::shared_ptr<Playlist> first_selected_playlist;
 
 	for (TrackSelection::iterator x = ts.begin(); x != ts.end(); ++x) {
 
@@ -9265,7 +9701,7 @@ Editor::remove_gaps (timecnt_t const & gap_threshold, timecnt_t const & leave_ga
 		}
 	}
 
-	for (set<boost::shared_ptr<Playlist> >::iterator i = pl.begin(); i != pl.end(); ++i) {
+	for (PlaylistSet::iterator i = pl.begin(); i != pl.end(); ++i) {
 
 		(*i)->clear_changes ();
 		(*i)->clear_owned_changes ();
@@ -9308,32 +9744,54 @@ Editor::remove_gaps (timecnt_t const & gap_threshold, timecnt_t const & leave_ga
 bool
 Editor::should_ripple () const
 {
-	return (Config->get_edit_mode() == Ripple ||
-	        Config->get_edit_mode() == RippleAll);
+	/*only ripple if edit mode is Ripple (duh) */
+	if (Config->get_edit_mode() != Ripple) {
+		return false;
+	}
+
+	/* RippleInterview does not ripple if only one track is selected */
+	if (Config->get_ripple_mode() == RippleInterview && selection->tracks.size() == 1) {
+		return false;
+	}
+
+	return true;
+}
+
+bool
+Editor::should_ripple_all () const
+{
+	/*first check if ripple is engaged at all*/
+	if (!should_ripple()) {
+		return false;
+	}
+
+	/*TODO:  maybe if in RippleInterview and ALL tracks are selected, this means RippleAll? */
+
+	return (Config->get_ripple_mode() == RippleAll);
 }
 
 void
-Editor::do_ripple (boost::shared_ptr<ARDOUR::Playlist> target_playlist, timepos_t const & at, timecnt_t const & distance, boost::shared_ptr<ARDOUR::Region> exclude, bool add_to_command)
+Editor::do_ripple (std::shared_ptr<ARDOUR::Playlist> target_playlist, timepos_t const & at, timecnt_t const & distance, std::shared_ptr<ARDOUR::Region> exclude, bool add_to_command)
 {
 	RegionList el;
+	PlaylistSet pls;
 	if (exclude) {
 		el.push_back (exclude);
 	}
-	do_ripple (target_playlist, at, distance, &el, add_to_command);
+	do_ripple (target_playlist, at, distance, &el, pls, add_to_command);
 }
 
 void
-Editor::do_ripple (boost::shared_ptr<Playlist> target_playlist, timepos_t const & at, timecnt_t const & distance, RegionList* exclude, bool add_to_command)
+Editor::do_ripple (std::shared_ptr<Playlist> target_playlist, timepos_t const & at, timecnt_t const & distance, RegionList* exclude, PlaylistSet const &affected_pls, bool add_to_command)
 {
-	typedef std::set<boost::shared_ptr<Playlist> > UniquePlaylists;
-	UniquePlaylists playlists;
+	PlaylistSet playlists;
 
 	playlists.insert (target_playlist);
 
-	if (Config->get_edit_mode() == RippleAll) {
+	if (should_ripple_all()) {
 
 		TrackViewList ts = track_views.filter_to_unique_playlists ();
-		boost::shared_ptr<Playlist> pl;
+		std::shared_ptr<Playlist> pl;
 
 		for (TrackSelection::iterator x = ts.begin(); x != ts.end(); ++x) {
 			if ((pl = (*x)->playlist()) == 0) {
@@ -9344,70 +9802,61 @@ Editor::do_ripple (boost::shared_ptr<Playlist> target_playlist, timepos_t const 
 	}
 
 	if (add_to_command) {
-		for (UniquePlaylists::iterator p = playlists.begin(); p != playlists.end(); ++p) {
-
-			(*p)->clear_changes ();
-			(*p)->clear_owned_changes ();
+		for (auto const & p : playlists) {
+			p->clear_changes ();
+			p->clear_owned_changes ();
 		}
 	}
 
-	for (UniquePlaylists::iterator p = playlists.begin(); p != playlists.end(); ++p) {
-		(*p)->freeze ();
+	for (auto const & p : playlists) {
+		p->freeze ();
 	}
 
-	for (UniquePlaylists::iterator p = playlists.begin(); p != playlists.end(); ++p) {
+	for (auto const & p : playlists) {
 
 		/* exclude list is only for the target */
 
-		if ((*p) == target_playlist) {
+		if (p == target_playlist) {
 
-			(*p)->clear_changes ();
-			(*p)->clear_owned_changes ();
-
-			(*p)->ripple (at, distance, exclude);
+			p->ripple (at, distance, exclude);
 
 			/* caller may put the target playlist into the undo
 			 * history, so only do this if asked
 			 */
 
 			if (add_to_command) {
-				(*p)->rdiff_and_add_command (_session);
+				p->rdiff_and_add_command (_session);
 			}
-		} else {
-			/* all other playlists: do the ripple, and save to undo/redo */
-
-			(*p)->clear_changes ();
-			(*p)->clear_owned_changes ();
-			(*p)->ripple (at, distance, 0);
-			(*p)->rdiff_and_add_command (_session);
+		} else if (affected_pls.find (p) == affected_pls.end ()) {
+			p->clear_changes ();
+			p->clear_owned_changes ();
+			p->ripple (at, distance, 0);
+			p->rdiff_and_add_command (_session);
 		}
 
 	}
 
-	for (UniquePlaylists::iterator p = playlists.begin(); p != playlists.end(); ++p) {
-		(*p)->thaw ();
+	for (auto & p : playlists) {
+		p->thaw ();
 	}
 
 	/* Ripple marks & ranges if appropriate */
-
-	if (Config->get_edit_mode() != RippleAll) {
-		cerr << "out here\n";
-		return;
+	if (should_ripple_all()) {
+		ripple_marks (target_playlist, at, distance);
 	}
-
-	ripple_marks (target_playlist, at, distance);
 }
 
 timepos_t
-Editor::effective_ripple_mark_start (boost::shared_ptr<Playlist> target_playlist, timepos_t pos)
+Editor::effective_ripple_mark_start (std::shared_ptr<Playlist> target_playlist, timepos_t pos)
 {
+#if 0  /* I do not agree with this behavior - at the very least it ignores regions on *other* tracks and the markers that might be associated with them -Ben */
 	/* in the target playlist, find the region before the target
-	 * (implicitly given by @param at. Allow all markers that occur between
-	 * the end of the region and @param at to move too. This is
+	 * (implicitly given by @p pos. Allow all markers that occur between
+	 * the end of the region and @p pos to move too. This is
 	 * desired/expected by many (most?) ripple-edit using folk.
 	 */
 
-	boost::shared_ptr<RegionList> rl = target_playlist->region_list();
+	std::shared_ptr<RegionList> rl = target_playlist->region_list();
 	timepos_t last_region_end_before_at (pos.time_domain());
 
 	for (RegionList::const_iterator r = rl->begin(); r != rl->end(); ++r) {
@@ -9420,14 +9869,18 @@ Editor::effective_ripple_mark_start (boost::shared_ptr<Playlist> target_playlist
 	if (last_region_end_before_at < pos) {
 		pos = last_region_end_before_at.increment();
 	}
+#endif
 
 	return pos;
 }
 
 void
-Editor::ripple_marks (boost::shared_ptr<Playlist> target_playlist, timepos_t at, timecnt_t const & distance)
+Editor::ripple_marks (std::shared_ptr<Playlist> target_playlist, timepos_t at, timecnt_t const & distance)
 {
-	at = effective_ripple_mark_start (target_playlist, at);
+	TempoMap::SharedPtr tmap (TempoMap::use());
+	if (target_playlist) {
+		at = effective_ripple_mark_start (target_playlist, at);
+	}
 
 	XMLNode& before (_session->locations()->get_state());
 	/* do not move locked markers, do notify */

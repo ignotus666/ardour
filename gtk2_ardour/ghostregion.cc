@@ -56,23 +56,22 @@ GhostRegion::GhostRegion (RegionView& rv,
                           TimeAxisView& tv,
                           TimeAxisView& source_tv,
                           double initial_pos)
-	: parent_rv(rv)
-	, trackview(tv)
-	, source_trackview(source_tv)
+	: parent_rv (rv)
+	, trackview (tv)
+	, source_trackview (source_tv)
+	, base_rect (0)
 {
 	group = new ArdourCanvas::Container (parent);
-	CANVAS_DEBUG_NAME (group, "ghost region");
+	CANVAS_DEBUG_NAME (group, "ghost region group");
 	group->set_position (ArdourCanvas::Duple (initial_pos, 0));
 
-	base_rect = new ArdourCanvas::Rectangle (group);
-	CANVAS_DEBUG_NAME (base_rect, "ghost region rect");
-	base_rect->set_x0 (0);
-	base_rect->set_y0 (1.0);
-	base_rect->set_y1 (trackview.current_height());
-	base_rect->set_outline (false);
-
-	if (!is_automation_ghost()) {
-		base_rect->hide();
+	if (is_automation_ghost()) {
+		base_rect = new ArdourCanvas::Rectangle (group);
+		CANVAS_DEBUG_NAME (base_rect, "ghost region rect");
+		base_rect->set_x0 (0);
+		base_rect->set_y0 (1.0);
+		base_rect->set_y1 (trackview.current_height());
+		base_rect->set_outline (false);
 	}
 
 	GhostRegion::set_colors();
@@ -93,13 +92,17 @@ GhostRegion::~GhostRegion ()
 void
 GhostRegion::set_duration (double units)
 {
-	base_rect->set_x1 (units);
+	if (base_rect) {
+		base_rect->set_x1 (units);
+	}
 }
 
 void
 GhostRegion::set_height ()
 {
-	base_rect->set_y1 (trackview.current_height());
+	if (base_rect) {
+		base_rect->set_y1 (trackview.current_height());
+	}
 }
 
 void
@@ -163,14 +166,13 @@ AudioGhostRegion::set_colors ()
 	guint fill_color;
 
 	if (is_automation_ghost()) {
-		fill_color = UIConfiguration::instance().color ("ghost track wave fill");
-	}
-	else {
+		fill_color = UIConfiguration::instance().color_mod("ghost track wave fill", "region alpha");
+	} else {
 		fill_color = source_track_color(200);
 	}
 
 	for (uint32_t n=0; n < waves.size(); ++n) {
-		waves[n]->set_outline_color (UIConfiguration::instance().color ("ghost track wave"));
+		waves[n]->set_outline_color (UIConfiguration::instance().color_mod ("ghost track wave", "region alpha"));
 		waves[n]->set_fill_color (fill_color);
 		waves[n]->set_clip_color (UIConfiguration::instance().color ("ghost track wave clip"));
 		waves[n]->set_zero_color (UIConfiguration::instance().color ("ghost track zero line"));
@@ -195,30 +197,11 @@ MidiGhostRegion::MidiGhostRegion(MidiRegionView& rv,
 {
 	_outline = UIConfiguration::instance().color ("ghost track midi outline");
 
-	base_rect->lower_to_bottom();
-}
+	if (base_rect) {
+		base_rect->lower_to_bottom();
+	}
 
-/**
- *  @param rv The parent RegionView being ghosted.
- *  @param msv MidiStreamView that this ghost region is on.
- *  @param source_tv TimeAxisView that we are the ghost for.
- */
-MidiGhostRegion::MidiGhostRegion(MidiRegionView& rv,
-                                 MidiStreamView& msv,
-                                 TimeAxisView& source_tv,
-                                 double initial_unit_pos)
-	: GhostRegion (rv,
-	               msv.midi_underlay_group,
-	               msv.trackview(),
-	               source_tv,
-	               initial_unit_pos)
-	, _note_group (new ArdourCanvas::Container (group))
-	, parent_mrv (rv)
-	, _optimization_iterator(events.end())
-{
-	_outline = UIConfiguration::instance().color ("ghost track midi outline");
-
-	base_rect->lower_to_bottom();
+	CANVAS_DEBUG_NAME (_note_group, "midi ghost note group");
 }
 
 MidiGhostRegion::~MidiGhostRegion()
@@ -227,13 +210,18 @@ MidiGhostRegion::~MidiGhostRegion()
 	delete _note_group;
 }
 
+MidiGhostRegion::GhostEvent::GhostEvent (NoteBase* e, ArdourCanvas::Container* g, ArdourCanvas::Item* i)
+	: event (e)
+	, item (i)
+	, is_hit (false)
+{
+}
+
 MidiGhostRegion::GhostEvent::GhostEvent (NoteBase* e, ArdourCanvas::Container* g)
 	: event (e)
 {
-
 	if (dynamic_cast<Note*>(e)) {
-		item = new ArdourCanvas::Rectangle(
-			g, ArdourCanvas::Rect(e->x0(), e->y0(), e->x1(), e->y1()));
+		item = new ArdourCanvas::Rectangle (g, ArdourCanvas::Rect(e->x0(), e->y0(), e->x1(), e->y1()));
 		is_hit = false;
 	} else {
 		Hit* hit = dynamic_cast<Hit*>(e);
@@ -442,13 +430,20 @@ MidiGhostRegion::remove_note (NoteBase* note)
 
 	_optimization_iterator = events.end ();
 }
+
 void
-MidiGhostRegion::redisplay_model ()
+MidiGhostRegion::view_changed ()
+{
+	model_changed();
+}
+
+void
+MidiGhostRegion::model_changed ()
 {
 	/* we rely on the parent MRV having removed notes not in the model */
 	for (EventList::iterator i = events.begin(); i != events.end(); ) {
 
-		boost::shared_ptr<NoteType> note = i->first;
+		std::shared_ptr<NoteType> note = i->first;
 		GhostEvent* cne = i->second;
 		const bool visible = (note->note() >= parent_mrv._current_range_min) &&
 			(note->note() <= parent_mrv._current_range_max);
@@ -473,7 +468,7 @@ MidiGhostRegion::redisplay_model ()
  *  @return Our Event, or 0 if not found.
  */
 MidiGhostRegion::GhostEvent *
-MidiGhostRegion::find_event (boost::shared_ptr<NoteType> parent)
+MidiGhostRegion::find_event (std::shared_ptr<NoteType> parent)
 {
 	/* we are using _optimization_iterator to speed up the common case where a caller
 	   is going through our notes in order.

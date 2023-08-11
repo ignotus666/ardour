@@ -23,16 +23,23 @@
 #include <string>
 
 #include <gtkmm/button.h>
+#include <gtkmm/comboboxtext.h>
 #include <gtkmm/eventbox.h>
 #include <gtkmm/radiobutton.h>
 #include <gtkmm/label.h>
 #include <gtkmm/table.h>
 #include <gtkmm/entry.h>
+#include <gtkmm/box.h>
+#include <gtkmm/liststore.h>
 #include <gtkmm/treestore.h>
+
+#include "ardour/types.h"
+#include "pbd/property_basics.h"
 
 #include "widgets/ardour_button.h"
 
 #include "ardour_window.h"
+#include "ardour_dialog.h"
 
 namespace Gtk {
 	class Menu;
@@ -51,7 +58,7 @@ class TransportMastersWidget : public Gtk::VBox, public ARDOUR::SessionHandlePtr
 	~TransportMastersWidget ();
 
 	void update (Temporal::timepos_t);
-	void set_transport_master (boost::shared_ptr<ARDOUR::TransportMaster>);
+	void set_transport_master (std::shared_ptr<ARDOUR::TransportMaster>);
 
 	void set_session (ARDOUR::Session*);
 
@@ -90,17 +97,14 @@ class TransportMastersWidget : public Gtk::VBox, public ARDOUR::SessionHandlePtr
 		Gtk::ComboBoxText port_combo;
 		Gtk::CheckButton sclock_synced_button;
 		Gtk::CheckButton fr2997_button;
-		ArdourWidgets::ArdourButton request_options;
-		Gtk::Menu* request_option_menu;
 		ArdourWidgets::ArdourButton remove_button;
 		FloatingTextEntry* name_editor;
 		samplepos_t save_when;
 		std::string save_last;
 
-		void build_request_options();
 		void mod_request_type (ARDOUR::TransportRequestType);
 
-		boost::shared_ptr<ARDOUR::TransportMaster> tm;
+		std::shared_ptr<ARDOUR::TransportMaster> tm;
 
 		void update (ARDOUR::Session*, ARDOUR::samplepos_t);
 
@@ -116,7 +120,6 @@ class TransportMastersWidget : public Gtk::VBox, public ARDOUR::SessionHandlePtr
 		void fr2997_button_toggled ();
 		void port_choice_changed ();
 		void connection_handler ();
-		bool request_option_press (GdkEventButton*);
 		void prop_change (PBD::PropertyChange);
 		void remove_clicked ();
 
@@ -132,8 +135,8 @@ class TransportMastersWidget : public Gtk::VBox, public ARDOUR::SessionHandlePtr
 	std::vector<Row*> rows;
 
 	Gtk::Table table;
-	Gtk::Label col_title[14];
-	float align[14];
+	Gtk::Label col_title[10];
+	float align[10];
 	ArdourWidgets::ArdourButton add_master_button;
 	Gtk::CheckButton lost_sync_button;
 
@@ -154,7 +157,7 @@ class TransportMastersWidget : public Gtk::VBox, public ARDOUR::SessionHandlePtr
 
 	PortColumns port_columns;
 
-	friend class Row;
+	friend struct Row;
 	Glib::RefPtr<Gtk::ListStore> midi_port_store;
 	Glib::RefPtr<Gtk::ListStore> audio_port_store;
 
@@ -165,7 +168,7 @@ class TransportMastersWidget : public Gtk::VBox, public ARDOUR::SessionHandlePtr
 
 	void rebuild ();
 	void clear ();
-	void current_changed (boost::shared_ptr<ARDOUR::TransportMaster> old_master, boost::shared_ptr<ARDOUR::TransportMaster> new_master);
+	void current_changed (std::shared_ptr<ARDOUR::TransportMaster> old_master, std::shared_ptr<ARDOUR::TransportMaster> new_master);
 	void add_master ();
 	void update_usability ();
 	void allow_master_select (bool);

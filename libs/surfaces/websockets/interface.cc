@@ -26,8 +26,7 @@ using namespace ARDOUR;
 using namespace ArdourSurface;
 
 static ControlProtocol*
-new_ardour_websockets_protocol (ControlProtocolDescriptor* /*descriptor*/,
-                                Session* s)
+new_ardour_websockets_protocol (Session* s)
 {
 	ArdourWebsockets* surface = new ArdourWebsockets (*s);
 
@@ -37,35 +36,20 @@ new_ardour_websockets_protocol (ControlProtocolDescriptor* /*descriptor*/,
 }
 
 static void
-delete_ardour_websockets_protocol (ControlProtocolDescriptor* /*descriptor*/,
-                                   ControlProtocol* cp)
+delete_ardour_websockets_protocol (ControlProtocol* cp)
 {
 	delete cp;
 }
 
-static bool
-probe_ardour_websockets_protocol (ControlProtocolDescriptor* /*descriptor*/)
-{
-	return true;
-}
-
-static void*
-ardour_websockets_request_buffer_factory (uint32_t num_requests)
-{
-	return ArdourWebsockets::request_factory (num_requests);
-}
-
 static ControlProtocolDescriptor ardour_websockets_descriptor = {
-	/*name :              */ surface_name,
-	/*id :                */ surface_id,
-	/*ptr :               */ 0,
-	/*module :            */ 0,
-	/*mandatory :         */ 0,
-	/*supports_feedback : */ true,
-	/*probe :             */ probe_ardour_websockets_protocol,
-	/*initialize :        */ new_ardour_websockets_protocol,
-	/*destroy :           */ delete_ardour_websockets_protocol,
-	/*request_buffer_factory */ ardour_websockets_request_buffer_factory
+	/* name       */ surface_name,
+	/* id         */ surface_id,
+	/* module     */ 0,
+	/* available  */ 0,
+	/* probe_port */ 0,
+	/* match usb  */ 0,
+	/* initialize */ new_ardour_websockets_protocol,
+	/* destroy    */ delete_ardour_websockets_protocol,
 };
 
 extern "C" ARDOURSURFACE_API ControlProtocolDescriptor*

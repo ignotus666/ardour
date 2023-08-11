@@ -26,14 +26,14 @@
 #ifdef LXVST_SUPPORT
 
 namespace ARDOUR {
-	class PluginInsert;
+	class PlugInsertBase;
 	class LXVSTPlugin;
 }
 
 class LXVSTPluginUI : public VSTPluginUI
 {
 public:
-	LXVSTPluginUI (boost::shared_ptr<ARDOUR::PluginInsert>, boost::shared_ptr<ARDOUR::VSTPlugin>);
+	LXVSTPluginUI (std::shared_ptr<ARDOUR::PlugInsertBase>, std::shared_ptr<ARDOUR::VSTPlugin>);
 	~LXVSTPluginUI ();
 
 	int get_preferred_height ();

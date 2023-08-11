@@ -80,7 +80,7 @@ Panner2d::Target::set_text (const char* txt)
 	text = txt;
 }
 
-Panner2d::Panner2d (boost::shared_ptr<PannerShell> p, int32_t h)
+Panner2d::Panner2d (std::shared_ptr<PannerShell> p, int32_t h)
 : panner_shell (p)
 	, position (AngularVector (0.0, 0.0), "")
 	, width (0)
@@ -903,7 +903,7 @@ Panner2d::toggle_bypass ()
 	panner_shell->set_bypassed (!panner_shell->bypassed());
 }
 
-Panner2dWindow::Panner2dWindow (boost::shared_ptr<PannerShell> p, int32_t h, uint32_t inputs)
+Panner2dWindow::Panner2dWindow (std::shared_ptr<PannerShell> p, int32_t h, uint32_t inputs)
 	: ArdourWindow (_("Panner (2D)"))
 	, widget (p, h)
 	, bypass_button (_("Bypass"))
@@ -933,7 +933,7 @@ Panner2dWindow::Panner2dWindow (boost::shared_ptr<PannerShell> p, int32_t h, uin
 
 	Gtk::Label* l = manage (new Label (
 				p->pannable()->describe_parameter(PanWidthAutomation),
-				Gtk::ALIGN_LEFT, Gtk::ALIGN_CENTER, false));
+				Gtk::ALIGN_START, Gtk::ALIGN_CENTER, false));
 	spinner_box.pack_start (*l, false, false);
 	spinner_box.pack_start (width_spinner, false, false);
 	left_side.pack_start (spinner_box, false, false);

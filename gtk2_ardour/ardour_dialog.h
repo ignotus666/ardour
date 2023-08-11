@@ -40,8 +40,8 @@ namespace WM {
 class ArdourDialog : public Gtk::Dialog, public ARDOUR::SessionHandlePtr
 {
 public:
-	ArdourDialog (std::string title, bool modal = false, bool use_separator = false);
-	ArdourDialog (Gtk::Window& parent, std::string title, bool modal = false, bool use_separator = false);
+	explicit ArdourDialog (const std::string& title, bool modal = false, bool use_separator = false);
+	ArdourDialog (Gtk::Window& parent, const std::string& title, bool modal = false, bool use_separator = false);
 	~ArdourDialog();
 
 	bool on_focus_in_event (GdkEventFocus*);
@@ -51,6 +51,7 @@ public:
 	void on_show ();
 	virtual void on_response (int);
 	void set_ui_sensitive (bool);
+	void disallow_idle ();
 
 protected:
 	void pop_splash ();
@@ -61,6 +62,7 @@ private:
 	WM::ProxyTemporary* proxy;
 	bool _splash_pushed;
 	void init ();
+	bool allow_idle;
 
 	static sigc::signal<void> CloseAllDialogs;
 };

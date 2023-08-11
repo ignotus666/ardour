@@ -20,11 +20,11 @@
 #ifndef _WIDGETS_PANE_H_
 #define _WIDGETS_PANE_H_
 
+#include <cstdint>
+#include <memory>
 #include <vector>
 #include <algorithm>
-#include <boost/shared_ptr.hpp>
 
-#include <stdint.h>
 
 #include <gdkmm/cursor.h>
 #include <gtkmm/container.h>
@@ -55,13 +55,13 @@ public:
 		Child (Pane* p, Gtk::Widget* widget, uint32_t ms) : pane (p), w (widget), minsize (ms) {}
 	};
 
-	typedef std::vector<boost::shared_ptr<Child> > Children;
+	typedef std::vector<std::shared_ptr<Child> > Children;
 
 	Pane (bool horizontal);
 	~Pane();
 
 	void set_divider (std::vector<float>::size_type divider, float fract);
-	float get_divider (std::vector<float>::size_type divider = 0);
+	float get_divider (std::vector<float>::size_type divider = 0) const;
 	void set_child_minsize (Gtk::Widget const &, int32_t);
 
 	GType child_type_vfunc() const;

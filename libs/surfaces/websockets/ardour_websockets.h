@@ -57,8 +57,6 @@ public:
 	ArdourWebsockets (ARDOUR::Session&);
 	virtual ~ArdourWebsockets ();
 
-	static void* request_factory (uint32_t);
-
 	int set_active (bool);
 
 	ARDOUR::Session& ardour_session ()
@@ -84,6 +82,8 @@ public:
 
 	/* ControlProtocol */
 	void stripable_selection_changed () {}
+
+	CONTROL_PROTOCOL_THREADS_NEED_TEMPO_MAP_DECL();
 
 protected:
 	/* BaseUI */

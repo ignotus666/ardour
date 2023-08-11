@@ -20,9 +20,8 @@
 #ifndef __libardour_pannable_h__
 #define __libardour_pannable_h__
 
+#include <memory>
 #include <string>
-
-#include <boost/shared_ptr.hpp>
 
 #include "pbd/stateful.h"
 #include "evoral/Parameter.h"
@@ -39,17 +38,17 @@ class Panner;
 class LIBARDOUR_API Pannable : public PBD::Stateful, public Automatable, public SessionHandleRef
 {
 public:
-	Pannable (Session& s, Temporal::TimeDomain);
+	Pannable (Session& s, Temporal::TimeDomainProvider const &);
 	~Pannable ();
 
-	boost::shared_ptr<AutomationControl> pan_azimuth_control;
-	boost::shared_ptr<AutomationControl> pan_elevation_control;
-	boost::shared_ptr<AutomationControl> pan_width_control;
-	boost::shared_ptr<AutomationControl> pan_frontback_control;
-	boost::shared_ptr<AutomationControl> pan_lfe_control;
+	std::shared_ptr<AutomationControl> pan_azimuth_control;
+	std::shared_ptr<AutomationControl> pan_elevation_control;
+	std::shared_ptr<AutomationControl> pan_width_control;
+	std::shared_ptr<AutomationControl> pan_frontback_control;
+	std::shared_ptr<AutomationControl> pan_lfe_control;
 
-	boost::shared_ptr<Panner> panner() const { return _panner.lock(); }
-	void set_panner(boost::shared_ptr<Panner>);
+	std::shared_ptr<Panner> panner() const { return _panner.lock(); }
+	void set_panner(std::shared_ptr<Panner>);
 
 	const std::set<Evoral::Parameter>& what_can_be_automated() const;
 
@@ -67,25 +66,25 @@ public:
 	void start_touch (timepos_t const & when);
 	void stop_touch (timepos_t const & when);
 
-	bool touching() const { return g_atomic_int_get (&_touching); }
+	bool touching() const { return _touching.load(); }
 
 	bool writing() const { return _auto_state == Write; }
 	bool touch_enabled() const { return _auto_state & (Touch | Latch); }
 
-	XMLNode& get_state ();
+	XMLNode& get_state () const;
 	int set_state (const XMLNode&, int version);
 
 	bool has_state() const { return _has_state; }
 
 protected:
-	virtual XMLNode& state ();
+	virtual XMLNode& state () const;
 
-	boost::weak_ptr<Panner> _panner;
+	std::weak_ptr<Panner> _panner;
 	AutoState _auto_state;
 	bool      _has_state;
 	uint32_t  _responding_to_control_auto_state_change;
 
-	GATOMIC_QUAL gint _touching;
+	std::atomic<int> _touching;
 
 	void control_auto_state_changed (AutoState);
 

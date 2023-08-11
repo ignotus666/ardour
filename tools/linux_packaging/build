@@ -2,10 +2,9 @@
 
 # script for pulling together a Linux app bundle.
 #
-# This will create a bundle for a single architecture.
-# Execute this scirpt on both x86 and x86_64 and then use
-# package to merge the 2 bundles into a final package with the
-# installer. See "noderun" for a complete build script.
+# This will create a bundle for a x86_64 architecture.
+# Execute this script and then use `package; to build
+# the installer.
 
 # where the GTK stack is installed
 GTKSTACK_ROOT=$HOME/gtk/inst
@@ -30,9 +29,6 @@ WITH_NLS=
 EXTERNAL_JACK=
 VENDOR=Ardour ;
 EXENAME=ardour
-GCC5ABI=false
-USEWINE=false
-WINEEXE=
 BUILDTYPE=""
 NOSTRIP="libsuil|libserd|libsord|liblilv|libsratom|liblrdf|libardour|libpbd|libevoral"
 
@@ -101,7 +97,7 @@ while [ $# -gt 0 ] ; do
 	--sysdeps) PRINT_SYSDEPS=1; shift ;;
 	--nls) WITH_NLS=1 ; shift ;;
 	--harvid) WITH_HARVID=1 ; shift ;;
-	--gcc5abi) GCC5ABI=true ; shift ;;
+	--gcc5abi) shift ;;
 	--chanstrip) HARRISONCHANNELSTRIP=$2 ; shift; shift ;;
 
 	*)
@@ -133,14 +129,6 @@ echo "Info string is $info_string"
 
 # Figure out our CPU type
 case `uname -m` in
-	i[3456789]86|x86|i86pc)
-		echo "Architecture is x86"
-		ARCH='x86'
-		WARCH='i386'
-		HARCH='linux32'
-		ARCH_BITS='32-bit'
-		MULTIARCH='i386-linux-gnu'
-		;;
 	x86_64|amd64|AMD64)
 		echo "Architecture is x86_64"
 		ARCH='x86_64'
@@ -157,8 +145,17 @@ case `uname -m` in
 		;;
 esac
 
+if [ "$DEBUG" = "T" ]; then
+  BUILDTYPE="dbg"
+fi
+if [ "$FREEBI" = "T" ]; then
+  BUILDTYPE="demo"
+fi
+if [ "$DEBUG$FREEBI" = "TT" ]; then
+  BUILDTYPE="demo-dbg"
+fi
+
 if [ x$DEBUG = xT ]; then
-    BUILDTYPE="dbg"
     if [ x$STRIP = xall ] ; then
         echo "A debug build with --strip all makes no sense - STRIP reset to \"some\""
         STRIP=some
@@ -188,6 +185,7 @@ Backends=$APPLIB/backends
 
 Themes=$Shared/themes
 Templates=$Shared/templates
+LRDFPresets=$Shared/rdf
 PluginMetadata=$Shared/plugin_metadata
 MixerSettings=$Shared/mixer_settings
 ExportFormats=$Shared/export
@@ -260,7 +258,7 @@ fi
 
 echo export 'PATH="/usr/local/bin:/opt/bin:$PATH"' >> $ENVIRONMENT
 
-sed -e "/^%ENV%/r $ENVIRONMENT" -e '/^%ENV%/d' -e 's/%VER%/'"${release_version}"'/;s/%EXENAME%/'"${EXENAME}"'/;s/%WINE%/'"$WINEEXE"'/' < ardour.sh.in > $APPBIN/${EXENAME}${major_version}
+sed -e "/^%ENV%/r $ENVIRONMENT" -e '/^%ENV%/d' -e 's/%VER%/'"${release_version}"'/;s/%EXENAME%/'"${EXENAME}"'/' < ardour.sh.in > $APPBIN/${EXENAME}${major_version}
 rm $ENVIRONMENT && chmod 775 $APPBIN/${EXENAME}${major_version}
 
 echo "Copying ardour executable ...."
@@ -352,7 +350,7 @@ cp $GTKSTACK_ROOT/lib/gtk-2.0/2.10.0/engines/libpixmap.so $Libraries
 
 # Control Surfaces
 cp $BUILD_ROOT/libs/surfaces/*/libardour_*.so* $Surfaces
-cp $BUILD_ROOT/libs/surfaces/control_protocol/libardourcp.so* $Libraries
+cp $BUILD_ROOT/libs/ctrl-interface/*/libardour_*.so* $Libraries
 
 # MidiMaps
 # got to be careful with names here
@@ -376,11 +374,11 @@ for x in $BUILD_ROOT/../share/scripts/*.lua ; do
     cp "$x" $LuaScripts
 done
 
-# recusively copy web-surface html/js
+# recursively copy web-surface html/js
 cp -a $BUILD_ROOT/../share/web_surfaces $WebSurfaces
 rm $WebSurfaces/wscript
 
-# recusively copy clips/media
+# recursively copy clips/media
 cp -a $BUILD_ROOT/../share/media $MediaClips
 rm $MediaClips/wscript
 
@@ -404,6 +402,9 @@ done
 
 #Session templates
 cp -av $BUILD_ROOT/../share/templates $Templates
+
+#LADSPA Presets
+cp -av $BUILD_ROOT/../share/rdf $LRDFPresets
 
 # PluginMetadata
 cp -av $BUILD_ROOT/../share/plugin_metadata $PluginMetadata
@@ -502,8 +503,11 @@ EOF
 	chmod +x $APPLIB/ardour-util.sh
 fi
 
+cp $BUILD_ROOT/libs/ardour-avahi $APPLIB/ardour-avahi
+chmod +x $APPLIB/ardour-avahi
+
 OURLIBDIR=$BUILD_ROOT/libs
-OURLIBS=$OURLIBDIR/surfaces/control_protocol:$OURLIBDIR/ardour:$OURLIBDIR/midi++2:$OURLIBDIR/pbd:$OURLIBDIR/gtkmm2ext:$OURLIBDIR/glibmm2:$OURLIBDIR/canvas:$OURLIBDIR/widgets:$OURLIBDIR/waveview:$OURLIBDIR/evoral:$OURLIBDIR/evoral/src/libsmf:$OURLIBDIR/audiographer:$OURLIBDIR/temporal:$OURLIBDIR/libltc:$OURLIBDIR/qm-dsp:$OURLIBDIR/ardouralsautil:$OURLIBDIR/ptformat:$BUILD_ROOT/gtk2_ardour
+OURLIBS=$OURLIBDIR/ctrl-interface/midi_surface:$OURLIBDIR/ctrl-interface/control_protocol:$OURLIBDIR/ardour:$OURLIBDIR/midi++2:$OURLIBDIR/pbd:$OURLIBDIR/gtkmm2ext:$OURLIBDIR/glibmm2:$OURLIBDIR/canvas:$OURLIBDIR/widgets:$OURLIBDIR/waveview:$OURLIBDIR/evoral:$OURLIBDIR/evoral/src/libsmf:$OURLIBDIR/audiographer:$OURLIBDIR/temporal:$OURLIBDIR/libltc:$OURLIBDIR/qm-dsp:$OURLIBDIR/ardouralsautil:$OURLIBDIR/ptformat:$BUILD_ROOT/gtk2_ardour
 
 echo $OURLIBS${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
 
@@ -547,7 +551,7 @@ while [ true ] ; do
 		for dep in $deps ; do
 			if test "not" = ${dep}; then
 				echo ""
-				echo "!!! ERROR !!! - Missing dependant library for $file."
+				echo "!!! ERROR !!! - Missing dependent library for $file."
 				echo "Searched: " $OURLIBS${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
 				echo ""
 				(LD_LIBRARY_PATH=$OURLIBS${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH} ldd $file)
@@ -562,7 +566,7 @@ while [ true ] ; do
 			if echo $dep | grep -qs "^/lib/" ; then continue; fi
 			if echo $dep | grep -qs "^/usr/lib/" ; then continue; fi
 			if echo $dep | grep -qs "^/usr/local/lib/" ; then continue; fi
-			## the following re likley redudant ##
+			## the following are likely redundant ##
 			# skip jack, ALSA & pulse
 			if echo $dep | grep -qs libjack ; then continue; fi
 			if echo $dep | grep -qs libasound ; then continue; fi
@@ -585,10 +589,10 @@ while [ true ] ; do
 			if ! test -f $Libraries/$base; then
 				parent=$(basename ${file})
 				if echo $dep | grep -sq '^libs' ; then
-					echo "Copying dependant lib $BUILD_ROOT/$dep    (required by ${parent})"
+					echo "Copying dependent lib $BUILD_ROOT/$dep    (required by ${parent})"
 					cp $BUILD_ROOT/$dep $Libraries
 				else
-					echo "Copying dependant lib $dep    (required by ${parent})"
+					echo "Copying dependent lib $dep    (required by ${parent})"
 					cp $dep $Libraries
 				fi
 				chmod 755 $Libraries/`basename $dep`
@@ -716,11 +720,7 @@ if test -n "$MIXBUS"; then
 
 	echo "Adding Harrison Vamp Plugins"
 
-	if test "$GCC5ABI" = "true"; then
-		VAMPARCH="${HARCH}gcc5"
-	else
-		VAMPARCH="${HARCH}"
-	fi
+	VAMPARCH="${HARCH}gcc5"
 	curl -s -S --fail -# \
 		-z "${CACHEDIR}/harrison_vamp.${VAMPARCH}.so" \
 		-o "${CACHEDIR}/harrison_vamp.${VAMPARCH}.so" \
@@ -734,14 +734,30 @@ if test -n "$MIXBUS"; then
 	curl -s -S --fail -#  \
 		-z "${CACHEDIR}/MixbusBundledMedia.zip" \
 		-o "${CACHEDIR}/MixbusBundledMedia.zip" \
-		"http://rsrc.harrisonconsoles.com/mixbus/mb8/content/MixbusBundledMedia.zip"
+		"http://builder.harrisonconsoles.com/pub/share/MixbusBundledMedia.zip"
 
 	if test -f "${CACHEDIR}/MixbusBundledMedia.zip"; then
 		echo "Adding Mixbus Bundled Content"
 		rm -f "${MediaClips}/"*.*
-		unzip -q -d "${MediaClips}" "${CACHEDIR}/MixbusBundledMedia.zip"
+		unzip -q -o -d "${MediaClips}" "${CACHEDIR}/MixbusBundledMedia.zip"
 	fi
+else
+    echo "Fetching Ardour bundled content"
+
+    curl -s -S --fail -#  \
+	 -z "${CACHEDIR}/ArdourBundledMedia.zip" \
+	 -o "${CACHEDIR}/ArdourBundledMedia.zip" \
+	 "http://stuff.ardour.org/loops/ArdourBundledMedia.zip"
+    if test -f "${CACHEDIR}/ArdourBundledMedia.zip"; then
+	echo "Adding Ardour Bundled Content"
+	rm -f "${MediaClips}/"*.*
+	unzip -q -o -d "${MediaClips}" "${CACHEDIR}/ArdourBundledMedia.zip"
+    fi
 fi
+
+echo "Setting Bundled Media dir/file permissions"
+find "${MediaClips}" -type d -exec chmod 755 "{}" \;
+find "${MediaClips}" -type f -exec chmod 644 "{}" \;
 
 if true ; then
 	mkdir -p $APPLIB/LV2
@@ -777,7 +793,7 @@ if test x$WITH_GRATIS_X42_LV2 != x ; then
 
 	echo "Adding gratis x42 Plugins"
 
-	for proj in x42-midifilter x42-stereoroute setBfree x42-avldrums x42-limiter x42-tuner; do
+	for proj in x42-autotune x42-midifilter x42-stereoroute setBfree x42-avldrums x42-limiter x42-tuner; do
 		X42_VERSION=$(curl -s -S http://x42-plugins.com/x42/linux/${proj}.latest.txt)
 		rsync -a -q --partial \
 			rsync://x42-plugins.com/x42/linux/${proj}-lv2-linux-${WARCH}-${X42_VERSION}.zip \
@@ -833,9 +849,8 @@ chmod a+x $APPBIN/${APP_VER_NAME}.uninstall.sh
 #
 # Add the stage2.run script
 #
-sed -e "s/%REPLACE_MAJOR_VERSION%/${major_version}/;s/%REPLACE_PGM%/${APPNAME}/;s/%REPLACE_VENDOR%/${VENDOR}/;s/%REPLACE_EXE%/${EXENAME}/;s/%REPLACE_GCC5%/${GCC5ABI}/;s/%REPLACE_WINE%/${USEWINE}/" < stage2.run.in > stage2.run
+sed -e "s/%REPLACE_MAJOR_VERSION%/${major_version}/;s/%REPLACE_PGM%/${APPNAME}/;s/%REPLACE_VENDOR%/${VENDOR}/;s/%REPLACE_EXE%/${EXENAME}/" < stage2.run.in > stage2.run
 chmod a+x stage2.run
-
 
 #Sanity Check file
 if [ -e $BUILD_ROOT/tools/sanity_check/sanityCheck ]; then

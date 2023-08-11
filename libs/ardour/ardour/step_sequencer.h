@@ -44,7 +44,7 @@
 namespace ARDOUR {
 
 class MidiBuffer;
-class MidiStateTracker;
+class MidiNoteTracker;
 class StepSequencer;
 class StepSequence;
 class TempoMap;
@@ -105,7 +105,7 @@ class Step : public PBD::Stateful {
 	void set_beat (Temporal::Beats const & beat);
 	Temporal::Beats beat () const { return _nominal_beat; }
 
-	bool run (MidiBuffer& buf, bool running, samplepos_t, samplepos_t, MidiStateTracker&);
+	bool run (MidiBuffer& buf, bool running, samplepos_t, samplepos_t, MidiNoteTracker&);
 
 	bool skipped() const { return _skipped; }
 	void set_skipped (bool);
@@ -115,7 +115,7 @@ class Step : public PBD::Stateful {
 	int octave_shift() const { return _octave_shift; }
 	void set_octave_shift (int);
 
-	XMLNode& get_state();
+	XMLNode& get_state() const;
 	int set_state (XMLNode const &, int);
 
 	void dump (MusicTimeEvents&, Temporal::Beats const&) const;
@@ -158,7 +158,7 @@ class Step : public PBD::Stateful {
 	ParameterValue _parameters[_parameters_per_step];
 	size_t _repeat;
 
-	void check_note (size_t n, MidiBuffer& buf, bool, samplepos_t, samplepos_t, MidiStateTracker&);
+	void check_note (size_t n, MidiBuffer& buf, bool, samplepos_t, samplepos_t, MidiNoteTracker&);
 	void check_parameter (size_t n, MidiBuffer& buf, bool, samplepos_t, samplepos_t);
 	void dump_note (MusicTimeEvents&, size_t n, Temporal::Beats const &) const;
 	void dump_parameter (MusicTimeEvents&, size_t n, Temporal::Beats const &) const;
@@ -204,11 +204,11 @@ class StepSequence : public PBD::Stateful
 	void reschedule (Temporal::Beats const &, Temporal::Beats const &);
 	void schedule (Temporal::Beats const &);
 
-	bool run (MidiBuffer& buf, bool running, samplepos_t, samplepos_t, MidiStateTracker&);
+	bool run (MidiBuffer& buf, bool running, samplepos_t, samplepos_t, MidiNoteTracker&);
 
 	StepSequencer& sequencer() const { return _sequencer; }
 
-	XMLNode& get_state();
+	XMLNode& get_state() const;
 	int set_state (XMLNode const &, int);
 
 	void dump (MusicTimeEvents&, Temporal::Beats const &) const;
@@ -257,12 +257,12 @@ class StepSequencer : public PBD::Stateful
 
 	TempoMap& tempo_map() const { return _tempo_map; }
 
-	XMLNode& get_state();
+	XMLNode& get_state() const;
 	int set_state (XMLNode const &, int);
 
 	void queue_note_off (Temporal::Beats const &, uint8_t note, uint8_t velocity, uint8_t channel);
 
-	boost::shared_ptr<Source> write_to_source (Session& s, std::string p = std::string()) const;
+	std::shared_ptr<Source> write_to_source (Session& s, std::string p = std::string()) const;
 
   private:
 	mutable Glib::Threads::Mutex       _sequence_lock;
@@ -281,7 +281,7 @@ class StepSequencer : public PBD::Stateful
 	bool            _running;
 	size_t          _step_capacity;
 
-	ARDOUR::MidiStateTracker outbound_tracker;
+	ARDOUR::MidiNoteTracker outbound_tracker;
 
 	struct Request {
 
@@ -346,7 +346,7 @@ class StepSequencer : public PBD::Stateful
 	void check_note_offs (ARDOUR::MidiBuffer&, samplepos_t start_sample, samplepos_t last_sample);
 	void clear_note_offs ();
 
-	bool fill_midi_source (boost::shared_ptr<SMFSource> src) const;
+	bool fill_midi_source (std::shared_ptr<SMFSource> src) const;
 
 };
 

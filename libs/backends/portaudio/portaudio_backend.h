@@ -21,14 +21,13 @@
 #ifndef __libbackend_portaudio_backend_h__
 #define __libbackend_portaudio_backend_h__
 
+#include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 #include <set>
 
-#include <stdint.h>
 #include <pthread.h>
-
-#include <boost/shared_ptr.hpp>
 
 #include "ardour/audio_backend.h"
 #include "ardour/dsp_load_calculator.h"
@@ -299,6 +298,7 @@ class PortAudioBackend : public AudioBackend, public PortEngineSharedImpl {
 		bool  _freewheel_ack;
 		bool  _reinit_thread_callback;
 		bool  _measure_latency;
+		int   _freewheel_processed;
 
 		ARDOUR::DSPLoadCalculator _dsp_calc;
 
@@ -369,7 +369,9 @@ class PortAudioBackend : public AudioBackend, public PortEngineSharedImpl {
 		BackendPort* port_factory (std::string const & name, ARDOUR::DataType dt, ARDOUR::PortFlags flags);
 
 		int register_system_audio_ports ();
-		int register_system_midi_ports ();
+		int register_system_midi_ports (std::string const& device = "");
+
+		void update_systemic_midi_latencies ();
 
 }; // class PortAudioBackend
 

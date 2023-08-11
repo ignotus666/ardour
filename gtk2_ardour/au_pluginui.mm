@@ -29,6 +29,7 @@
 #include "pbd/convert.h"
 #include "pbd/error.h"
 
+#include "ardour/auditioner.h"
 #include "ardour/audio_unit.h"
 #include "ardour/debug.h"
 #include "ardour/plugin_insert.h"
@@ -107,17 +108,17 @@ dump_view_tree (NSView* view, int depth, int maxdepth)
 		NSView* su = [view superview];
 		if (su) {
 			NSRect sf = [su frame];
-			cerr << " PARENT view " << su << " @ " <<  sf.origin.x << ", " << sf.origin.y
+			cout << " PARENT view " << su << " @ " <<  sf.origin.x << ", " << sf.origin.y
 			     << ' ' << sf.size.width << " x " << sf.size.height
 			     << endl;
 		}
 	}
 
 	for (int d = 0; d < depth; d++) {
-		cerr << '\t';
+		cout << '\t';
 	}
 	NSRect frame = [view frame];
-	cerr << " view " << view << " @ " <<  frame.origin.x << ", " << frame.origin.y
+	cout << " view " << view << " @ " <<  frame.origin.x << ", " << frame.origin.y
 		<< ' ' << frame.size.width << " x " << frame.size.height
 		<< endl;
 
@@ -234,10 +235,12 @@ static uint32_t block_plugin_redraws = 0;
 static const uint32_t minimum_redraw_rate = 30; /* frames per second */
 static const uint32_t block_plugin_redraw_count = 15; /* number of combined plugin redraws to block, if blocking */
 
-#ifdef __ppc__
+#if (defined __ppc__ || MAC_OS_X_VERSION_MAX_ALLOWED >= 110000)
 
 /* PowerPC versions of OS X do not support libdispatch, which we use below when swizzling objective C. But they also don't have Retina
  * which is the underlying reason for this code. So just skip it on those CPUs.
+ *
+ * Also this is probably not relevant anymore on M1/BigSur, let's see
  */
 
 
@@ -274,8 +277,8 @@ static void interposed_drawIfNeeded (id receiver, SEL selector, NSRect rect)
 {
 	if (block_plugin_redraws && (find (plugin_views.begin(), plugin_views.end(), receiver) != plugin_views.end())) {
 		block_plugin_redraws--;
-#ifdef AU_DEBUG_PRINT
-		std::cerr << "Plugin redraw blocked\n";
+#ifdef AU_DEBUG_DRAW
+		std::cout << "Plugin redraw blocked\n";
 #endif
 		/* YOU ... SHALL .... NOT ... DRAW!!!! */
 		return;
@@ -363,7 +366,7 @@ static void interposed_drawIfNeeded (id receiver, SEL selector, NSRect rect)
 
 - (void)auViewResized:(NSNotification *)notification
 {
-	(void) notification; // stop complaints about unusued argument
+	(void) notification; // stop complaints about unused argument
 	plugin_ui->cocoa_view_resized();
 }
 
@@ -392,13 +395,15 @@ static void interposed_drawIfNeeded (id receiver, SEL selector, NSRect rect)
 }
 @end
 
-AUPluginUI::AUPluginUI (boost::shared_ptr<PluginInsert> insert)
-	: PlugUIBase (insert)
+AUPluginUI::AUPluginUI (std::shared_ptr<PlugInsertBase> pib)
+	: PlugUIBase (pib)
 	, automation_mode_label (_("Automation"))
 	, preset_label (_("Presets"))
 	, resizable (false)
 	, req_width (0)
 	, req_height (0)
+	, alloc_width (0)
+	, alloc_height (0)
 	, cocoa_window (0)
 	, au_view (0)
 	, in_live_resize (false)
@@ -414,7 +419,7 @@ AUPluginUI::AUPluginUI (boost::shared_ptr<PluginInsert> insert)
 	set_popdown_strings (automation_mode_selector, automation_mode_strings);
 	automation_mode_selector.set_active_text (automation_mode_strings.front());
 
-	if ((au = boost::dynamic_pointer_cast<AUPlugin> (insert->plugin())) == 0) {
+	if ((au = std::dynamic_pointer_cast<AUPlugin> (pib->plugin())) == 0) {
 		error << _("unknown type of editor-supplying plugin (note: no AudioUnit support in this version of ardour)") << endmsg;
 		throw failed_constructor ();
 	}
@@ -425,6 +430,7 @@ AUPluginUI::AUPluginUI (boost::shared_ptr<PluginInsert> insert)
 	top_box.set_homogeneous (false);
 	top_box.set_spacing (6);
 	top_box.set_border_width (6);
+
 	add_common_widgets (&top_box);
 
 	set_spacing (0);
@@ -683,12 +689,20 @@ AUPluginUI::create_cocoa_view ()
 
 	// Get the initial size of the new AU View's frame
 	NSRect  frame = [au_view frame];
-	req_width  = frame.size.width;
-	req_height = frame.size.height;
+	if (frame.size.width > 1 && frame.size.height > 1) {
+		req_width  = frame.size.width;
+		req_height = frame.size.height;
+		low_box.queue_resize ();
+	} else {
+		req_width  = 0;
+		req_height = 0;
+	}
+
+#ifdef AU_DEBUG_SIZE
+	std::cout << "NSView initial size: " << req_width << " x " << req_height << "\n";
+#endif
 
 	resizable  = [au_view autoresizingMask];
-
-	low_box.queue_resize ();
 
 	return 0;
 }
@@ -703,7 +717,7 @@ bool
 AUPluginUI::timer_callback ()
 {
 	block_plugin_redraws = 0;
-#ifdef AU_DEBUG_PRINT
+#ifdef AU_DEBUG_DRAW
 	std::cerr << "Resume redraws after idle\n";
 #endif
 	return false;
@@ -727,7 +741,7 @@ AUPluginUI::cf_timer_callback ()
 
 	const int64_t usecs_slop = (1400000 / minimum_redraw_rate); // 140%
 
-#ifdef AU_DEBUG_PRINT
+#ifdef AU_DEBUG_DRAW
 	std::cerr << "Timer elapsed : " << now - last_timer << std::endl;
 #endif
 
@@ -735,7 +749,7 @@ AUPluginUI::cf_timer_callback ()
 		block_plugin_redraws = block_plugin_redraw_count;
 		timer_connection.disconnect ();
 		timer_connection = Glib::signal_timeout().connect (&AUPluginUI::timer_callback, 40);
-#ifdef AU_DEBUG_PRINT
+#ifdef AU_DEBUG_DRAW
 		std::cerr << "Timer too slow, block plugin redraws\n";
 #endif
 	}
@@ -803,15 +817,15 @@ AUPluginUI::cocoa_view_resized ()
 		 * NSView, resulting in a reentrant call to the FrameDidChange
 		 * handler (this method). Ignore this reentrant call.
 		 */
-#ifdef AU_DEBUG_PRINT
-		std::cerr << plugin->name() << " re-entrant call to cocoa_view_resized, ignored\n";
+#ifdef AU_DEBUG_SIZE
+		std::cout << plugin->name() << " re-entrant call to cocoa_view_resized, ignored\n";
 #endif
 		return;
 	}
 
 	plugin_requested_resize = 1;
 
-	ProcessorWindowProxy* wp = insert->window_proxy();
+	ProcessorWindowProxy* wp = _pi ? _pi->window_proxy() : NULL;
 	if (wp) {
 		/* Once a plugin has requested a resize of its own window, do
 		 * NOT save the window. The user may save state with the plugin
@@ -826,6 +840,9 @@ AUPluginUI::cocoa_view_resized ()
 	}
 
 	NSRect new_frame = [au_view frame];
+#ifdef AU_DEBUG_SIZE
+	std::cout << plugin->name() << " resized to " << new_frame.size.width << " x " <<  new_frame.size.height << "\n";
+#endif
 
 	/* from here on, we know that we've been called because the plugin
 	 * decided to change the NSView frame itself.
@@ -837,6 +854,20 @@ AUPluginUI::cocoa_view_resized ()
 	float dy = new_frame.size.height - last_au_frame.size.height;
 	float dx = new_frame.size.width - last_au_frame.size.width;
 
+	/* If the nsview initially reported its size as zero, the lower-box may
+	 * still have a width (due to the plugin-toolbar above), and 1px height.
+	 * The window only needs to grow relative to that.
+	 * This is usually the case with Rosetta bridges AU Plugins.
+	 *
+	 * Note: this may also be relevant for tiny AU plugins where the initial
+	 * width is smaller than the top_box toolbar. This rare case is left to
+	 * be solved at another time.
+	 */
+	if (last_au_frame.size.height == 0 && last_au_frame.size.width == 0) {
+		dy = new_frame.size.height - alloc_height - 1;
+		dx = new_frame.size.width - alloc_width;
+	}
+
 	NSWindow* window = get_nswindow ();
 	NSRect windowFrame= [window frame];
 
@@ -846,10 +877,20 @@ AUPluginUI::cocoa_view_resized ()
 	 * origin toward (x,0). This will leave the top edge in the same place.
 	 */
 
+#ifdef AU_DEBUG_SIZE
+	printf ("WINDOW %f x %f + %f %f\n",  windowFrame.size.width,  windowFrame.size.height, windowFrame.origin.x, windowFrame.origin.y);
+	printf ("Lower Box Allocation %d x %d\n", alloc_width, alloc_height);
+	printf ("DX %.1f  DY %.1f\n", dx, dy);
+#endif
+
 	windowFrame.origin.y    -= dy;
 	windowFrame.origin.x    -= dx;
 	windowFrame.size.height += dy;
 	windowFrame.size.width  += dx;
+
+#ifdef AU_DEBUG_SIZE
+	printf ("New WINDOW %f x %f + %f %f\n",  windowFrame.size.width,  windowFrame.size.height, windowFrame.origin.x, windowFrame.origin.y);
+#endif
 
 	NSUInteger old_auto_resize = [au_view autoresizingMask];
 
@@ -898,6 +939,12 @@ AUPluginUI::cocoa_view_resized ()
 	last_au_frame = new_frame;
 	req_width  = new_frame.size.width;
 	req_height = new_frame.size.height;
+
+#ifdef AU_DEBUG_SIZE
+	std::cout << "NSView resized: " << req_width << " x " << req_height << "\n";
+#endif
+
+	low_box.queue_resize ();
 
 	plugin_requested_resize = 0;
 }
@@ -1106,7 +1153,7 @@ AUPluginUI::parent_cocoa_window ()
 
 	// catch notifications that live resizing is about to start
 
-#if HAVE_COCOA_LIVE_RESIZING
+#ifdef HAVE_COCOA_LIVE_RESIZING
 	_resize_notify = [ [ LiveResizeNotificationObject alloc] initWithPluginUI:this ];
 
 	[[NSNotificationCenter defaultCenter] addObserver:_resize_notify
@@ -1130,7 +1177,7 @@ AUPluginUI::parent_cocoa_window ()
 	resizable = false;
 
 	if (toplevel && toplevel->is_toplevel()) {
-		toplevel->size_request (req);
+		req = toplevel->size_request ();
 		toplevel->set_size_request (req.width, req.height);
 		dynamic_cast<Gtk::Window*>(toplevel)->set_resizable (false);
 	}
@@ -1209,17 +1256,26 @@ AUPluginUI::lower_box_map ()
 {
 	[au_view setHidden:0];
 	update_view_size ();
+#ifdef AU_DEBUG_SIZE
+	std::cout << "AUPluginUI::lower_box_map\n";
+#endif
 }
 
 void
 AUPluginUI::lower_box_unmap ()
 {
 	[au_view setHidden:1];
+#ifdef AU_DEBUG_SIZE
+	std::cout << "AUPluginUI::lower_box_unmap\n";
+#endif
 }
 
 void
 AUPluginUI::lower_box_size_request (GtkRequisition* requisition)
 {
+#ifdef AU_DEBUG_SIZE
+	std::cout << "AUPluginUI::lower_box_size_request: " << req_width << " x " << req_height << "\n";
+#endif
 	requisition->width  = req_width;
 	requisition->height = req_height;
 }
@@ -1227,6 +1283,11 @@ AUPluginUI::lower_box_size_request (GtkRequisition* requisition)
 void
 AUPluginUI::lower_box_size_allocate (Gtk::Allocation& allocation)
 {
+#ifdef AU_DEBUG_SIZE
+	std::cout << "AUPluginUI::lower_box_size_alloc: " << allocation.get_width() << " x " << allocation.get_height () << "\n";
+#endif
+	alloc_width =  allocation.get_width();
+	alloc_height =  allocation.get_height();
 	update_view_size ();
 }
 
@@ -1247,6 +1308,9 @@ AUPluginUI::on_window_hide ()
 		id win = [wins objectAtIndex:i];
 	}
 #endif
+#ifdef AU_DEBUG_SIZE
+	std::cout << "AUPluginUI::on_window_hide\n";
+#endif
 }
 
 bool
@@ -1263,6 +1327,9 @@ AUPluginUI::on_window_show (const string& /*title*/)
 		ShowWindow (carbon_window);
 		ActivateWindow (carbon_window, TRUE);
 	}
+#endif
+#ifdef AU_DEBUG_SIZE
+	std::cout << "AUPluginUI::on_window_show\n";
 #endif
 
 	return true;
@@ -1281,9 +1348,9 @@ AUPluginUI::stop_updating (GdkEventAny*)
 }
 
 PlugUIBase*
-create_au_gui (boost::shared_ptr<PluginInsert> plugin_insert, VBox** box)
+create_au_gui (std::shared_ptr<PlugInsertBase> pib, VBox** box)
 {
-	AUPluginUI* aup = new AUPluginUI (plugin_insert);
+	AUPluginUI* aup = new AUPluginUI (pib);
 	(*box) = aup;
 	return aup;
 }

@@ -36,7 +36,9 @@ using std::string;
 
 Stripable::Stripable (Session& s, string const & name, PresentationInfo const & pi)
 	: SessionObject (s, name)
-	, Automatable (s, (pi.flags() & PresentationInfo::MidiIndicatingFlags) ? Temporal::BeatTime : Temporal::AudioTime)
+	, Automatable (s, s.config.get_tracks_follow_session_time() ?
+	               Temporal::TimeDomainProvider (s.time_domain(), s) : 
+	               Temporal::TimeDomainProvider ((pi.flags() & PresentationInfo::MidiIndicatingFlags) ? Temporal::BeatTime : Temporal::AudioTime))
 	, _presentation_info (pi)
 	, _active_color_picker (0)
 {
@@ -118,7 +120,7 @@ bool
 Stripable::is_selected() const
 {
 	try {
-		boost::shared_ptr<const Stripable> s (shared_from_this());
+		std::shared_ptr<const Stripable> s (shared_from_this());
 	} catch (...) {
 		std::cerr << "cannot shared-from-this for " << this << std::endl;
 		abort ();
@@ -127,7 +129,7 @@ Stripable::is_selected() const
 }
 
 bool
-Stripable::Sorter::operator() (boost::shared_ptr<ARDOUR::Stripable> a, boost::shared_ptr<ARDOUR::Stripable> b)
+Stripable::Sorter::operator() (std::shared_ptr<ARDOUR::Stripable> a, std::shared_ptr<ARDOUR::Stripable> b)
 {
 	const PresentationInfo::Flag a_flag = a->presentation_info().flags ();
 	const PresentationInfo::Flag b_flag = b->presentation_info().flags ();

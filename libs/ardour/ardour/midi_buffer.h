@@ -43,14 +43,13 @@ public:
 	MidiBuffer(size_t capacity);
 	~MidiBuffer();
 
+	void clear();
 	void silence (samplecnt_t nframes, samplecnt_t offset = 0);
 	void read_from (const Buffer& src, samplecnt_t nframes, sampleoffset_t dst_offset = 0, sampleoffset_t src_offset = 0);
 	void merge_from (const Buffer& src, samplecnt_t nframes, sampleoffset_t dst_offset = 0, sampleoffset_t src_offset = 0);
 
 	void copy(const MidiBuffer& copy);
 	void copy(MidiBuffer const * const);
-
-	void skip_to (TimeType when);
 
 	bool push_back(const Evoral::Event<TimeType>& event);
 	bool push_back(TimeType time, Evoral::EventType event_type, size_t size, const uint8_t* data);
@@ -154,8 +153,9 @@ public:
 
 		size_t total_data_deleted = align32 (sizeof(TimeType) + sizeof (Evoral::EventType) + event_size);
 
-		if (i.offset + total_data_deleted > _size) {
+		if (i.offset + total_data_deleted >= _size) {
 			_size = 0;
+			_silent = true;
 			return end();
 		}
 
@@ -169,6 +169,8 @@ public:
 
 		_size -= total_data_deleted;
 
+		assert (_size > 0);
+
 		/* all subsequent iterators are now invalid, and the one we
 		 * return should refer to the event we copied, which was after
 		 * the one we just erased.
@@ -179,7 +181,7 @@ public:
 
 	/**
 	 * returns true if the message with the second argument as its MIDI
-	 * status byte should preceed the message with the first argument as
+	 * status byte should precede the message with the first argument as
 	 * its MIDI status byte.
 	 */
 	static bool second_simultaneous_midi_byte_is_first (uint8_t, uint8_t);

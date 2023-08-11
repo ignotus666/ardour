@@ -67,8 +67,8 @@ class _ratio_t {
   public:
 	/* do not allow negative values, this is just a ratio */
 
-	_ratio_t (T n, T d) : _numerator (abs (n)), _denominator (abs(d)) { assert (_denominator != 0); }
-	_ratio_t (T n) : _numerator (abs (n)), _denominator (1) {}
+	_ratio_t (T n, T d) : _numerator (std::abs (n)), _denominator (std::abs(d)) { assert (_denominator != 0); }
+	_ratio_t (T n) : _numerator (std::abs (n)), _denominator (1) {}
 
 	T numerator() const { return _numerator; }
 	T denominator() const { return _denominator; }
@@ -76,20 +76,17 @@ class _ratio_t {
 	bool is_unity() const { return _numerator == _denominator; }
 	bool is_zero() const { return _numerator == 0; }
 
-	operator double() const { return (double) _numerator / _denominator; };
+	double to_double() const { return (double) _numerator / _denominator; };
 
-	/* provide an easy way to multiply double by ratio_t. Note that this
-	   must be written as ratio_t * double, not the other way around. We
-	   are not trying to duplicate boost::rational here (which also doesn't
-	   allow this without a lot of syntactic fluff.
-	*/
-	double operator* (double v) const { return (v * (double) _numerator) / (double) _denominator; }
+	bool operator== (_ratio_t<T> const & other) const {
+		return _numerator == other._numerator && _denominator == other._denominator;
+	}
 
-	/* ditto for int64_t */
+	bool operator!= (_ratio_t<T> const & other) const {
+		return _numerator != other._numerator || _denominator != other._denominator;
+	}
 
-	int64_t operator* (int64_t v) const { return int_div_round (v * _numerator, _denominator); }
-
-                                        private:
+  private:
 	T _numerator;
 	T _denominator;
 };
@@ -130,6 +127,5 @@ extern void setup_enum_writer ();
 }
 
 std::ostream& operator<< (std::ostream& o, Temporal::ratio_t const & r);
-
 
 #endif /* __libpbd_position_types_h__ */

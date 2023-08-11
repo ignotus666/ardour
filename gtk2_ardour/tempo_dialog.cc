@@ -5,7 +5,7 @@
  * Copyright (C) 2008-2015 David Robillard <d@drobilla.net>
  * Copyright (C) 2009-2010 Carl Hetherington <carl@carlh.net>
  * Copyright (C) 2014-2015 Colin Fletcher <colin.m.fletcher@googlemail.com>
- * Copyright (C) 2014-2017 Robin Gareus <robin@gareus.org>
+ * Copyright (C) 2014-2022 Robin Gareus <robin@gareus.org>
  * Copyright (C) 2015-2017 Ben Loftis <ben@harrisonconsoles.com>
  * Copyright (C) 2015-2017 Nick Mainsbridge <mainsbridge@gmail.com>
  *
@@ -29,9 +29,14 @@
 #include <gtkmm/stock.h>
 
 #include "pbd/error.h"
+#include "midi++/parser.h"
+
+#include "ardour/audioengine.h"
+#include "ardour/midi_port.h"
 
 #include "gtkmm2ext/utils.h"
 
+#include "gui_thread.h"
 #include "tempo_dialog.h"
 #include "ui_config.h"
 
@@ -45,17 +50,18 @@ using namespace PBD;
 using namespace Temporal;
 
 TempoDialog::TempoDialog (TempoMap::SharedPtr const & map, timepos_t const & pos, const string&)
-	: ArdourDialog (_("New Tempo"))
+	: ArdourDialog (_("New Tempo"), true)
 	, _map (map)
 	, _section (0)
 	, bpm_adjustment (60.0, 1.0, 999.9, 0.1, 1.0)
 	, bpm_spinner (bpm_adjustment)
 	, end_bpm_adjustment (60.0, 1.0, 999.9, 0.1, 1.0)
 	, end_bpm_spinner (end_bpm_adjustment)
-	, _end_bpm_label (_("End Beats per Minute:"), ALIGN_LEFT, ALIGN_CENTER)
-	, when_bar_label (_("bar:"), ALIGN_RIGHT, ALIGN_CENTER)
-	, when_beat_label (_("beat:"), ALIGN_RIGHT, ALIGN_CENTER)
-	, pulse_selector_label (_("Pulse:"), ALIGN_LEFT, ALIGN_CENTER)
+	, _end_bpm_label (_("End Beats per Minute:"), ALIGN_START, ALIGN_CENTER)
+	, when_bar_label (_("bar:"), ALIGN_END, ALIGN_CENTER)
+	, when_beat_label (_("beat:"), ALIGN_END, ALIGN_CENTER)
+	, pulse_selector_label (_("Pulse:"), ALIGN_START, ALIGN_CENTER)
+	, _tap_source_label (_("Tap Source:"), ALIGN_START, ALIGN_CENTER)
 	, tap_tempo_button (_("Tap tempo"))
 {
 	Temporal::BBT_Time when (_map->bbt_at (pos));
@@ -65,21 +71,22 @@ TempoDialog::TempoDialog (TempoMap::SharedPtr const & map, timepos_t const & pos
 }
 
 TempoDialog::TempoDialog (TempoMap::SharedPtr const & map, TempoPoint& point, const string&)
-	: ArdourDialog (_("Edit Tempo"))
+	: ArdourDialog (_("Edit Tempo"), true)
 	, _map (map)
 	, _section (&point)
 	, bpm_adjustment (60.0, 1.0, 999.9, 0.1, 1.0)
 	, bpm_spinner (bpm_adjustment)
 	, end_bpm_adjustment (60.0, 1.0, 999.9, 0.1, 1.0)
 	, end_bpm_spinner (end_bpm_adjustment)
-	, _end_bpm_label (_("End Beats per Minute:"), ALIGN_LEFT, ALIGN_CENTER)
-	, when_bar_label (_("bar:"), ALIGN_RIGHT, ALIGN_CENTER)
-	, when_beat_label (_("beat:"), ALIGN_RIGHT, ALIGN_CENTER)
-	, pulse_selector_label (_("Pulse:"), ALIGN_LEFT, ALIGN_CENTER)
+	, _end_bpm_label (_("End Beats per Minute:"), ALIGN_START, ALIGN_CENTER)
+	, when_bar_label (_("bar:"), ALIGN_END, ALIGN_CENTER)
+	, when_beat_label (_("beat:"), ALIGN_END, ALIGN_CENTER)
+	, pulse_selector_label (_("Pulse:"), ALIGN_START, ALIGN_CENTER)
+	, _tap_source_label (_("Tap Source:"), ALIGN_START, ALIGN_CENTER)
 	, tap_tempo_button (_("Tap tempo"))
 {
 	Temporal::BBT_Time when (map->bbt_at (point.time()));
-	init (when, _section->note_types_per_minute(), _section->end_note_types_per_minute(), _section->note_type(), _section->type(), map->is_initial (point), map->time_domain());
+	init (when, _section->note_types_per_minute(), _section->end_note_types_per_minute(), _section->note_type(), _section->type(), map->is_initial (point), Temporal::BeatTime);
 }
 
 void
@@ -170,13 +177,7 @@ TempoDialog::init (const Temporal::BBT_Time& when, double bpm, double end_bpm, d
 		lock_style.set_active_text (strings[0]); // "music"
 	}
 
-	Table* table;
-
-	if (UIConfiguration::instance().get_allow_non_quarter_pulse()) {
-		table = manage (new Table (5, 7));
-	} else {
-		table = manage (new Table (5, 6));
-	}
+	Table* table = manage (new Table (5, 5));
 
 	table->set_spacings (6);
 	table->set_homogeneous (false);
@@ -190,7 +191,7 @@ TempoDialog::init (const Temporal::BBT_Time& when, double bpm, double end_bpm, d
 		++row;
 	}
 
-	Label* bpm_label = manage (new Label(_("Start Beats per Minute:"), ALIGN_LEFT, ALIGN_CENTER));
+	Label* bpm_label = manage (new Label(_("Start Beats per Minute:"), ALIGN_START, ALIGN_CENTER));
 	table->attach (*bpm_label, 0, 1, row, row + 1);
 	table->attach (bpm_spinner, 1, 5, row, row + 1);
 	++row;
@@ -199,7 +200,7 @@ TempoDialog::init (const Temporal::BBT_Time& when, double bpm, double end_bpm, d
 	table->attach (end_bpm_spinner, 1, 5, row, row + 1);
 	++row;
 
-	Label* tempo_type_label = manage (new Label(_("Tempo Type:"), ALIGN_LEFT, ALIGN_CENTER));
+	Label* tempo_type_label = manage (new Label(_("Tempo Type:"), ALIGN_START, ALIGN_CENTER));
 	table->attach (*tempo_type_label, 0, 1, row, row + 1);
 	table->attach (tempo_type, 1, 5, row, row + 1);
 
@@ -212,7 +213,9 @@ TempoDialog::init (const Temporal::BBT_Time& when, double bpm, double end_bpm, d
 	snprintf (buf, sizeof (buf), "%" PRIu32, when.beats);
 	when_beat_entry.set_text (buf);
 
-	if (!initial) {
+	/* no position edit fields for initial tempo or BBT markers */
+
+	if (!initial && !(_section && dynamic_cast<MusicTimePoint*> (_section)))  {
 		when_bar_entry.set_width_chars(4);
 		when_beat_entry.set_width_chars (4);
 		when_bar_entry.set_alignment (1.0);
@@ -227,22 +230,34 @@ TempoDialog::init (const Temporal::BBT_Time& when, double bpm, double end_bpm, d
 		table->attach (when_beat_label, 3, 4, row, row+1, Gtk::AttachOptions(0), Gtk::AttachOptions(0));
 		table->attach (when_beat_entry, 4, 5, row, row+1, Gtk::AttachOptions(0), Gtk::AttachOptions(0));
 
-		Label* when_label = manage (new Label(_("Tempo begins at"), ALIGN_LEFT, ALIGN_CENTER));
+		Label* when_label = manage (new Label(_("Tempo begins at"), ALIGN_START, ALIGN_CENTER));
 		table->attach (*when_label, 0, 1, row, row+1);
 
 		++row;
-		++row;
 
-		Label* lock_style_label = manage (new Label(_("Lock Style:"), ALIGN_LEFT, ALIGN_CENTER));
+		Label* lock_style_label = manage (new Label(_("Lock Style:"), ALIGN_START, ALIGN_CENTER));
 		table->attach (*lock_style_label, 0, 1, row, row + 1);
 		table->attach (lock_style, 1, 5, row, row + 1);
-
-		--row;
 	}
 
-	get_vbox()->set_border_width (12);
-	get_vbox()->pack_end (*table);
+	set_name ("MetricDialog");
+	set_resizable (false);
+	get_vbox ()->set_border_width (12);
+	get_vbox ()->set_spacing (6);
 
+	get_vbox ()->pack_start (*table, false, false);
+	table->show_all ();
+
+	table = manage (new Table (2, 2));
+	table->set_spacings (6);
+	row = 0;
+
+	table->attach (_tap_source_label, 0, 1, row, row + 1);
+	table->attach (_midi_port_combo, 1, 2, row, row + 1);
+	++row;
+	table->attach (tap_tempo_button, 0, 2, row, row + 1);
+
+	get_vbox()->pack_end (*table, false, false);
 	table->show_all ();
 
 	add_button (Stock::CANCEL, RESPONSE_CANCEL);
@@ -250,16 +265,7 @@ TempoDialog::init (const Temporal::BBT_Time& when, double bpm, double end_bpm, d
 	set_response_sensitive (RESPONSE_ACCEPT, true);
 	set_default_response (RESPONSE_ACCEPT);
 
-	bpm_spinner.show ();
-	end_bpm_spinner.show ();
-	tap_tempo_button.show ();
-	get_vbox()->set_spacing (6);
-	get_vbox()->pack_end (tap_tempo_button);
-	tap_tempo_button.can_focus ();
-	tap_tempo_button.grab_focus ();
-
-	set_name ("MetricDialog");
-
+	/* connect signals */
 	bpm_spinner.signal_activate().connect (sigc::bind (sigc::mem_fun (*this, &TempoDialog::response), RESPONSE_ACCEPT));
 	bpm_spinner.signal_button_press_event().connect (sigc::mem_fun (*this, &TempoDialog::bpm_button_press), false);
 	bpm_spinner.signal_button_release_event().connect (sigc::mem_fun (*this, &TempoDialog::bpm_button_release), false);
@@ -276,12 +282,138 @@ TempoDialog::init (const Temporal::BBT_Time& when, double bpm, double end_bpm, d
 	tap_tempo_button.signal_key_press_event().connect (sigc::mem_fun (*this, &TempoDialog::tap_tempo_key_press), false);
 	tap_tempo_button.signal_focus_out_event().connect (sigc::mem_fun (*this, &TempoDialog::tap_tempo_focus_out));
 
-	tempo_type_change();
+	_port_changed_connection = _midi_port_combo.signal_changed().connect (sigc::mem_fun (*this, &TempoDialog::port_changed));
 
-	bpm_spinner.select_region (0, -1);
-	bpm_spinner.grab_focus ();
+	/* Setup MIDI Tap */
+	_midi_port_list = ListStore::create (_midi_port_cols);
+	_midi_port_combo.set_model (_midi_port_list);
+	_midi_port_combo.pack_start (_midi_port_cols.pretty_name);
 
+	AudioEngine::instance ()->PortRegisteredOrUnregistered.connect (_manager_connection, invalidator (*this), boost::bind (&TempoDialog::ports_changed, this), gui_context ());
+	std::shared_ptr<Port> port = AudioEngine::instance ()->register_input_port (DataType::MIDI, "Tap Tempo", false, PortFlags (IsInput | Hidden | IsTerminal));
+	_midi_tap_port               = std::dynamic_pointer_cast<MidiPort> (port);
+	assert (_midi_tap_port);
+	_midi_tap_parser = std::shared_ptr<MIDI::Parser> (new MIDI::Parser);
+	_midi_tap_parser->any.connect_same_thread (_parser_connection, boost::bind (&TempoDialog::midi_event, this, _2, _3, _4));
+	_midi_tap_port->set_trace (_midi_tap_parser);
+	_midi_tap_signal.connect (_xthread_connection, invalidator (*this), boost::bind (&TempoDialog::tap_tempo, this, _1), gui_context ());
+
+	/* init state */
+	tempo_type_change ();
 	tapped = false;
+}
+
+TempoDialog::~TempoDialog ()
+{
+	_parser_connection.disconnect ();
+	AudioEngine::instance ()->unregister_port (_midi_tap_port);
+}
+
+void
+TempoDialog::on_show ()
+{
+	ArdourDialog::on_show ();
+
+	if (!UIConfiguration::instance().get_prefer_tap_tempo()) {
+		bpm_spinner.select_region (0, -1);
+		bpm_spinner.grab_focus ();
+	} else {
+		tap_tempo_button.set_can_focus ();
+		tap_tempo_button.grab_focus ();
+	}
+}
+
+void
+TempoDialog::midi_event (MIDI::byte* msg, size_t len, MIDI::samplecnt_t now)
+{
+	/* This is called in rt-context from the main auditioengine thread */
+	if (len != 3) {
+		return;
+	}
+	uint8_t cmd = (msg[0] & 0xf0);
+	if (cmd == MIDI_CMD_NOTE_ON && msg[2] > 0) {
+		_midi_tap_signal (1e6 * now / AudioEngine::instance ()->sample_rate ()); /* EMIT SIGNAL */
+	} else if (cmd == MIDI_CMD_CONTROL && msg[2] > 63) {
+		switch (msg[1]) {
+			case 0x40: /* Sustain Pedal */
+			case 0x42: /* Sostenuto Pedal */
+			case 0x43: /* Soft Pedal */
+				_midi_tap_signal (1e6 * now / AudioEngine::instance ()->sample_rate ()); /* EMIT SIGNAL */
+				break;
+			default:
+				break;
+		}
+	}
+}
+
+void
+TempoDialog::ports_changed ()
+{
+	TreeModel::iterator r = _midi_port_combo.get_active ();
+	string              cpn;
+	if (r) {
+		cpn = (*r)[_midi_port_cols.port_name];
+	}
+
+	_port_changed_connection.block ();
+
+	_midi_port_list->clear ();
+
+	TreeModel::Row row               = *_midi_port_list->append ();
+	row[_midi_port_cols.pretty_name] = _("Manual Tap");
+	row[_midi_port_cols.port_name]   = "";
+
+	std::vector<std::string> pl;
+	AudioEngine::instance ()->get_physical_inputs (DataType::MIDI, pl, MidiPortFlags (0), MidiPortFlags (MidiPortControl | MidiPortVirtual));
+
+	if (pl.empty ()) {
+		_midi_port_combo.set_active (0);
+		_midi_port_combo.set_sensitive (false);
+		tap_tempo_button.set_sensitive (true);
+		bpm_spinner.set_sensitive (true);
+		return;
+	}
+
+	size_t nth = 1;
+	size_t act = 0;
+	_midi_port_combo.set_sensitive (true);
+
+	for (auto const& pn : pl) {
+		if (!cpn.empty () && pn == cpn) {
+			act = nth;
+		}
+		++nth;
+		std::string ppn = AudioEngine::instance()->get_pretty_name_by_name (pn);
+		if (ppn.empty ()) {
+			ppn = pn.substr ((pn).find (':') + 1);
+		}
+		row                              = *_midi_port_list->append ();
+		row[_midi_port_cols.pretty_name] = ppn;
+		row[_midi_port_cols.port_name]   = pn;
+	}
+
+	_port_changed_connection.unblock ();
+	_midi_port_combo.set_active (act);
+}
+
+void
+TempoDialog::port_changed ()
+{
+	bool rv = false;
+	tapped  = false;
+	_midi_tap_port->disconnect_all ();
+	TreeModel::iterator r = _midi_port_combo.get_active ();
+	if (r) {
+		std::string const pn = (*r)[_midi_port_cols.port_name];
+		if (!pn.empty ()) {
+			rv = 0 == _midi_tap_port->connect (pn);
+		}
+	}
+	tap_tempo_button.set_sensitive (!rv);
+	bpm_spinner.set_sensitive (!rv);
+	if (!rv && UIConfiguration::instance().get_prefer_tap_tempo()) {
+		tap_tempo_button.grab_focus ();
+	}
 }
 
 bool
@@ -425,7 +557,7 @@ TempoDialog::lock_style_change ()
 bool
 TempoDialog::tap_tempo_key_press (GdkEventKey*)
 {
-	tap_tempo ();
+	tap_tempo (g_get_monotonic_time ());
 	return false;
 }
 
@@ -438,39 +570,39 @@ TempoDialog::tap_tempo_button_press (GdkEventButton* ev)
 	if (ev->button != 1) {
 		return true;
 	}
-	tap_tempo ();
+	tap_tempo (g_get_monotonic_time ());
 	return false; // grab focus
 }
 
 void
-TempoDialog::tap_tempo ()
+TempoDialog::tap_tempo (int64_t usec)
 {
 	double t;
 
 	// Linear least-squares regression
 	if (tapped) {
-		t = 1e-6 * (g_get_monotonic_time () - first_t); // Subtract first_t to avoid precision problems
+		t = 1e-6 * (usec - first_t); // Subtract first_t to avoid precision problems
 
 		double n = tap_count;
 		sum_y += t;
 		sum_x += n;
 		sum_xy += n * t;
 		sum_xx += n * n;
-		double T = (sum_xy/n - sum_x/n * sum_y/n) / (sum_xx/n - sum_x/n * sum_x/n);
+		double T = (sum_xy / n - sum_x / n * sum_y / n) / (sum_xx / n - sum_x / n * sum_x / n);
 
-		if (t - last_t < T / 1.2 || t - last_t > T * 1.2) {
+		if (t - last_t < T / 1.2 || t - last_t > T * 1.2 || T <= .06 || T > 60) {
 			tapped = false;
 		} else {
 			bpm_spinner.set_value (60.0 / T);
 		}
 	}
 	if (!tapped) {
-		first_t = g_get_monotonic_time ();
-		t = 0.0;
-		sum_y = 0.0;
-		sum_x = 1.0;
-		sum_xy = 0.0;
-		sum_xx = 1.0;
+		first_t   = usec;
+		t         = 0.0;
+		sum_y     = 0.0;
+		sum_x     = 1.0;
+		sum_xy    = 0.0;
+		sum_xx    = 1.0;
 		tap_count = 1.0;
 
 		tapped = true;
@@ -487,22 +619,22 @@ TempoDialog::tap_tempo_focus_out (GdkEventFocus* )
 }
 
 MeterDialog::MeterDialog (TempoMap::SharedPtr const & map, timepos_t const & pos, const string&)
-	: ArdourDialog (_("New Meter"))
+	: ArdourDialog (_("New Time Signature"))
 {
-	Temporal::BBT_Time when (map->round_to_bar (map->bbt_at (pos)));
+	Temporal::BBT_Argument when (map->round_to_bar (map->bbt_at (pos)));
 	Meter const & meter (map->meter_at (when));
 
-	init (when, meter.divisions_per_bar(), meter.note_value(), false, pos.time_domain());
+	init (when, meter.divisions_per_bar(), meter.note_value(), false, false, pos.time_domain());
 }
 
 MeterDialog::MeterDialog (Temporal::MeterPoint& section, const string&)
-	: ArdourDialog (_("Edit Meter"))
+	: ArdourDialog (_("Edit Time Signature"))
 {
-	init (section.bbt(), section.divisions_per_bar(), section.note_value(), section.map().is_initial(section), section.map().time_domain());
+	init (section.bbt(), section.divisions_per_bar(), section.note_value(), section.map().is_initial(section), dynamic_cast<MusicTimePoint*> (&section), Temporal::BeatTime);
 }
 
 void
-MeterDialog::init (const Temporal::BBT_Time& when, double bpb, double divisor, bool initial, TimeDomain style)
+MeterDialog::init (const Temporal::BBT_Time& when, double bpb, double divisor, bool initial, bool music_time_point, TimeDomain style)
 {
 	char buf[64];
 	vector<string> strings;
@@ -563,9 +695,9 @@ MeterDialog::init (const Temporal::BBT_Time& when, double bpb, double divisor, b
 		lock_style.set_active_text (strings[0]); // "music"
 	}
 
-	Label* note_label = manage (new Label (_("Note value:"), ALIGN_RIGHT, ALIGN_CENTER));
-	Label* lock_label = manage (new Label (_("Lock style:"), ALIGN_RIGHT, ALIGN_CENTER));
-	Label* bpb_label = manage (new Label (_("Beats per bar:"), ALIGN_RIGHT, ALIGN_CENTER));
+	Label* note_label = manage (new Label (_("Note value:"), ALIGN_END, ALIGN_CENTER));
+	Label* lock_label = manage (new Label (_("Lock style:"), ALIGN_END, ALIGN_CENTER));
+	Label* bpb_label = manage (new Label (_("Beats per bar:"), ALIGN_END, ALIGN_CENTER));
 	Table* table = manage (new Table (3, 3));
 	table->set_spacings (6);
 
@@ -578,8 +710,10 @@ MeterDialog::init (const Temporal::BBT_Time& when, double bpb, double divisor, b
 	when_bar_entry.set_text (buf);
 	when_bar_entry.set_alignment (1.0);
 
-	if (!initial) {
-		Label* when_label = manage (new Label(_("Meter begins at bar:"), ALIGN_LEFT, ALIGN_CENTER));
+	/* no position edit fields for initial tempo or BBT markers */
+
+	if (!initial && !music_time_point) {
+		Label* when_label = manage (new Label(_("Time Signature begins at bar:"), ALIGN_START, ALIGN_CENTER));
 
 		table->attach (*when_label, 0, 1, 2, 3, FILL | EXPAND, FILL | EXPAND);
 		table->attach (when_bar_entry, 1, 2, 2, 3, FILL | EXPAND, FILL | EXPAND);
@@ -703,7 +837,7 @@ MeterDialog::get_note_type ()
 	NoteTypes::iterator x = note_types.find (note_type.get_active_text());
 
 	if (x == note_types.end()) {
-		error << string_compose(_("incomprehensible meter note type (%1)"), note_type.get_active_text()) << endmsg;
+		error << string_compose(_("incomprehensible time signature denominator (%1)"), note_type.get_active_text()) << endmsg;
 		return 0;
 	}
 
@@ -716,7 +850,7 @@ MeterDialog::get_lock_style ()
 	LockStyles::iterator x = lock_styles.find (lock_style.get_active_text());
 
 	if (x == lock_styles.end()) {
-		error << string_compose(_("incomprehensible meter lock style (%1)"), lock_style.get_active_text()) << endmsg;
+		error << string_compose(_("incomprehensible lock style (%1)"), lock_style.get_active_text()) << endmsg;
 		return BeatTime;
 	}
 

@@ -39,6 +39,7 @@
 #include "pbd/stl_delete.h"
 #include "pbd/memento_command.h"
 
+#include "gtkmm2ext/colors.h"
 #include "gtkmm2ext/gtk_ui.h"
 #include "gtkmm2ext/utils.h"
 
@@ -60,14 +61,12 @@
 #include "audio_region_view.h"
 #include "audio_streamview.h"
 #include "ui_config.h"
-#include "utils.h"
 
 #include "pbd/i18n.h"
 
 using namespace std;
 using namespace ARDOUR;
 using namespace ArdourWidgets;
-using namespace ARDOUR_UI_UTILS;
 using namespace PBD;
 using namespace Gtk;
 using namespace Editing;
@@ -80,7 +79,7 @@ AudioTimeAxisView::AudioTimeAxisView (PublicEditor& ed, Session* sess, ArdourCan
 }
 
 void
-AudioTimeAxisView::set_route (boost::shared_ptr<Route> rt)
+AudioTimeAxisView::set_route (std::shared_ptr<Route> rt)
 {
 	_route = rt;
 
@@ -92,7 +91,7 @@ AudioTimeAxisView::set_route (boost::shared_ptr<Route> rt)
 
 	RouteTimeAxisView::set_route (rt);
 
-	_view->apply_color (gdk_color_to_rgba (color()), StreamView::RegionColor);
+	_view->apply_color (Gtkmm2ext::gdk_color_to_rgba (color()), StreamView::RegionColor);
 
 	// Make sure things are sane...
 	assert(!is_track() || is_audio_track());
@@ -164,20 +163,6 @@ AudioTimeAxisView::audio_view()
 	return dynamic_cast<AudioStreamView*>(_view);
 }
 
-guint32
-AudioTimeAxisView::show_at (double y, int& nth, Gtk::VBox *parent)
-{
-	set_gui_property ("visible", true);
-	return TimeAxisView::show_at (y, nth, parent);
-}
-
-void
-AudioTimeAxisView::hide ()
-{
-	set_gui_property ("visible", false);
-	TimeAxisView::hide ();
-}
-
 void
 AudioTimeAxisView::create_automation_child (const Evoral::Parameter& param, bool show)
 {
@@ -206,11 +191,6 @@ AudioTimeAxisView::create_automation_child (const Evoral::Parameter& param, bool
 	if (param.type() == GainAutomation) {
 
 		create_gain_automation_child (param, show);
-
-	} else if (param.type() == BusSendLevel) {
-
-		// XXX this does not seem correct
-		create_trim_automation_child (param, show);
 
 	} else if (param.type() == TrimAutomation) {
 

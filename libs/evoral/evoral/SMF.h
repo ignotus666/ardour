@@ -64,7 +64,7 @@ public:
 	virtual ~SMF();
 
 	static bool test(const std::string& path);
-	int  open(const std::string& path, int track=1);
+	int open (const std::string& path, int track = 1, bool scan = true);
 	// XXX 19200 = 10 * Temporal::ticks_per_beat
 	int  create(const std::string& path, int track=1, uint16_t ppqn=19200);
 	void close();
@@ -87,7 +87,14 @@ public:
 	double round_to_file_precision (double val) const;
 
 	int smf_format () const;
+
 	int num_channels () const { return _num_channels; }
+	typedef std::bitset<16> UsedChannels;
+	UsedChannels const& used_channels () const { return _used_channels; }
+	void set_used_channels (UsedChannels used) { _used_channels  = used; }
+	uint64_t n_note_on_events () const { return _n_note_on_events; }
+	bool has_pgm_change () const { return _has_pgm_change; }
+
 	void track_names (std::vector<std::string>&) const;
 	void instrument_names (std::vector<std::string>&) const;
 
@@ -133,11 +140,16 @@ public:
 	smf_t*       _smf;
 	smf_track_t* _smf_track;
 	bool         _empty; ///< true iff file contains(non-empty) events
+
 	mutable Glib::Threads::Mutex _smf_lock;
 
-	int _num_channels;
-
 	mutable Markers _markers;
+
+  protected:
+	uint64_t     _n_note_on_events;
+	bool         _has_pgm_change;
+	int          _num_channels;
+	UsedChannels _used_channels;
 };
 
 }; /* namespace Evoral */

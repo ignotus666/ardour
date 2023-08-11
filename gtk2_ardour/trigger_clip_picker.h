@@ -31,10 +31,16 @@
 #include <gtkmm/treestore.h>
 #include <gtkmm/treeview.h>
 
+#include "ardour/types.h"
 #include "ardour/session_handle.h"
 
 #include "widgets/ardour_dropdown.h"
 #include "widgets/ardour_button.h"
+#include "widgets/ardour_knob.h"
+
+#include "instrument_selector.h"
+
+class PluginUIWindow;
 
 class TriggerClipPicker : public Gtk::VBox, public ARDOUR::SessionHandlePtr
 {
@@ -44,30 +50,50 @@ public:
 
 	void set_session (ARDOUR::Session*);
 
+	ARDOUR::PluginInfoPtr instrument_plugin () const {
+		return _auditioner_combo.selected_instrument ();
+	}
+
 private:
 	void list_dir (std::string const&, Gtk::TreeNodeChildren const* pc = NULL);
 	void open_dir ();
+	void open_downloader ();
 	void edit_path ();
-	void refill_dropdown ();
+	bool refill_dropdown ();
 	void parameter_changed (std::string const&);
+	void clip_added (std::string const&, void*);
 	void row_selected ();
 	void cursor_changed ();
 	void row_activated (Gtk::TreeModel::Path const&, Gtk::TreeViewColumn*);
 	bool test_expand (Gtk::TreeModel::iterator const&, Gtk::TreeModel::Path const&);
 	void row_collapsed (Gtk::TreeModel::iterator const&, Gtk::TreeModel::Path const&);
 	void drag_data_get (Glib::RefPtr<Gdk::DragContext> const&, Gtk::SelectionData&, guint, guint);
+	void drag_begin (Glib::RefPtr<Gdk::DragContext> const&);
 	void drag_end (Glib::RefPtr<Gdk::DragContext> const&);
-	void maybe_add_dir (std::string const&);
+	bool drag_motion (Glib::RefPtr<Gdk::DragContext> const&, int, int, guint);
+	void drag_data_received (Glib::RefPtr<Gdk::DragContext> const&, int, int, Gtk::SelectionData const&, guint, guint);
+	bool maybe_add_dir (std::string const&);
 	void audition_selected ();
 	void audition (std::string const&);
 	void audition_active (bool);
 	void audition_progress (ARDOUR::samplecnt_t, ARDOUR::samplecnt_t);
+	void audition_processors_changed ();
+	void audition_processor_going_away ();
+	void audition_processor_idle ();
+	bool audition_processor_viz (bool);
+	void audition_show_plugin_ui ();
 	void stop_audition ();
 	void autoplay_toggled ();
+	void refresh_library ();
+	void open_library ();
 	bool seek_button_press (GdkEventButton*);
 	bool seek_button_release (GdkEventButton*);
+	void auditioner_combo_changed ();
+	void on_theme_changed ();
+	void mark_auditioned (Gtk::TreeModel::iterator);
+	void reset_audition_marks (bool force = false);
 
-	ArdourWidgets::ArdourDropdown _dir;
+	ArdourWidgets::ArdourDropdown _clip_dir_menu;
 	Gtk::FileChooserDialog        _fcd;
 
 	struct Columns : public Gtk::TreeModel::ColumnRecord {
@@ -77,11 +103,15 @@ private:
 			add (path);
 			add (read);
 			add (file);
+			add (color);
+			add (auditioned);
 		}
 		Gtk::TreeModelColumn<std::string> name;
 		Gtk::TreeModelColumn<std::string> path;
 		Gtk::TreeModelColumn<bool>        read;
 		Gtk::TreeModelColumn<bool>        file;
+		Gtk::TreeModelColumn<Gdk::Color>  color;
+		Gtk::TreeModelColumn<bool>        auditioned;
 	};
 
 	Columns                      _columns;
@@ -91,16 +121,37 @@ private:
 	Gtk::Table                   _auditable;
 	ArdourWidgets::ArdourButton  _play_btn;
 	ArdourWidgets::ArdourButton  _stop_btn;
+	ArdourWidgets::ArdourKnob    _gain_control;
+	ArdourWidgets::ArdourButton  _open_library_btn;
+	ArdourWidgets::ArdourButton  _refresh_btn;
+	ArdourWidgets::ArdourButton  _show_plugin_btn;
 	Gtk::HScale                  _seek_slider;
 	Gtk::CheckButton             _autoplay_btn;
+	Gdk::Color                   _color_foreground;
+	Gdk::Color                   _color_auditioned;
+
+	/* MIDI props */
+	Gtk::Table _midi_prop_table;
+	Gtk::Label format_text;
+	Gtk::Label channels_value;
+
+	InstrumentSelector           _auditioner_combo;
 
 	std::string _current_path;
+	std::string _clip_library_dir;
+	bool        _clip_library_listed;
+	bool        _ignore_list_dir;
 
 	std::set<std::string> _root_paths;
 
-	bool                      _seeking;
+	bool            _seeking;
+	PluginUIWindow* _audition_plugnui;
+
 	PBD::ScopedConnectionList _auditioner_connections;
+	PBD::ScopedConnectionList _processor_connections;
 	PBD::ScopedConnection     _config_connection;
+	PBD::ScopedConnection     _clip_added_connection;
+	sigc::connection          _idle_connection;
 };
 
 #endif

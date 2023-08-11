@@ -19,17 +19,16 @@
 #ifndef __libbackend_pulse_audiobackend_h__
 #define __libbackend_pulse_audiobackend_h__
 
+#include <cstdint>
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
 #include <pthread.h>
-#include <stdint.h>
 
 #include <pulse/pulseaudio.h>
-
-#include <boost/shared_ptr.hpp>
 
 #include "pbd/natsort.h"
 
@@ -60,7 +59,7 @@ private:
 	uint8_t   _data[MaxPulseMidiEventSize];
 };
 
-typedef std::vector<boost::shared_ptr<PulseMidiEvent> > PulseMidiBuffer;
+typedef std::vector<std::shared_ptr<PulseMidiEvent> > PulseMidiBuffer;
 
 
 class PulseAudioPort : public BackendPort
